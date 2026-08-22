@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard | CHIPAKK Control Panel</title>
+    <link rel="stylesheet" href="css/style.css">
+    <style>
+        .admin-sidebar-nav {
+            list-style: none;
+            margin-top: 30px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        .admin-nav-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: var(--text-color);
+            text-decoration: none;
+            font-weight: bold;
+            padding: 8px 12px;
+            border: 2px solid transparent;
+            text-transform: uppercase;
+        }
+        .admin-nav-item.active, .admin-nav-item:hover {
+            background-color: var(--bg-color);
+            border-color: var(--text-color);
+        }
+        .status-badge {
+            font-weight: bold;
+            padding: 2px 8px;
+            border: 2px solid var(--text-color);
+            font-size: 0.75rem;
+            text-transform: uppercase;
+        }
+        .status-low-stock { background-color: var(--accent-yellow); }
+        .status-out-of-stock { background-color: var(--error-color); color: #fff; }
+        .status-in-stock { background-color: var(--success-color); color: #fff; }
+    </style>
+</head>
+<body style="background-color: #f6f5f0;">
+
+    <!-- Login Area (hidden after authentication) -->
+    <div id="login-section" class="container" style="max-width: 450px; margin-top: 100px; display: block;">
+        <div class="retro-panel" style="background-color: #fff;">
+            <div style="text-align: center; margin-bottom: 20px;">
+                <h1 class="font-pixel" style="font-size: 2.5rem; letter-spacing: -1px; margin-bottom: 5px;">CHIPAKK</h1>
+                <p style="font-weight: bold; text-transform: uppercase; font-size: 0.8rem; letter-spacing: 1px;">Control Panel Terminal</p>
+            </div>
+            
+            <p style="margin-bottom: 15px; font-size: 0.8rem; background-color: var(--bg-color); padding: 10px; border: 1px dashed var(--text-color);">
+                Authorized personnel access only.<br>
+                (Demo Mode: admin@dheeraj.com / G1wp23@sticker)
+            </p>
+
+            <div class="retro-field">
+                <label for="admin-email">Admin Email</label>
+                <input type="email" id="admin-email" class="retro-input" placeholder="admin@example.com">
+            </div>
+            <div class="retro-field">
+                <label for="admin-password">Secure Password</label>
+                <input type="password" id="admin-password" class="retro-input" placeholder="••••••••">
+            </div>
+            <button class="retro-btn retro-btn-primary" id="login-btn" style="width: 100%; margin-top: 10px;">
+                ACCESS TERMINAL
+            </button>
+            <p id="login-error" style="color: var(--error-color); margin-top: 10px; font-weight: bold; font-size: 0.85rem; text-align: center;"></p>
+        </div>
+    </div>
+
+    <!-- Admin Panel Workspace (loaded after authentication) -->
+    <div id="admin-workspace" style="display: none;">
+        
+        <!-- Sidebar Navigation -->
+        <aside class="admin-sidebar">
+            <div style="border-bottom: var(--border-width) solid var(--text-color); padding-bottom: 15px;">
+                <h2 class="font-pixel" style="font-size: 2.2rem; letter-spacing: -2px;">CHIPAKK OS</h2>
+                <div style="font-size: 0.75rem; font-weight: bold; opacity: 0.7;">ROOT CONSOLE V2</div>
+            </div>
+            <ul class="admin-sidebar-nav">
+                <li><a href="#" class="admin-nav-item active" data-tab="tab-dashboard">Dashboard</a></li>
+                <li><a href="#" class="admin-nav-item" data-tab="tab-products">Products & Drops</a></li>
+                <li><a href="#" class="admin-nav-item" data-tab="tab-events">Events & Sales</a></li>
+                <li><a href="#" class="admin-nav-item" data-tab="tab-coupons">Coupons</a></li>
+                <li><a href="#" class="admin-nav-item" data-tab="tab-orders">Orders</a></li>
+                <li><a href="#" class="admin-nav-item" data-tab="tab-homepage">Store Builder</a></li>
+                <li><a href="#" class="admin-nav-item" data-tab="tab-logs">Audit Logs</a></li>
+                <li><a href="#" class="admin-nav-item" data-tab="tab-settings">System Settings</a></li>
+            </ul>
+            <div style="margin-top: auto; padding-top: 20px; border-top: 2px solid var(--text-color);">
+                <button class="retro-btn" id="logout-btn" style="width: 100%; box-shadow: none;">LOGOUT</button>
+            </div>
+        </aside>
+
+        <!-- Main Dashboard Viewport -->
+        <main class="admin-main">
+            
+            <!-- TAB: DASHBOARD -->
+            <section id="tab-dashboard" class="tab-content" style="display: block;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;">
+                    <h2 style="font-weight: 900; text-transform: uppercase;">Business Analytics</h2>
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <span style="font-size: 0.8rem; font-weight: bold;">FILTER DATE:</span>
+                        <select id="analytics-date-filter" class="retro-input" style="width: 150px; padding: 4px;">
+                            <option value="today">Today</option>
+                            <option value="7days" selected>7 Days</option>
+                            <option value="30days">30 Days</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="admin-stats-grid">
+                    <div class="admin-stat-card">
+                        <div style="font-size: 0.85rem; font-weight: bold; color: #666; text-transform: uppercase;">Orders Processed</div>
+                        <div id="stat-total-orders" style="font-size: 2.2rem; font-weight: 900; margin-top: 5px;">0</div>
+                    </div>
+                    <div class="admin-stat-card">
+                        <div style="font-size: 0.85rem; font-weight: bold; color: #666; text-transform: uppercase;">Revenue Generated</div>
+                        <div id="stat-total-revenue" style="font-size: 2.2rem; font-weight: 900; margin-top: 5px; color: var(--accent-color);">₹0</div>
+                    </div>
+                    <div class="admin-stat-card">
+                        <div style="font-size: 0.85rem; font-weight: bold; color: #666; text-transform: uppercase;">AOV (Average Order Worth)</div>
+                        <div id="stat-aov" style="font-size: 2.2rem; font-weight: 900; margin-top: 5px;">₹0</div>
+                    </div>
+                    <div class="admin-stat-card">
+                        <div style="font-size: 0.85rem; font-weight: bold; color: #666; text-transform: uppercase;">Low Stock Warning</div>
+                        <div id="stat-low-stock" style="font-size: 2.2rem; font-weight: 900; margin-top: 5px; color: var(--error-color);">0</div>
+                    </div>
+                </div>
+
+                <div class="retro-panel" style="background-color: #fff;">
+                    <h3 style="margin-bottom: 15px; font-weight: bold;">[SYSTEM STATE ACTIVE]</h3>
+                    <p style="font-size: 0.9rem; line-height: 1.6;">Welcome back, Administrator. The sticker database is fully synchronized. Real-time connections are listening for customer deployments.</p>
+                </div>
+            </section>
+
+            <!-- TAB: PRODUCTS & DROPS -->
+            <section id="tab-products" class="tab-content" style="display: none;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; flex-wrap: wrap; gap: 10px;">
+                    <h2 style="font-weight: 900; text-transform: uppercase;">Products & Drop Scheduler</h2>
+                    <button class="retro-btn retro-btn-primary" id="new-prod-btn">+ ADD NEW PRODUCT</button>
+                </div>
+
+                <!-- Product Form Container -->
+                <div id="product-form-container" class="retro-panel" style="background-color: #fff; margin-bottom: 30px; display: none;">
+                    <h3 id="prod-form-title" style="margin-bottom: 20px; font-weight: bold;">[ADD NEW STICKER]</h3>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                        <div>
+                            <div class="retro-field">
+                                <label for="prod-title">Sticker Name</label>
+                                <input type="text" id="prod-title" class="retro-input" required>
+                            </div>
+                            <div class="retro-field">
+                                <label for="prod-price">Normal Price (₹)</label>
+                                <input type="number" id="prod-price" class="retro-input" required>
+                            </div>
+                            <div class="retro-field">
+                                <label for="prod-category">Category</label>
+                                <select id="prod-category" class="retro-input">
+                                    <option value="Gaming">Gaming</option>
+                                    <option value="Memes">Memes</option>
+                                    <option value="Cute">Cute</option>
+                                    <option value="Chaos">Chaos</option>
+                                    <option value="Tech">Tech</option>
+                                    <option value="Retro">Retro</option>
+                                </select>
+                            </div>
+                            <div class="retro-field">
+                                <label for="prod-tags">Search Tags</label>
+                                <input type="text" id="prod-tags" class="retro-input" placeholder="comma, separated, list">
+                            </div>
+                            <div class="retro-field">
+                                <label for="prod-stock">Initial Stock Quantity</label>
+                                <input type="number" id="prod-stock" class="retro-input" value="100">
+                            </div>
+                        </div>
+                        <div style="display: flex; flex-direction: column; justify-content: space-between;">
+                            <div class="retro-field">
+                                <label for="prod-rarity">Rarity Level</label>
+                                <select id="prod-rarity" class="retro-input">
+                                    <option value="common">Common</option>
+                                    <option value="uncommon">Uncommon</option>
+                                    <option value="rare">Rare</option>
+                                    <option value="epic">Epic</option>
+                                    <option value="legendary">Legendary</option>
+                                </select>
+                            </div>
+                            <div class="retro-field">
+                                <label for="prod-image">Image File / URL</label>
+                                <input type="text" id="prod-image" class="retro-input" placeholder="Image URL address">
+                            </div>
+                            <div class="retro-field">
+                                <label for="prod-release-date">Scheduled Drop Release (Date/Time)</label>
+                                <input type="datetime-local" id="prod-release-date" class="retro-input">
+                            </div>
+                            <div class="retro-field">
+                                <label for="prod-desc">Description</label>
+                                <textarea id="prod-desc" rows="3" class="retro-input"></textarea>
+                            </div>
+                            <div style="display: flex; gap: 15px; margin-top: 15px;">
+                                <button class="retro-btn retro-btn-primary" id="save-prod-btn">SAVE STICKER</button>
+                                <button class="retro-btn" id="cancel-prod-btn">CANCEL</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="admin-table-container">
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>Thumbnail</th>
+                                <th>Sticker Name</th>
+                                <th>Price</th>
+                                <th>Category</th>
+                                <th>Stock</th>
+                                <th>Scheduled Release</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="products-tbody">
+                            <!-- Items injected dynamically -->
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- TAB: EVENTS & SALES -->
+            <section id="tab-events" class="tab-content" style="display: none;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px;">
+                    <h2 style="font-weight: 900; text-transform: uppercase;">Event Promotions Scheduler</h2>
+                    <button class="retro-btn retro-btn-primary" id="new-event-btn">+ SCHEDULE EVENT</button>
+                </div>
+
+                <!-- Event form -->
+                <div id="event-form-container" class="retro-panel" style="background-color: #fff; margin-bottom: 30px; display: none;">
+                    <h3 style="margin-bottom: 20px; font-weight: bold;">[SCHEDULE EVENT PROMOTION]</h3>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                        <div>
+                            <div class="retro-field">
+                                <label for="evt-name">Event Name</label>
+                                <input type="text" id="evt-name" class="retro-input" required placeholder="e.g. Diwali Flash Sale">
+                            </div>
+                            <div class="retro-field">
+                                <label for="evt-type">Promotion Type</label>
+                                <select id="evt-type" class="retro-input">
+                                    <option value="Flash Sale">Flash Sale</option>
+                                    <option value="Sitewide Discount">Sitewide Discount</option>
+                                    <option value="Seasonal Drop">Seasonal Drop</option>
+                                </select>
+                            </div>
+                            <div class="retro-field">
+                                <label for="evt-discount">Discount (Percentage %)</label>
+                                <input type="number" id="evt-discount" class="retro-input" value="10">
+                            </div>
+                            <div class="retro-field">
+                                <label>Target Products</label>
+                                <div id="evt-products-checkboxes" style="max-height: 120px; overflow-y: auto; border: 1px solid var(--text-color); padding: 8px;">
+                                    <!-- Injected -->
+                                </div>
+                            </div>
+                        </div>
+                        <div>
+                            <div class="retro-field">
+                                <label for="evt-start">Start Time</label>
+                                <input type="datetime-local" id="evt-start" class="retro-input" required>
+                            </div>
+                            <div class="retro-field">
+                                <label for="evt-end">End Time</label>
+                                <input type="datetime-local" id="evt-end" class="retro-input" required>
+                            </div>
+                            <div class="retro-field">
+                                <label for="evt-status">Default Status</label>
+                                <select id="evt-status" class="retro-input">
+                                    <option value="Scheduled">Scheduled</option>
+                                    <option value="Live">Live</option>
+                                    <option value="Draft">Draft</option>
+                                </select>
+                            </div>
+                            <div style="display: flex; gap: 15px; margin-top: 45px;">
+                                <button class="retro-btn retro-btn-primary" id="save-event-btn">SAVE EVENT</button>
+                                <button class="retro-btn" id="cancel-event-btn">CANCEL</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="admin-table-container">
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>Event Name</th>
+                                <th>Type</th>
+                                <th>Discount</th>
+                                <th>Start Window</th>
+                                <th>End Window</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="events-tbody">
+                            <!-- Injected -->
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- TAB: COUPONS -->
+            <section id="tab-coupons" class="tab-content" style="display: none;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px;">
+                    <h2 style="font-weight: 900; text-transform: uppercase;">Coupons Engine</h2>
+                    <button class="retro-btn retro-btn-primary" id="new-coupon-btn">+ CREATE COUPON</button>
+                </div>
+
+                <div id="coupon-form-container" class="retro-panel" style="background-color: #fff; margin-bottom: 30px; display: none;">
+                    <h3 style="margin-bottom: 20px; font-weight: bold;">[CREATE COUPON CODE]</h3>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                        <div>
+                            <div class="retro-field">
+                                <label for="cpn-code">Cheat Code (Coupon Code)</label>
+                                <input type="text" id="cpn-code" class="retro-input" placeholder="e.g. EXTRA20" required>
+                            </div>
+                            <div class="retro-field">
+                                <label for="cpn-type">Discount Type</label>
+                                <select id="cpn-type" class="retro-input">
+                                    <option value="percent">Percentage (%)</option>
+                                    <option value="fixed">Fixed Amount (₹)</option>
+                                </select>
+                            </div>
+                            <div class="retro-field">
+                                <label for="cpn-amount">Discount Value</label>
+                                <input type="number" id="cpn-amount" class="retro-input" required>
+                            </div>
+                        </div>
+                        <div>
+                            <div class="retro-field">
+                                <label for="cpn-min">Minimum Order Total Required (₹)</label>
+                                <input type="number" id="cpn-min" class="retro-input" value="0">
+                            </div>
+                            <div class="retro-field">
+                                <label for="cpn-active">Enable Coupon</label>
+                                <select id="cpn-active" class="retro-input">
+                                    <option value="true">Active (On)</option>
+                                    <option value="false">Inactive (Off)</option>
+                                </select>
+                            </div>
+                            <div style="display: flex; gap: 15px; margin-top: 45px;">
+                                <button class="retro-btn retro-btn-primary" id="save-coupon-btn">SAVE COUPON</button>
+                                <button class="retro-btn" id="cancel-coupon-btn">CANCEL</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="admin-table-container" style="max-width: 800px;">
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>Coupon Code</th>
+                                <th>Discount Type</th>
+                                <th>Discount Value</th>
+                                <th>Min. Order</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="coupons-tbody">
+                            <!-- Injected -->
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- TAB: CATEGORIES -->
+            <section id="tab-categories" class="tab-content" style="display: none;">
+                <h2 style="font-weight: 900; margin-bottom: 25px; text-transform: uppercase;">Categories Sectors</h2>
+                <div class="retro-panel" style="background-color: #fff; max-width: 500px; margin-bottom: 30px; display: flex; gap: 10px;">
+                    <input type="text" id="new-cat-input" class="retro-input" placeholder="New Category Name">
+                    <button class="retro-btn retro-btn-primary" id="add-cat-btn" style="white-space: nowrap;">ADD SECTOR</button>
+                </div>
+                <div class="admin-table-container" style="max-width: 600px;">
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>Category Name</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="categories-tbody">
+                            <!-- Injected dynamically -->
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- TAB: ORDERS -->
+            <section id="tab-orders" class="tab-content" style="display: none;">
+                <h2 style="font-weight: 900; margin-bottom: 25px; text-transform: uppercase;">Customer Deployments</h2>
+                <div class="admin-table-container">
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>Order ID</th>
+                                <th>Customer Name</th>
+                                <th>Delivery Coordinates</th>
+                                <th>Items Installed</th>
+                                <th>Total Price</th>
+                                <th>Fulfillment Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="orders-tbody">
+                            <!-- Injected dynamically -->
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- TAB: STORE BUILDER -->
+            <section id="tab-homepage" class="tab-content" style="display: none;">
+                <h2 style="font-weight: 900; margin-bottom: 25px; text-transform: uppercase;">Storefront visual editor</h2>
+                <div class="retro-panel" style="background-color: #fff; max-width: 650px;">
+                    <h3 style="margin-bottom: 20px; font-weight: bold;">[HOMEPAGE & TEXT VALUES]</h3>
+                    
+                    <div class="retro-field">
+                        <label for="set-announcement">Sitewide Announcement Ticker</label>
+                        <input type="text" id="set-announcement" class="retro-input">
+                    </div>
+                    <div class="retro-field">
+                        <label for="set-announcement-active">Enable Announcement Bar</label>
+                        <select id="set-announcement-active" class="retro-input">
+                            <option value="true">Active (On)</option>
+                            <option value="false">Inactive (Off)</option>
+                        </select>
+                    </div>
+
+                    <hr style="margin: 20px 0; border-color: var(--text-color);">
+
+                    <div class="retro-field">
+                        <label for="set-hero-headline">Hero Primary Headline</label>
+                        <input type="text" id="set-hero-headline" class="retro-input">
+                    </div>
+                    <div class="retro-field">
+                        <label for="set-hero-subheadline">Hero Subtitle Paragraph</label>
+                        <textarea id="set-hero-subheadline" class="retro-input" rows="3"></textarea>
+                    </div>
+
+                    <button class="retro-btn retro-btn-primary" id="save-homepage-btn" style="width: 100%; margin-top: 15px;">
+                        COMPILE HOMEPAGE CONFIGURATION
+                    </button>
+                </div>
+            </section>
+
+            <!-- TAB: AUDIT LOGS -->
+            <section id="tab-logs" class="tab-content" style="display: none;">
+                <h2 style="font-weight: 900; margin-bottom: 25px; text-transform: uppercase;">Security Audit Logs</h2>
+                <div class="audit-log-console" id="audit-logs-container">
+                    <!-- Log entries injected dynamically -->
+                </div>
+            </section>
+
+            <!-- TAB: SYSTEM SETTINGS -->
+            <section id="tab-settings" class="tab-content" style="display: none;">
+                <h2 style="font-weight: 900; margin-bottom: 25px; text-transform: uppercase;">Global settings</h2>
+                <div class="retro-panel" style="background-color: #fff; max-width: 600px;">
+                    <h3 style="margin-bottom: 20px; font-weight: bold;">[CORE SETTINGS]</h3>
+                    
+                    <div class="retro-field">
+                        <label for="set-shipping-fee">Standard Shipping Fee (₹)</label>
+                        <input type="number" id="set-shipping-fee" class="retro-input">
+                    </div>
+                    <div class="retro-field">
+                        <label for="set-free-shipping-enabled">Enable Free Shipping Policy</label>
+                        <select id="set-free-shipping-enabled" class="retro-input">
+                            <option value="true">Active (On)</option>
+                            <option value="false">Inactive (Off)</option>
+                        </select>
+                    </div>
+                    <div class="retro-field">
+                        <label for="set-shipping-threshold">Free Shipping Threshold Value (₹)</label>
+                        <input type="number" id="set-shipping-threshold" class="retro-input">
+                    </div>
+                    <div class="retro-field">
+                        <label for="set-free-shipping-calculation">Threshold Stacking Evaluation</label>
+                        <select id="set-free-shipping-calculation" class="retro-input">
+                            <option value="after_discounts">Eligible subtotal AFTER product/coupon discounts (Default)</option>
+                            <option value="before_discounts">Eligible subtotal BEFORE any discounts</option>
+                        </select>
+                    </div>
+
+                    <hr style="margin: 20px 0; border-color: var(--text-color);">
+
+                    <div class="retro-field">
+                        <label for="set-maintenance-active" style="color: var(--error-color);">LOCK DOWN SYSTEM (MAINTENANCE MODE)</label>
+                        <select id="set-maintenance-active" class="retro-input" style="border-color: var(--error-color);">
+                            <option value="false">Active (Online Store open)</option>
+                            <option value="true">Locked (Updates splash screen active)</option>
+                        </select>
+                    </div>
+                    <div class="retro-field">
+                        <label for="set-maintenance-msg">Custom Maintenance Mode Display Text</label>
+                        <input type="text" id="set-maintenance-msg" class="retro-input" placeholder="We will return shortly.">
+                    </div>
+
+                    <button class="retro-btn retro-btn-primary" id="save-settings-btn" style="width: 100%; margin-top: 15px;">
+                        APPLY SYSTEM SETTINGS
+                    </button>
+                </div>
+            </section>
+
+        </main>
+    </div>
+
+    <!-- Retro System Alert Toast Notification -->
+    <div class="retro-toast" id="admin-toast">
+        <div class="toast-header">
+            <span>ADMIN.SYS</span>
+            <button class="icon-btn" id="close-toast-btn" style="font-size: 0.9rem;" onclick="document.getElementById('admin-toast').classList.remove('show')">×</button>
+        </div>
+        <div style="font-size: 0.9rem;" id="admin-toast-text">System update complete.</div>
+    </div>
+
+    <script type="module" src="js/firebase-config.js"></script>
+    <script type="module" src="js/admin.js"></script>
+</body>
+</html>

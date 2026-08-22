@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CHIPAKK - Fast Retro Gaming Stickers</title>
+    <meta name="description" content="Get premium retro gaming, pop culture, and pixel stickers for your chaotic world. Fast checkout, instant catalog views.">
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+    <!-- Maintenance System Overlay -->
+    <div id="maintenance-overlay" class="maintenance-screen" style="display: none;">
+        <div class="maintenance-box">
+            <div class="maintenance-title">CHIPAKK SYSTEM EXCEPTION</div>
+            <p>CHIPAKK.EXE is currently installing a system update.</p>
+            <br>
+            <p id="maintenance-custom-message">We'll be back shortly with brand new sticker deployments.</p>
+            <br><br>
+            <p style="font-size: 0.8rem;">ERROR CODE: MAINTENANCE_MODE_ACTIVE</p>
+        </div>
+    </div>
+
+    <!-- Global Announcements Bar -->
+    <div id="global-announcement-bar" class="announcement-bar" style="display: none;">
+        🚀 FREE SHIPPING ON ORDER DEPLOYMENTS ABOVE ₹499
+    </div>
+
+    <!-- Sticky Header Navigation -->
+    <header class="main-header">
+        <div class="container header-container">
+            <a href="#" class="brand-logo" id="logo-link">
+                <img src="logo.png" alt="CHIPAKK Logo" onerror="this.src='https://via.placeholder.com/30/0000FF/FFFFFF?text=C'">
+                CHIPAKK
+            </a>
+            <nav class="nav-links">
+                <a href="#" class="nav-link" data-route="home">HOME</a>
+                <a href="#" class="nav-link" data-route="shop">SHOP</a>
+                <a href="#" class="nav-link" data-route="collections">COLLECTIONS</a>
+                <a href="#" class="nav-link" data-route="new-drops">NEW DROPS</a>
+                <a href="#" class="nav-link" data-route="about">ABOUT</a>
+            </nav>
+            <div class="header-actions">
+                <button class="icon-btn" id="header-search-btn">SEARCH</button>
+                <button class="icon-btn" id="header-cart-btn">
+                    CART
+                    <span class="cart-count-badge" id="cart-badge-count">0</span>
+                </button>
+                <button class="menu-toggle" id="mobile-menu-btn">☰</button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Mobile Drawer Navigation -->
+    <div class="drawer-overlay" id="mobile-menu-overlay"></div>
+    <div class="cart-drawer" id="mobile-menu-drawer" style="right: -300px; width: 280px;">
+        <div class="cart-header">
+            <h3 class="font-pixel" style="font-size: 1.5rem;">MENU</h3>
+            <button class="icon-btn" id="close-mobile-menu-btn" style="font-size: 1.5rem;">×</button>
+        </div>
+        <div style="display: flex; flex-direction: column; padding: 20px; gap: 20px;">
+            <a href="#" class="nav-link mobile-nav-link" data-route="home">HOME</a>
+            <a href="#" class="nav-link mobile-nav-link" data-route="shop">SHOP ALL</a>
+            <a href="#" class="nav-link mobile-nav-link" data-route="collections">COLLECTIONS</a>
+            <a href="#" class="nav-link mobile-nav-link" data-route="new-drops">NEW DROPS</a>
+            <a href="#" class="nav-link mobile-nav-link" data-route="about">ABOUT</a>
+            <hr style="border-color: var(--text-color);">
+            <a href="admin.html" class="nav-link" style="font-size: 0.8rem; opacity: 0.7;">ADMIN LOGIN</a>
+        </div>
+    </div>
+
+    <!-- Main Dynamic Pages Container -->
+    <main>
+        
+        <!-- PAGE: HOME -->
+        <section class="home-page" id="page-home" style="display: block;">
+            <!-- Hero Section -->
+            <div class="hero">
+                <div class="container hero-grid">
+                    <div class="hero-content">
+                        <h1 class="font-pixel" id="hero-headline">STICKERS FOR YOUR CHAOTIC WORLD.</h1>
+                        <p id="hero-subheadline">High-quality, durable vinyl decals featuring underground internet culture, retro gaming icons, and glitch art aesthetics.</p>
+                        <div class="cta-group">
+                            <button class="retro-btn retro-btn-primary" onclick="navigateToRoute('shop')">SHOP STICKERS</button>
+                            <button class="retro-btn" onclick="navigateToRoute('new-drops')">NEW DROPS</button>
+                        </div>
+                    </div>
+                    <div style="text-align: center;">
+                        <img src="logo.png" style="max-width: 90%; height: auto; image-rendering: pixelated;" alt="Featured sticker grid">
+                    </div>
+                </div>
+            </div>
+
+            <!-- New Drops Section -->
+            <div class="container section-padding section-border">
+                <h2 class="section-title">New Drops Detected</h2>
+                <div class="product-grid" id="home-new-drops-grid">
+                    <!-- Loaded dynamically via JS -->
+                </div>
+            </div>
+
+            <!-- Best Sellers Section -->
+            <div class="container section-padding section-border">
+                <h2 class="section-title">Best Sellers</h2>
+                <div class="product-grid" id="home-best-sellers-grid">
+                    <!-- Loaded dynamically via JS -->
+                </div>
+            </div>
+
+            <!-- Shop by Collection -->
+            <div class="container section-padding">
+                <h2 class="section-title">Shop by Sector</h2>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 20px;">
+                    <div class="product-card" onclick="filterShopCollection('Gaming')" style="cursor: pointer; padding: 20px; text-align: center;">
+                        <h3 class="font-pixel" style="font-size: 1.8rem; margin-bottom: 5px;">GAMING</h3>
+                        <p style="font-size: 0.8rem;">8-bit pixels & classic hardware</p>
+                    </div>
+                    <div class="product-card" onclick="filterShopCollection('Memes')" style="cursor: pointer; padding: 20px; text-align: center;">
+                        <h3 class="font-pixel" style="font-size: 1.8rem; margin-bottom: 5px;">MEMES</h3>
+                        <p style="font-size: 0.8rem;">Modern chaotic internet humor</p>
+                    </div>
+                    <div class="product-card" onclick="filterShopCollection('Cute')" style="cursor: pointer; padding: 20px; text-align: center;">
+                        <h3 class="font-pixel" style="font-size: 1.8rem; margin-bottom: 5px;">CUTE</h3>
+                        <p style="font-size: 0.8rem;">Friendly compiling companion decals</p>
+                    </div>
+                    <div class="product-card" onclick="filterShopCollection('Chaos')" style="cursor: pointer; padding: 20px; text-align: center;">
+                        <h3 class="font-pixel" style="font-size: 1.8rem; margin-bottom: 5px;">CHAOS</h3>
+                        <p style="font-size: 0.8rem;">Glitch graphics & cyber skulls</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- PAGE: SHOP CATALOG -->
+        <section class="shop-page" id="page-shop">
+            <div class="container section-padding">
+                <h2 class="section-title">Sticker Database</h2>
+                
+                <div id="shop-shipping-notice" style="font-size: 0.85rem; font-weight: bold; margin-bottom: 20px; display: inline-flex; align-items: center; gap: 8px;">
+                    🚚 DELIVERY.EXE: <span id="shop-shipping-threshold-text">₹300+</span> ORDERS = FREE DELIVERY
+                </div>
+                
+                <div class="filter-tabs">
+                    <button class="filter-tab active" data-category="All">All Stickers</button>
+                    <button class="filter-tab" data-category="Gaming">Gaming</button>
+                    <button class="filter-tab" data-category="Memes">Memes</button>
+                    <button class="filter-tab" data-category="Cute">Cute</button>
+                    <button class="filter-tab" data-category="Chaos">Chaos</button>
+                    <button class="filter-tab" data-category="Tech">Tech</button>
+                    <button class="filter-tab" data-category="Retro">Retro</button>
+                </div>
+
+                <div class="product-grid" id="shop-catalog-grid">
+                    <!-- Dynamic Product Cards Injected Here -->
+                </div>
+            </div>
+        </section>
+
+        <!-- PAGE: PRODUCT DETAILS -->
+        <section class="details-page" id="page-details">
+            <div class="container section-padding">
+                <button class="retro-btn" onclick="navigateToRoute('shop')" style="margin-bottom: 25px;">&lt; BACK TO DATABASE</button>
+                <div class="detail-grid" id="product-detail-view">
+                    <!-- Populated dynamically via JS -->
+                </div>
+            </div>
+        </section>
+
+        <!-- PAGE: CHECKOUT -->
+        <section class="checkout-page" id="page-checkout">
+            <div class="container section-padding">
+                <h2 class="section-title">Checkout Terminal</h2>
+                <div class="checkout-grid">
+                    
+                    <!-- Checkout details form -->
+                    <div class="retro-panel">
+                        <h3 style="margin-bottom: 20px; font-weight: bold;">[SECURE ORDER FORM]</h3>
+                        
+                        <!-- Coupon Code Field -->
+                        <div class="retro-panel" style="display: flex; gap: 10px; margin-bottom: 20px; background-color: #fff;">
+                            <input type="text" id="chk-coupon" class="retro-input" placeholder="ENTER CHEAT CODE (COUPON)">
+                            <button class="retro-btn retro-btn-yellow" id="apply-coupon-btn" style="white-space: nowrap;">APPLY</button>
+                        </div>
+
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                            <div class="retro-field">
+                                <label for="chk-first-name">First Name</label>
+                                <input type="text" id="chk-first-name" class="retro-input" required>
+                            </div>
+                            <div class="retro-field">
+                                <label for="chk-last-name">Last Name</label>
+                                <input type="text" id="chk-last-name" class="retro-input" required>
+                            </div>
+                        </div>
+                        <div class="retro-field">
+                            <label for="chk-email">E-mail Address</label>
+                            <input type="email" id="chk-email" class="retro-input" required>
+                        </div>
+                        <div class="retro-field">
+                            <label for="chk-address">Shipping Address</label>
+                            <input type="text" id="chk-address" class="retro-input" placeholder="Street Address" required>
+                        </div>
+                        <div style="display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 15px;">
+                            <div class="retro-field">
+                                <label for="chk-city">City</label>
+                                <input type="text" id="chk-city" class="retro-input" required>
+                            </div>
+                            <div class="retro-field">
+                                <label for="chk-zip">Postal Code</label>
+                                <input type="text" id="chk-zip" class="retro-input" required>
+                            </div>
+                        </div>
+                        <div class="retro-field">
+                            <label for="chk-payment">Payment Emulation</label>
+                            <select id="chk-payment">
+                                <option value="Card">Visa / Mastercard Emulator</option>
+                                <option value="UPI">UPI Pixel Transfer</option>
+                                <option value="COD">Analog Cash (COD)</option>
+                            </select>
+                        </div>
+                        <button class="retro-btn retro-btn-primary" id="place-order-btn" style="width: 100%; margin-top: 15px;">
+                            INSTALL STICKER PACKAGE
+                        </button>
+                    </div>
+
+                    <!-- Sidebar Order Summary -->
+                    <div class="retro-panel" style="background-color: #fff;">
+                        <h3 style="margin-bottom: 20px; font-weight: bold;">[ORDER CONTENTS]</h3>
+                        <div id="checkout-summary-items" style="max-height: 200px; overflow-y: auto; margin-bottom: 20px;">
+                            <!-- Injected by JS -->
+                        </div>
+                        <div style="border-top: 2px dashed var(--text-color); padding: 15px 0 10px; display: flex; justify-content: space-between; font-size: 0.95rem;">
+                            <span>DISCOUNT APPLIED:</span>
+                            <span id="checkout-discount-val">₹0</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; font-size: 0.95rem; margin-bottom: 15px;">
+                            <span>SHIPPING CHARGES:</span>
+                            <span id="checkout-shipping-val">₹0</span>
+                        </div>
+                        <div style="border-top: 2px dashed var(--text-color); padding-top: 15px; display: flex; justify-content: space-between; font-weight: bold; font-size: 1.2rem;">
+                            <span>TOTAL WORTH:</span>
+                            <span id="checkout-total-price">₹0</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- PAGE: ABOUT -->
+        <section class="about-page" id="page-about" style="display: none;">
+            <div class="container section-padding" style="max-width: 800px;">
+                <h2 class="section-title">Why CHIPAKK?</h2>
+                <div class="retro-panel" style="background-color: #fff; line-height: 1.6; font-size: 1.05rem;">
+                    <p style="margin-bottom: 15px;">CHIPAKK makes high-grade custom and curated stickers for laptops, keyboards, retro builds, and anything else you want to deck out.</p>
+                    <p style="margin-bottom: 15px;">Our designs are inspired by 90s technology, early Windows system alerts, retro console cartridges, and underground hacker aesthetics.</p>
+                    <p>Every single sticker is printed on thick, weatherproof, and scratch-resistant premium vinyl, ensuring it survives both real-world scuffs and compile errors.</p>
+                </div>
+            </div>
+        </section>
+        
+        <!-- PAGE: ORDER SUCCESS -->
+        <section class="success-page" id="page-success" style="display: none;">
+            <div class="container section-padding" style="max-width: 600px; text-align: center;">
+                <div class="retro-panel" style="background-color: #fff;">
+                    <h1 class="font-pixel" style="font-size: 3rem; color: var(--success-color); margin-bottom: 10px;">INSTALLATION COMPLETE!</h1>
+                    <p style="font-weight: bold; margin-bottom: 20px;">Your sticker package has been successfully installed in the queue.</p>
+                    <div style="background-color: var(--bg-color); border: 2px dashed var(--text-color); padding: 15px; font-size: 0.9rem; margin-bottom: 25px; text-align: left;">
+                        <div><strong>ORDER REFERENCE:</strong> <span id="success-order-id">#CHP-00000</span></div>
+                        <div><strong>ESTIMATED TRANSPORT:</strong> 2 - 5 cycles (days)</div>
+                    </div>
+                    <button class="retro-btn retro-btn-primary" onclick="navigateToRoute('home')">CONTINUE SHOPPING</button>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Side Shopping Cart Drawer -->
+    <div class="drawer-overlay" id="cart-drawer-overlay"></div>
+    <div class="cart-drawer" id="cart-drawer">
+        <div class="cart-header">
+            <h3 class="font-pixel" style="font-size: 1.5rem;">CART INVENTORY</h3>
+            <button class="icon-btn" id="close-cart-btn" style="font-size: 1.5rem;">×</button>
+        </div>
+        <div class="cart-items" id="cart-items-container">
+            <!-- Items injected by JS -->
+        </div>
+        <div class="cart-footer">
+            <div id="cart-shipping-progress" style="font-size: 0.8rem; font-weight: bold; background: var(--bg-color); border: 2px dashed var(--text-color); padding: 8px; text-align: center; margin-bottom: 12px;">
+                ADD ₹300 MORE TO UNLOCK FREE DELIVERY 🚚
+            </div>
+            <div style="display: flex; justify-content: space-between; font-weight: bold; font-size: 1.15rem; margin-bottom: 15px;">
+                <span>SUBTOTAL:</span>
+                <span id="cart-subtotal-price">₹0</span>
+            </div>
+            <button class="retro-btn retro-btn-primary" id="checkout-drawer-btn" style="width: 100%; justify-content: center;">
+                PROCEED TO CHECKOUT
+            </button>
+        </div>
+    </div>
+
+    <!-- Retro System Alert Toast Notification -->
+    <div class="retro-toast" id="retro-system-toast">
+        <div class="toast-header">
+            <span>CHIPAKK.EXE</span>
+            <button class="icon-btn" id="close-toast-btn" style="font-size: 0.9rem;">×</button>
+        </div>
+        <div style="font-size: 0.9rem;" id="toast-message-text">Sticker successfully acquired!</div>
+    </div>
+
+    <!-- Global Footer -->
+    <footer style="border-top: var(--border-width) solid var(--text-color); padding: 30px 0; background-color: var(--bg-color);">
+        <div class="container" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;">
+            <div style="font-size: 0.85rem;">
+                © 2026 CHIPAKK CORP. STAY WEIRD.
+            </div>
+            <div style="display: flex; gap: 20px; align-items: center;">
+                <a href="admin.html" style="font-size: 0.85rem; color: var(--text-color); text-decoration: none; font-weight: bold;">ADMIN PANEL</a>
+            </div>
+        </div>
+    </footer>
+
+    <script type="module" src="js/firebase-config.js"></script>
+    <script type="module" src="js/app.js"></script>
+</body>
+</html>
