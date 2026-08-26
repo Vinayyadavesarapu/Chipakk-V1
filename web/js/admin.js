@@ -1,6 +1,6 @@
 import { db, auth } from './firebase-config.js';
 import { signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { collection, query, orderBy, onSnapshot, doc, updateDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { collection, query, orderBy, onSnapshot, doc, updateDoc, getDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 // DOM Elements
 const loginSection = document.getElementById('login-section');
@@ -25,9 +25,41 @@ let editingCouponId = null;
 
 // Auth observer
 if (auth) {
-    onAuthStateChanged(auth, (user) => {
+    onAuthStateChanged(auth, async (user) => {
         if (user) {
-            initDashboard();
+            loginSection.style.display = 'block';
+            adminWorkspace.style.display = 'none';
+            loginError.textContent = "Verifying admin authorization...";
+            loginError.style.color = "var(--text-color)";
+
+            try {
+                const docRef = doc(db, "admins", user.uid);
+                const docSnap = await getDoc(docRef);
+
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    if ((data.role === 'admin' || data.role === 'super_admin') && data.active === true) {
+                        loginError.textContent = "";
+                        initDashboard();
+                        writeAuditLog(user.email, "Administrator session active.");
+                        return;
+                    }
+                }
+                throw new Error("UNAUTHORIZED");
+            } catch (e) {
+                console.error("Admin verification failed:", e);
+                if (e.code === 'permission-denied') {
+                    loginError.textContent = "Database access denied. Verify Firestore rules & document path 'admins/" + user.uid + "'.";
+                } else if (e.message === "UNAUTHORIZED") {
+                    loginError.textContent = "Access Denied: Account not authorized as administrator.";
+                } else {
+                    loginError.textContent = "System verification error. Please try again.";
+                }
+                loginError.style.color = "var(--error-color)";
+                await signOut(auth);
+                loginBtn.textContent = "ACCESS TERMINAL";
+                loginBtn.disabled = false;
+            }
         } else {
             loginSection.style.display = 'block';
             adminWorkspace.style.display = 'none';
@@ -42,6 +74,7 @@ loginBtn.addEventListener('click', async () => {
 
     if (!email || !password) {
         loginError.textContent = "Please fill in email and password.";
+        loginError.style.color = "var(--error-color)";
         return;
     }
 
@@ -49,30 +82,25 @@ loginBtn.addEventListener('click', async () => {
     loginBtn.textContent = "VERIFYING AUTHORIZATION...";
     loginBtn.disabled = true;
 
-    if (email === "admin@dheeraj.com" && password === "G1wp23@sticker") {
-        sessionStorage.setItem('chipakk_admin_auth', 'true');
-        writeAuditLog("System", "Administrator session authorized via demo override.");
-        initDashboard();
-        loginBtn.textContent = "ACCESS TERMINAL";
-        loginBtn.disabled = false;
-        return;
-    }
-
     try {
         if (!auth) throw new Error("Auth offline");
         await signInWithEmailAndPassword(auth, email, password);
-        writeAuditLog(email, "Administrator logged in successfully.");
     } catch (e) {
-        loginError.textContent = "Invalid login credentials.";
-    } finally {
+        console.error("Login failed:", e);
+        if (e.code === 'auth/invalid-credential' || e.code === 'auth/wrong-password' || e.code === 'auth/user-not-found') {
+            loginError.textContent = "Invalid login credentials.";
+        } else if (e.code === 'auth/user-disabled') {
+            loginError.textContent = "This administrator account is disabled.";
+        } else if (e.code === 'auth/network-request-failed') {
+            loginError.textContent = "Network error. Check connection.";
+        } else {
+            loginError.textContent = "Authentication failed. Try again.";
+        }
+        loginError.style.color = "var(--error-color)";
         loginBtn.textContent = "ACCESS TERMINAL";
         loginBtn.disabled = false;
     }
 });
-
-if (sessionStorage.getItem('chipakk_admin_auth') === 'true') {
-    initDashboard();
-}
 
 function initDashboard() {
     loginSection.style.display = 'none';
@@ -119,9 +147,14 @@ function setupNavigation() {
         };
     });
 
-    document.getElementById('logout-btn').onclick = () => {
-        sessionStorage.removeItem('chipakk_admin_auth');
-        if (auth && auth.currentUser) signOut(auth);
+    document.getElementById('logout-btn').onclick = async () => {
+        if (auth) {
+            try {
+                await signOut(auth);
+            } catch (e) {
+                console.error("Logout error:", e);
+            }
+        }
         window.location.reload();
     };
 }
