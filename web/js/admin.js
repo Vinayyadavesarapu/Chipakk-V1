@@ -1,6 +1,7 @@
-import { db, auth } from './firebase-config.js';
+import { db, auth, storage } from './firebase-config.js';
 import { signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { collection, query, orderBy, onSnapshot, doc, updateDoc, getDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { ref, uploadBytesResumable, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 // DOM Elements
 const loginSection = document.getElementById('login-section');
@@ -18,6 +19,7 @@ let events = JSON.parse(localStorage.getItem('events') || '[]');
 let coupons = JSON.parse(localStorage.getItem('coupons') || '[]');
 let auditLogs = JSON.parse(localStorage.getItem('audit_logs') || '[]');
 let siteSettings = JSON.parse(localStorage.getItem('site_settings') || '{}');
+let currentProductImages = [];
 
 let editingProductId = null;
 let editingEventId = null;
@@ -217,6 +219,103 @@ function setupProductForm() {
         resetProductInputs();
     };
 
+    // File picker listener for local uploads
+    const fileInput = document.getElementById('prod-image-files');
+    const progressEl = document.getElementById('prod-image-progress');
+
+    fileInput.addEventListener('change', async (e) => {
+        const files = Array.from(e.target.files);
+        if (files.length === 0) return;
+
+        // Check 5 images limit
+        if (currentProductImages.length + files.length > 5) {
+            showToast("ERROR: Maximum of 5 images allowed per product.");
+            fileInput.value = '';
+            return;
+        }
+
+        progressEl.style.display = 'block';
+
+        for (const file of files) {
+            // Validation: MIME types
+            const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+            if (!allowedTypes.includes(file.type)) {
+                showToast(`ERROR: Unsupported file format: ${file.name}`);
+                continue;
+            }
+
+            // Validation: Size (2MB)
+            if (file.size > 2 * 1024 * 1024) {
+                showToast(`ERROR: File too large (>2MB): ${file.name}`);
+                continue;
+            }
+
+            // Generate unique path
+            const uniqueId = Math.random().toString(36).substring(2, 10);
+            const sanitizedName = file.name.trim().toLowerCase().replace(/[^a-z0-9.]+/g, '_');
+            const tempProductId = editingProductId || `temp_${Date.now()}`;
+            const storagePath = `products/${tempProductId}/${uniqueId}_${sanitizedName}`;
+
+            const fileRef = ref(storage, storagePath);
+            const uploadTask = uploadBytesResumable(fileRef, file);
+
+            try {
+                await new Promise((resolve, reject) => {
+                    uploadTask.on('state_changed', 
+                        (snapshot) => {
+                            const progress = Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100);
+                            progressEl.textContent = `Uploading "${file.name}": ${progress}%`;
+                        }, 
+                        (error) => {
+                            reject(error);
+                        }, 
+                        () => {
+                            resolve();
+                        }
+                    );
+                });
+
+                const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+                currentProductImages.push(downloadURL);
+                renderProductImages();
+                showToast(`✓ Image uploaded successfully: ${file.name}`);
+            } catch (err) {
+                console.error("Upload failed:", err);
+                showToast(`ERROR: Failed to upload ${file.name}. Please retry.`);
+            }
+        }
+
+        progressEl.style.display = 'none';
+        fileInput.value = '';
+    });
+
+    // External URL add button listener
+    const urlInput = document.getElementById('prod-image-url');
+    const addUrlBtn = document.getElementById('add-image-url-btn');
+
+    addUrlBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        const url = urlInput.value.trim();
+        if (!url) return;
+
+        // Check 5 images limit
+        if (currentProductImages.length >= 5) {
+            showToast("ERROR: Maximum of 5 images allowed per product.");
+            return;
+        }
+
+        // Validate URL protocol
+        if (!url.startsWith('http://') && !url.startsWith('https://')) {
+            showToast("ERROR: Invalid URL protocol. Must use http:// or https://");
+            return;
+        }
+
+        currentProductImages.push(url);
+        renderProductImages();
+        urlInput.value = '';
+        showToast("✓ External image URL added.");
+    });
+
     save.onclick = () => {
         const title = document.getElementById('prod-title').value.trim();
         const price = parseInt(document.getElementById('prod-price').value) || 0;
@@ -224,7 +323,6 @@ function setupProductForm() {
         const tags = document.getElementById('prod-tags').value.trim();
         const stock = parseInt(document.getElementById('prod-stock').value) || 0;
         const rarity = document.getElementById('prod-rarity').value;
-        const img = document.getElementById('prod-image').value.trim();
         const releaseDate = document.getElementById('prod-release-date').value;
         const desc = document.getElementById('prod-desc').value.trim();
 
@@ -233,7 +331,7 @@ function setupProductForm() {
             return;
         }
 
-        const imagePlaceholder = img || 'https://img.icons8.com/color/150/000000/sticker.png';
+        const imagePlaceholder = currentProductImages[0] || 'https://img.icons8.com/color/150/000000/sticker.png';
 
         if (editingProductId) {
             const idx = products.findIndex(p => p.id === editingProductId);
@@ -248,6 +346,7 @@ function setupProductForm() {
                     stock,
                     rarity,
                     img: imagePlaceholder,
+                    images: currentProductImages,
                     release_date: releaseDate ? new Date(releaseDate).toISOString() : '',
                     description: desc
                 };
@@ -263,6 +362,7 @@ function setupProductForm() {
                 stock,
                 rarity,
                 img: imagePlaceholder,
+                images: currentProductImages,
                 rating: 4.5,
                 release_date: releaseDate ? new Date(releaseDate).toISOString() : '',
                 description: desc
@@ -283,9 +383,12 @@ function resetProductInputs() {
     document.getElementById('prod-price').value = '';
     document.getElementById('prod-tags').value = '';
     document.getElementById('prod-stock').value = '100';
-    document.getElementById('prod-image').value = '';
+    document.getElementById('prod-image-files').value = '';
+    document.getElementById('prod-image-url').value = '';
     document.getElementById('prod-release-date').value = '';
     document.getElementById('prod-desc').value = '';
+    currentProductImages = [];
+    renderProductImages();
 }
 
 function renderProductsTable() {
@@ -323,7 +426,16 @@ window.editProduct = function(id) {
     document.getElementById('prod-tags').value = p.tags || '';
     document.getElementById('prod-stock').value = p.stock || 0;
     document.getElementById('prod-rarity').value = p.rarity;
-    document.getElementById('prod-image').value = p.img.startsWith('http') ? p.img : '';
+    
+    if (p.images && Array.isArray(p.images)) {
+        currentProductImages = [...p.images];
+    } else {
+        currentProductImages = p.img ? [p.img] : [];
+    }
+    renderProductImages();
+
+    document.getElementById('prod-image-files').value = '';
+    document.getElementById('prod-image-url').value = '';
     document.getElementById('prod-release-date').value = p.release_date ? p.release_date.slice(0, 16) : '';
     document.getElementById('prod-desc').value = p.description || '';
 
@@ -765,3 +877,104 @@ function showToast(msg) {
         toast.classList.remove('show');
     }, 3000);
 }
+
+// --- PRODUCT VARIANT HELPERS ---
+window.generateVariantId = function(options) {
+    if (!options || typeof options !== 'object' || Array.isArray(options) || Object.keys(options).length === 0) {
+        return "default";
+    }
+    return Object.keys(options)
+        .sort()
+        .map(key => {
+            const cleanKey = String(key).trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+            const cleanVal = String(options[key]).trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+            return `${cleanKey}_${cleanVal}`;
+        })
+        .join("__");
+};
+
+window.validateVariant = function(variant) {
+    if (!variant || typeof variant !== 'object' || Array.isArray(variant)) return false;
+    
+    // Check variantId
+    if (typeof variant.variantId !== 'string' || variant.variantId.trim() === '') return false;
+    
+    // Check price (non-negative integer)
+    if (typeof variant.price !== 'number' || !Number.isInteger(variant.price) || variant.price < 0) return false;
+    
+    // Check sku
+    if (typeof variant.sku !== 'string') return false;
+    
+    // Check stock (non-negative integer)
+    if (typeof variant.stock !== 'number' || !Number.isInteger(variant.stock) || variant.stock < 0) return false;
+    
+    // Check reserved (non-negative integer)
+    if (typeof variant.reserved !== 'number' || !Number.isInteger(variant.reserved) || variant.reserved < 0) return false;
+    
+    // Check active
+    if (typeof variant.active !== 'boolean') return false;
+    
+    // Check options (plain object/map)
+    if (!variant.options || typeof variant.options !== 'object' || Array.isArray(variant.options)) return false;
+    
+    return true;
+};
+
+// --- PRODUCT IMAGE HELPERS ---
+function renderProductImages() {
+    const container = document.getElementById('prod-images-container');
+    if (!container) return;
+
+    if (!currentProductImages || currentProductImages.length === 0) {
+        container.innerHTML = `<div style="grid-column:1/-1; text-align:center; padding:15px; font-size:0.8rem; color:#888;">No images loaded (max 5).</div>`;
+        return;
+    }
+
+    container.innerHTML = currentProductImages.map((url, index) => {
+        const isPrimary = index === 0;
+        return `
+            <div class="prod-image-preview-card" style="position:relative; border:2px solid var(--text-color); padding:4px; display:flex; flex-direction:column; gap:4px; align-items:center; background:#fff;">
+                <img src="${url}" style="width:50px; height:50px; object-fit:contain;" alt="Preview">
+                <div style="font-size:0.6rem; font-weight:bold; color:${isPrimary ? 'var(--success-color)' : '#888'}; text-align:center; text-transform:uppercase;">
+                    ${isPrimary ? 'PRIMARY' : `SLIDE ${index + 1}`}
+                </div>
+                <div style="display:flex; gap:2px; width:100%; justify-content:center;">
+                    ${!isPrimary ? `<button type="button" class="retro-btn" onclick="setProductPrimaryImage(${index})" style="padding:2px 4px; font-size:0.6rem; box-shadow:none; font-weight:bold;">★</button>` : ''}
+                    <button type="button" class="retro-btn" onclick="removeProductImage(${index})" style="padding:2px 4px; font-size:0.6rem; box-shadow:none; background-color:var(--error-color); color:#fff; font-weight:bold;">×</button>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+window.setProductPrimaryImage = function(index) {
+    if (index <= 0 || index >= currentProductImages.length) return;
+    const url = currentProductImages.splice(index, 1)[0];
+    currentProductImages.unshift(url);
+    renderProductImages();
+};
+
+window.removeProductImage = async function(index) {
+    if (index < 0 || index >= currentProductImages.length) return;
+    const url = currentProductImages[index];
+    
+    // Deletion: check if storage URL
+    if (url.includes('firebasestorage.googleapis.com')) {
+        try {
+            const decodedUrl = decodeURIComponent(url);
+            const pathStartIndex = decodedUrl.indexOf('/o/') + 3;
+            const pathEndIndex = decodedUrl.indexOf('?');
+            if (pathStartIndex > 2 && pathEndIndex > pathStartIndex) {
+                const storagePath = decodedUrl.substring(pathStartIndex, pathEndIndex);
+                const fileRef = ref(storage, storagePath);
+                await deleteObject(fileRef);
+                console.log("Deleted Storage file successfully:", storagePath);
+            }
+        } catch (e) {
+            console.error("Firebase Storage file deletion failed:", e);
+        }
+    }
+    
+    currentProductImages.splice(index, 1);
+    renderProductImages();
+};

@@ -2,10 +2,39 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    function isAdmin() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+        && get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.active == true
+        && (
+          get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.role == "admin"
+          || get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.role == "super_admin"
+        );
+    }
+
     match /admins/{uid} {
       allow read: if request.auth != null
                   && request.auth.uid == uid;
       allow write: if false;
+    }
+
+    match /products/{productId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /products/{productId}/variants/{variantId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /categories/{categoryId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /siteSettings/{documentId} {
+      allow read: if true;
+      allow write: if isAdmin();
     }
 
     match /{document=**} {

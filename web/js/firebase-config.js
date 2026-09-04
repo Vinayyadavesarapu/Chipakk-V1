@@ -1,6 +1,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getFirestore } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getAuth } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getStorage } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 // TODO: Replace with your Firebase project configuration
 // 1. Go to console.firebase.google.com
@@ -19,15 +20,16 @@ const firebaseConfig = {
 };
 
 // Initialize Firebase
-let app, db, auth;
+let app, db, auth, storage;
 
 try {
   app = initializeApp(firebaseConfig);
   db = getFirestore(app);
   auth = getAuth(app);
+  storage = getStorage(app);
   console.log("Firebase initialized");
 } catch (e) {
   console.error("Firebase initialization error. Make sure to add your config!", e);
 }
 
-export { db, auth };
+export { db, auth, storage };
