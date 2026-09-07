@@ -787,8 +787,11 @@ window.__simulateInactivityTimeout__ = function() {
 };
 
 // =============================================================================
+// =============================================================================
 // INITIALIZER & NAVIGATION CONTROLLER
 // =============================================================================
+
+let isDashboardInitialized = false;
 
 document.addEventListener('DOMContentLoaded', () => {
     // Auth Listener
@@ -798,6 +801,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (loginSection) loginSection.style.display = 'none';
             if (adminWorkspace) adminWorkspace.style.display = 'flex';
             startInactivityTracker();
+            initDashboard();
             await loadAllAdminData();
         } else {
             console.log("[Auth State] No active user.");
@@ -855,8 +859,11 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function initDashboard() {
-    setupNavigation();
-    setupEventListeners();
+    if (!isDashboardInitialized) {
+        setupNavigation();
+        setupEventListeners();
+        isDashboardInitialized = true;
+    }
     updateState();
 }
 
@@ -865,21 +872,41 @@ function populateCategoryDropdowns() {
     const filterCatSelect = document.getElementById('prod-filter-category');
     const evtCatSelect = document.getElementById('evt-filter-cat');
 
+    const currentProdVal = prodCatSelect?.value;
+    const currentFilterVal = filterCatSelect?.value;
+    const currentEvtVal = evtCatSelect?.value;
+
     const catOptions = categories.map(c => `<option value="${c.name}">${c.name}</option>`).join('');
 
-    if (prodCatSelect) prodCatSelect.innerHTML = catOptions;
-    if (filterCatSelect) filterCatSelect.innerHTML = `<option value="">All Categories</option>${catOptions}`;
-    if (evtCatSelect) evtCatSelect.innerHTML = `<option value="">All Categories</option>${catOptions}`;
+    if (prodCatSelect) {
+        prodCatSelect.innerHTML = catOptions;
+        if (currentProdVal && Array.from(prodCatSelect.options).some(o => o.value === currentProdVal)) {
+            prodCatSelect.value = currentProdVal;
+        }
+    }
+    if (filterCatSelect) {
+        filterCatSelect.innerHTML = `<option value="">All Categories</option>${catOptions}`;
+        if (currentFilterVal !== undefined && Array.from(filterCatSelect.options).some(o => o.value === currentFilterVal)) {
+            filterCatSelect.value = currentFilterVal;
+        }
+    }
+    if (evtCatSelect) {
+        evtCatSelect.innerHTML = `<option value="">All Categories</option>${catOptions}`;
+        if (currentEvtVal !== undefined && Array.from(evtCatSelect.options).some(o => o.value === currentEvtVal)) {
+            evtCatSelect.value = currentEvtVal;
+        }
+    }
 }
 
 function setupNavigation() {
     const navItems = document.querySelectorAll('.admin-nav-item');
-    const sections = document.querySelectorAll('.admin-section');
+    const sections = document.querySelectorAll('.tab-content, .admin-section');
 
     navItems.forEach(item => {
         item.addEventListener('click', (e) => {
             e.preventDefault();
-            const targetSecId = item.getAttribute('data-section');
+            const targetSecId = item.getAttribute('data-tab') || item.getAttribute('data-section');
+            if (!targetSecId) return;
 
             navItems.forEach(i => i.classList.remove('active'));
             item.classList.add('active');
@@ -899,9 +926,47 @@ function setupNavigation() {
 
 function renderDashboardMetrics() {
     const totalOrders = orders.length;
+    const cancelledOrders = orders.filter(o => o.status === 'Cancelled' || o.status === 'CANCELLED').length;
     const totalRevenue = orders.reduce((sum, o) => sum + (o.total_price || 0), 0);
     const totalProducts = products.length;
     const totalCustomers = customers.length;
+
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth();
+    const monthOrders = orders.filter(o => {
+        const d = new Date(o.created_at);
+        return d.getFullYear() === currentYear && d.getMonth() === currentMonth;
+    });
+    const monthRevenue = monthOrders.reduce((sum, o) => sum + (o.total_price || 0), 0);
+
+    const todayStr = now.toISOString().slice(0, 10);
+    const ordersToday = orders.filter(o => o.created_at && String(o.created_at).slice(0, 10) === todayStr).length;
+
+    const awaitingConf = orders.filter(o => o.status === 'New' || o.status === 'NEW').length;
+    const readyPrint = productionQueueItems.filter(i => (i.production_status || '').toLowerCase().includes('ready') || (i.production_status || '') === 'NEW').length;
+    const inProd = productionQueueItems.filter(i => (i.production_status || '').toLowerCase().includes('print') || (i.production_status || '').toLowerCase().includes('cut')).length;
+    const readyPack = productionQueueItems.filter(i => (i.production_status || '').toLowerCase().includes('pack')).length;
+
+    const elTotalOrders = document.getElementById('stat-total-orders');
+    const elCancelledOrders = document.getElementById('stat-cancelled-orders');
+    const elTotalRevenue = document.getElementById('stat-total-revenue');
+    const elMonthRevenue = document.getElementById('stat-month-revenue');
+    const elOrdersToday = document.getElementById('stat-orders-today');
+    const elAwaitingConf = document.getElementById('stat-awaiting-conf');
+    const elReadyPrint = document.getElementById('stat-ready-print');
+    const elInProd = document.getElementById('stat-in-production');
+    const elReadyPack = document.getElementById('stat-ready-pack');
+
+    if (elTotalOrders) elTotalOrders.textContent = totalOrders;
+    if (elCancelledOrders) elCancelledOrders.textContent = cancelledOrders;
+    if (elTotalRevenue) elTotalRevenue.textContent = `₹${totalRevenue.toLocaleString('en-IN')}`;
+    if (elMonthRevenue) elMonthRevenue.textContent = `₹${monthRevenue.toLocaleString('en-IN')}`;
+    if (elOrdersToday) elOrdersToday.textContent = ordersToday;
+    if (elAwaitingConf) elAwaitingConf.textContent = awaitingConf;
+    if (elReadyPrint) elReadyPrint.textContent = readyPrint;
+    if (elInProd) elInProd.textContent = inProd;
+    if (elReadyPack) elReadyPack.textContent = readyPack;
 
     const mRevenue = document.getElementById('metric-revenue');
     const mOrders = document.getElementById('metric-orders');
@@ -917,7 +982,7 @@ function renderDashboardMetrics() {
 }
 
 function renderDashboardWidgets() {
-    const recentOrdersBody = document.getElementById('dashboard-recent-orders-tbody');
+    const recentOrdersBody = document.getElementById('dash-recent-orders-tbody') || document.getElementById('dashboard-recent-orders-tbody');
     if (recentOrdersBody) {
         const recent = orders.slice(0, 5);
         recentOrdersBody.innerHTML = recent.map(o => `
@@ -931,7 +996,7 @@ function renderDashboardWidgets() {
         `).join('') || '<tr><td colspan="5">No recent orders found.</td></tr>';
     }
 
-    const topProductsBody = document.getElementById('dashboard-top-products-tbody');
+    const topProductsBody = document.getElementById('dash-top-products-tbody') || document.getElementById('dashboard-top-products-tbody');
     if (topProductsBody) {
         const topProds = products.slice(0, 5);
         topProductsBody.innerHTML = topProds.map(p => `
@@ -950,7 +1015,7 @@ function initSalesComparisonChart() {
 }
 
 function renderSalesChart() {
-    const canvas = document.getElementById('sales-chart-canvas');
+    const canvas = document.getElementById('sales-comparison-canvas') || document.getElementById('sales-chart-canvas');
     if (!canvas) return;
 
     const ctx = canvas.getContext('2d');
@@ -1317,7 +1382,7 @@ function renderProductionQueueTabs() {
 }
 
 function renderProductionQueueTable() {
-    const tbody = document.getElementById('prod-queue-tbody');
+    const tbody = document.getElementById('production-tbody') || document.getElementById('prod-queue-tbody');
     if (!tbody) return;
 
     const searchQuery = (document.getElementById('prod-queue-search')?.value || '').toLowerCase().trim();
