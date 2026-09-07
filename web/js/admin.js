@@ -387,86 +387,109 @@ async function loadAllAdminData() {
             apiClient.get('/admin/audit-logs')
         ]);
 
-        if (prodRes.status === 'fulfilled' && prodRes.value && prodRes.value.products) {
-            products = prodRes.value.products.map(normalizeProduct);
+        if (prodRes.status === 'fulfilled' && prodRes.value) {
+            const rawProds = prodRes.value.data?.products || prodRes.value.products || (Array.isArray(prodRes.value.data) ? prodRes.value.data : []);
+            if (Array.isArray(rawProds)) products = rawProds.map(normalizeProduct);
         }
         if (catRes.status === 'fulfilled' && catRes.value) {
-            const rawCats = catRes.value.categories || catRes.value.data || catRes.value;
+            const rawCats = catRes.value.data?.categories || catRes.value.categories || (Array.isArray(catRes.value.data) ? catRes.value.data : []) || (Array.isArray(catRes.value) ? catRes.value : []);
             if (Array.isArray(rawCats)) categories = rawCats.map(normalizeCategory);
         }
-        if (ordRes.status === 'fulfilled' && ordRes.value && ordRes.value.orders) {
-            orders = ordRes.value.orders.map(normalizeOrder);
+        if (ordRes.status === 'fulfilled' && ordRes.value) {
+            const rawOrds = ordRes.value.data?.orders || ordRes.value.orders || (Array.isArray(ordRes.value.data) ? ordRes.value.data : []);
+            if (Array.isArray(rawOrds)) orders = rawOrds.map(normalizeOrder);
         }
-        if (prodQueueRes.status === 'fulfilled' && prodQueueRes.value && prodQueueRes.value.items) {
-            productionQueueItems = prodQueueRes.value.items;
+        if (prodQueueRes.status === 'fulfilled' && prodQueueRes.value) {
+            const rawItems = prodQueueRes.value.data?.items || prodQueueRes.value.items || (Array.isArray(prodQueueRes.value.data) ? prodQueueRes.value.data : []);
+            if (Array.isArray(rawItems)) productionQueueItems = rawItems;
         }
-        if (custRes.status === 'fulfilled' && custRes.value && custRes.value.customers) {
-            customers = custRes.value.customers.map(normalizeCustomer);
+        if (custRes.status === 'fulfilled' && custRes.value) {
+            const rawCusts = custRes.value.data?.customers || custRes.value.customers || (Array.isArray(custRes.value.data) ? custRes.value.data : []);
+            if (Array.isArray(rawCusts)) customers = rawCusts.map(normalizeCustomer);
         }
-        if (evtRes.status === 'fulfilled' && evtRes.value && evtRes.value.events) {
-            events = evtRes.value.events.map(e => ({
-                ...e,
-                id: e.id,
-                event_name: e.name || e.event_name || '',
-                subtitle: e.subtitle || e.description || '',
-                discount_type: e.discount_type || 'percent',
-                discount_value: e.discount_value || 0,
-                start_time: e.start_time || e.start_date || new Date().toISOString().slice(0, 16),
-                end_time: e.end_time || e.end_date || new Date().toISOString().slice(0, 16),
-                target_product_ids: Array.isArray(e.target_product_ids) ? e.target_product_ids : (Array.isArray(e.product_ids) ? e.product_ids : []),
-                active: e.active === 1 || e.active === true
-            }));
+        if (evtRes.status === 'fulfilled' && evtRes.value) {
+            const rawEvts = evtRes.value.data?.events || evtRes.value.events || (Array.isArray(evtRes.value.data) ? evtRes.value.data : []);
+            if (Array.isArray(rawEvts)) {
+                events = rawEvts.map(e => ({
+                    ...e,
+                    id: e.id,
+                    event_name: e.name || e.event_name || '',
+                    subtitle: e.subtitle || e.description || '',
+                    discount_type: e.discount_type || 'percent',
+                    discount_value: e.discount_value || 0,
+                    start_time: e.start_time || e.start_date || new Date().toISOString().slice(0, 16),
+                    end_time: e.end_time || e.end_date || new Date().toISOString().slice(0, 16),
+                    target_product_ids: Array.isArray(e.target_product_ids) ? e.target_product_ids : (Array.isArray(e.product_ids) ? e.product_ids : []),
+                    active: e.active === 1 || e.active === true
+                }));
+            }
         }
-        if (cpnRes.status === 'fulfilled' && cpnRes.value && cpnRes.value.coupons) {
-            coupons = cpnRes.value.coupons.map(c => ({
-                ...c,
-                id: c.id,
-                code: (c.code || '').toUpperCase(),
-                discount_type: c.discount_type || 'percent',
-                discount_value: c.discount_value || 0,
-                min_spend: Math.round((parseInt(c.min_order_value || c.min_spend, 10) || 0) / 100),
-                active: c.active === 1 || c.active === true
-            }));
+        if (cpnRes.status === 'fulfilled' && cpnRes.value) {
+            const rawCpns = cpnRes.value.data?.coupons || cpnRes.value.coupons || (Array.isArray(cpnRes.value.data) ? cpnRes.value.data : []);
+            if (Array.isArray(rawCpns)) {
+                coupons = rawCpns.map(c => ({
+                    ...c,
+                    id: c.id,
+                    code: (c.code || '').toUpperCase(),
+                    discount_type: c.discount_type || 'percent',
+                    discount_value: c.discount_value || 0,
+                    min_spend: Math.round((parseInt(c.min_order_value || c.min_spend, 10) || 0) / 100),
+                    active: c.active === 1 || c.active === true
+                }));
+            }
         }
-        if (shipRes.status === 'fulfilled' && shipRes.value && shipRes.value.rules) {
-            shippingRules = shipRes.value.rules.map(s => ({
-                ...s,
-                id: s.id,
-                rule_name: s.name || s.rule_name || '',
-                min_order: Math.round((parseInt(s.free_shipping_threshold || s.min_order, 10) || 0) / 100),
-                max_order: 999999,
-                region: s.region || "India (All States)",
-                fee: Math.round((parseInt(s.standard_fee || s.fee, 10) || 0) / 100),
-                active: s.is_enabled === 1 || s.is_enabled === true || s.active === true
-            }));
+        if (shipRes.status === 'fulfilled' && shipRes.value) {
+            const rawRules = shipRes.value.data?.rules || shipRes.value.rules || shipRes.value.data?.shipping_rules || (Array.isArray(shipRes.value.data) ? shipRes.value.data : []);
+            if (Array.isArray(rawRules)) {
+                shippingRules = rawRules.map(s => ({
+                    ...s,
+                    id: s.id,
+                    rule_name: s.name || s.rule_name || '',
+                    min_order: Math.round((parseInt(s.free_shipping_threshold || s.min_order, 10) || 0) / 100),
+                    max_order: 999999,
+                    region: s.region || "India (All States)",
+                    fee: Math.round((parseInt(s.standard_fee || s.fee, 10) || 0) / 100),
+                    active: s.is_enabled === 1 || s.is_enabled === true || s.active === true
+                }));
+            }
         }
         if (storeRes.status === 'fulfilled' && storeRes.value) {
-            if (Array.isArray(storeRes.value.heroGroups)) heroGroups = storeRes.value.heroGroups;
-            if (Array.isArray(storeRes.value.promoBanners)) promoBanners = storeRes.value.promoBanners;
-            if (Array.isArray(storeRes.value.storeSections)) storeSections = storeRes.value.storeSections;
+            const storeData = storeRes.value.data || storeRes.value || {};
+            if (Array.isArray(storeData.heroGroups)) heroGroups = storeData.heroGroups;
+            if (Array.isArray(storeData.promoBanners)) promoBanners = storeData.promoBanners;
+            if (Array.isArray(storeData.storeSections)) storeSections = storeData.storeSections;
         }
-        if (revRes.status === 'fulfilled' && revRes.value && revRes.value.reviews) {
-            reviews = revRes.value.reviews.map(r => ({
-                ...r,
-                id: r.id,
-                admin_id: r.admin_product_id || `CK-${r.product_id}`,
-                product_name: r.product_name || 'Product',
-                customer_name: r.customer_name || 'Customer',
-                rating: r.rating || 5,
-                comment: r.comment || '',
-                date: r.created_at ? new Date(r.created_at).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10),
-                status: String(r.status || 'pending').charAt(0).toUpperCase() + String(r.status || 'pending').slice(1).toLowerCase()
-            }));
+        if (revRes.status === 'fulfilled' && revRes.value) {
+            const rawRevs = revRes.value.data?.reviews || revRes.value.reviews || (Array.isArray(revRes.value.data) ? revRes.value.data : []);
+            if (Array.isArray(rawRevs)) {
+                reviews = rawRevs.map(r => ({
+                    ...r,
+                    id: r.id,
+                    admin_id: r.admin_product_id || `CK-${r.product_id}`,
+                    product_name: r.product_name || 'Product',
+                    customer_name: r.customer_name || 'Customer',
+                    rating: r.rating || 5,
+                    comment: r.comment || '',
+                    date: r.created_at ? new Date(r.created_at).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10),
+                    status: String(r.status || 'pending').charAt(0).toUpperCase() + String(r.status || 'pending').slice(1).toLowerCase()
+                }));
+            }
         }
-        if (setRes.status === 'fulfilled' && setRes.value && setRes.value.settings) {
-            siteSettings = { ...siteSettings, ...setRes.value.settings };
+        if (setRes.status === 'fulfilled' && setRes.value) {
+            const settingsData = setRes.value.data?.settings || setRes.value.settings || setRes.value.data;
+            if (settingsData && typeof settingsData === 'object') {
+                siteSettings = { ...siteSettings, ...settingsData };
+            }
         }
-        if (auditRes.status === 'fulfilled' && auditRes.value && auditRes.value.auditLogs) {
-            auditLogs = auditRes.value.auditLogs.map(a => ({
-                timestamp: a.created_at || a.timestamp || new Date().toISOString(),
-                actor: a.admin_email || a.admin_id || a.actor || 'Admin',
-                action: `${a.action || ''} ${a.entity_type ? '(' + a.entity_type + ' #' + (a.entity_id || '') + ')' : ''}`.trim()
-            }));
+        if (auditRes.status === 'fulfilled' && auditRes.value) {
+            const rawLogs = auditRes.value.data?.auditLogs || auditRes.value.auditLogs || auditRes.value.data?.logs || (Array.isArray(auditRes.value.data) ? auditRes.value.data : []);
+            if (Array.isArray(rawLogs)) {
+                auditLogs = rawLogs.map(a => ({
+                    timestamp: a.created_at || a.timestamp || new Date().toISOString(),
+                    actor: a.admin_email || a.admin_id || a.actor || 'Admin',
+                    action: `${a.action || ''} ${a.entity_type ? '(' + a.entity_type + ' #' + (a.entity_id || '') + ')' : ''}`.trim()
+                }));
+            }
         }
 
         updateState();
@@ -480,8 +503,9 @@ async function loadAllAdminData() {
 async function refreshProductsFromAPI() {
     try {
         const res = await apiClient.get('/admin/products');
-        if (res && res.products) {
-            products = res.products.map(normalizeProduct);
+        const rawProds = res?.data?.products || res?.products || (Array.isArray(res?.data) ? res.data : []);
+        if (Array.isArray(rawProds)) {
+            products = rawProds.map(normalizeProduct);
             renderProductsTable();
             populateCategoryDropdowns();
         }
@@ -493,7 +517,7 @@ async function refreshProductsFromAPI() {
 async function refreshCategoriesFromAPI() {
     try {
         const res = await apiClient.get('/categories');
-        const raw = res?.categories || res?.data || res;
+        const raw = res?.data?.categories || res?.categories || (Array.isArray(res?.data) ? res.data : []) || (Array.isArray(res) ? res : []);
         if (Array.isArray(raw)) {
             categories = raw.map(normalizeCategory);
             renderCategoriesTable();
@@ -507,8 +531,9 @@ async function refreshCategoriesFromAPI() {
 async function refreshOrdersFromAPI() {
     try {
         const res = await apiClient.get('/admin/orders');
-        if (res && res.orders) {
-            orders = res.orders.map(normalizeOrder);
+        const rawOrds = res?.data?.orders || res?.orders || (Array.isArray(res?.data) ? res.data : []);
+        if (Array.isArray(rawOrds)) {
+            orders = rawOrds.map(normalizeOrder);
             renderOrderStatusTabs();
             renderOrdersTable();
             renderDashboardMetrics();
@@ -529,8 +554,9 @@ async function refreshOrdersFromAPI() {
 async function refreshProductionQueueFromAPI() {
     try {
         const res = await apiClient.get('/admin/production/queue');
-        if (res && res.items) {
-            productionQueueItems = res.items;
+        const rawItems = res?.data?.items || res?.items || (Array.isArray(res?.data) ? res.data : []);
+        if (Array.isArray(rawItems)) {
+            productionQueueItems = rawItems;
             renderProductionQueueTabs();
             renderProductionQueueTable();
         }
@@ -542,8 +568,9 @@ async function refreshProductionQueueFromAPI() {
 async function refreshCustomersFromAPI() {
     try {
         const res = await apiClient.get('/admin/customers');
-        if (res && res.customers) {
-            customers = res.customers.map(normalizeCustomer);
+        const rawCusts = res?.data?.customers || res?.customers || (Array.isArray(res?.data) ? res.data : []);
+        if (Array.isArray(rawCusts)) {
+            customers = rawCusts.map(normalizeCustomer);
             renderCustomersTable();
             renderDashboardMetrics();
         }
@@ -1088,6 +1115,13 @@ function renderSalesChart() {
         ctx.textAlign = "center";
         ctx.fillText(label, x + barW, h - padding + 15);
     });
+
+    if (totalRev === 0 && totalOrds === 0) {
+        ctx.fillStyle = "#666666";
+        ctx.font = "bold 12px monospace";
+        ctx.textAlign = "center";
+        ctx.fillText("NO REAL ORDER DATA AVAILABLE (₹0 REVENUE)", w / 2, h / 2 - 10);
+    }
 }
 
 // =============================================================================
