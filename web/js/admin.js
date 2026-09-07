@@ -995,21 +995,11 @@ function renderDashboardMetrics() {
     if (elInProd) elInProd.textContent = inProd;
     if (elReadyPack) elReadyPack.textContent = readyPack;
 
-    const mRevenue = document.getElementById('metric-revenue');
-    const mOrders = document.getElementById('metric-orders');
-    const mProducts = document.getElementById('metric-products');
-    const mCustomers = document.getElementById('metric-customers');
-
-    if (mRevenue) mRevenue.textContent = `₹${totalRevenue.toLocaleString('en-IN')}`;
-    if (mOrders) mOrders.textContent = totalOrders;
-    if (mProducts) mProducts.textContent = totalProducts;
-    if (mCustomers) mCustomers.textContent = totalCustomers;
-
     renderDashboardWidgets();
 }
 
 function renderDashboardWidgets() {
-    const recentOrdersBody = document.getElementById('dash-recent-orders-tbody') || document.getElementById('dashboard-recent-orders-tbody');
+    const recentOrdersBody = document.getElementById('dash-recent-orders-tbody');
     if (recentOrdersBody) {
         const recent = orders.slice(0, 5);
         recentOrdersBody.innerHTML = recent.map(o => `
@@ -1023,7 +1013,7 @@ function renderDashboardWidgets() {
         `).join('') || '<tr><td colspan="5">No recent orders found.</td></tr>';
     }
 
-    const topProductsBody = document.getElementById('dash-top-products-tbody') || document.getElementById('dashboard-top-products-tbody');
+    const topProductsBody = document.getElementById('dash-top-products-tbody');
     if (topProductsBody) {
         const topProds = products.slice(0, 5);
         topProductsBody.innerHTML = topProds.map(p => `
@@ -1042,7 +1032,7 @@ function initSalesComparisonChart() {
 }
 
 function renderSalesChart() {
-    const canvas = document.getElementById('sales-comparison-canvas') || document.getElementById('sales-chart-canvas');
+    const canvas = document.getElementById('sales-comparison-canvas');
     if (!canvas) return;
 
     const ctx = canvas.getContext('2d');
@@ -1411,7 +1401,7 @@ async function deleteCategory(categoryId) {
 // =============================================================================
 
 function renderProductionQueueTabs() {
-    const container = document.getElementById('prod-queue-tabs');
+    const container = document.getElementById('production-status-tabs');
     if (!container) return;
 
     const tabs = ["All", ...PRODUCTION_STAGES];
@@ -1420,11 +1410,15 @@ function renderProductionQueueTabs() {
         if (tab === "All") {
             count = productionQueueItems.length;
         } else {
-            count = productionQueueItems.filter(i => (BACKEND_TO_UI_PROD_STATUS[i.production_status] || i.production_status) === tab).length;
+            count = productionQueueItems.filter(i => {
+                const uiStatus = BACKEND_TO_UI_PROD_STATUS[i.production_status] || i.production_status;
+                return uiStatus === tab;
+            }).length;
         }
 
+        const isSelected = activeProductionTab === tab;
         return `
-            <button class="retro-btn prod-queue-tab-btn ${activeProductionTab === tab ? 'active' : ''}" data-tab="${tab}" style="padding:4px 10px; font-size:0.75rem;">
+            <button class="retro-btn order-tab-btn ${isSelected ? 'active' : ''} prod-queue-tab-btn" data-tab="${tab}">
                 ${tab.toUpperCase()} (${count})
             </button>
         `;
@@ -1440,7 +1434,7 @@ function renderProductionQueueTabs() {
 }
 
 function renderProductionQueueTable() {
-    const tbody = document.getElementById('production-tbody') || document.getElementById('prod-queue-tbody');
+    const tbody = document.getElementById('production-tbody');
     if (!tbody) return;
 
     const searchQuery = (document.getElementById('prod-queue-search')?.value || '').toLowerCase().trim();
@@ -1735,7 +1729,7 @@ function renderOrderDetailModalContent(o) {
 }
 
 function renderOrderTimeline(order) {
-    const container = document.getElementById('ord-detail-timeline');
+    const container = document.getElementById('ord-timeline-container');
     if (!container) return;
 
     const history = order.status_history || [{ status: order.status, timestamp: order.created_at, actor: "System" }];
@@ -2095,11 +2089,14 @@ function openCouponForm(cpn = null) {
     if (!container) return;
 
     editingCouponId = cpn ? cpn.id : null;
-    document.getElementById('cpn-form-title').textContent = cpn ? `[EDIT COUPON CODE: ${cpn.code}]` : '[CREATE NEW COUPON CODE]';
+    const titleEl = document.getElementById('cpn-form-title');
+    if (titleEl) {
+        titleEl.textContent = cpn ? `[EDIT COUPON CODE: ${cpn.code}]` : '[CREATE NEW COUPON CODE]';
+    }
     document.getElementById('cpn-code').value = cpn ? cpn.code : '';
-    document.getElementById('cpn-discount-type').value = cpn ? cpn.discount_type : 'percent';
-    document.getElementById('cpn-discount-value').value = cpn ? cpn.discount_value : 10;
-    document.getElementById('cpn-min-spend').value = cpn ? cpn.min_spend : 200;
+    document.getElementById('cpn-type').value = cpn ? cpn.discount_type : 'percent';
+    document.getElementById('cpn-amount').value = cpn ? cpn.discount_value : 10;
+    document.getElementById('cpn-min').value = cpn ? cpn.min_spend : 200;
     document.getElementById('cpn-active').value = cpn ? String(cpn.active) : 'true';
 
     container.style.display = 'block';
@@ -2108,7 +2105,7 @@ function openCouponForm(cpn = null) {
 
 async function saveCouponForm() {
     const code = document.getElementById('cpn-code').value.trim().toUpperCase();
-    const value = Number(document.getElementById('cpn-discount-value').value);
+    const value = Number(document.getElementById('cpn-amount').value);
 
     if (!code || isNaN(value)) {
         showToast("Coupon code and discount value are required!", "error");
@@ -2119,10 +2116,10 @@ async function saveCouponForm() {
     const originalText = saveBtn ? saveBtn.textContent : '';
     if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = "SAVING..."; }
 
-    const minSpendPaise = Math.round((Number(document.getElementById('cpn-min-spend').value) || 0) * 100);
+    const minSpendPaise = Math.round((Number(document.getElementById('cpn-min').value) || 0) * 100);
     const payload = {
         code,
-        discount_type: document.getElementById('cpn-discount-type').value,
+        discount_type: document.getElementById('cpn-type').value,
         discount_value: value,
         min_order_value: minSpendPaise,
         active: document.getElementById('cpn-active').value === 'true' ? 1 : 0
@@ -2165,7 +2162,7 @@ async function deleteCoupon(couponId) {
 // =============================================================================
 
 function renderShippingRulesTable() {
-    const tbody = document.getElementById('shipping-rules-tbody');
+    const tbody = document.getElementById('shipping-tbody');
     if (!tbody) return;
 
     tbody.innerHTML = shippingRules.map(r => `
@@ -2209,20 +2206,33 @@ function openShippingRuleForm(rule = null) {
     if (!container) return;
 
     editingShippingId = rule ? rule.id : null;
-    document.getElementById('ship-form-title').textContent = rule ? `[EDIT SHIPPING RULE: ${rule.rule_name}]` : '[ADD SHIPPING RULE]';
-    document.getElementById('ship-rule-name').value = rule ? rule.rule_name : '';
-    document.getElementById('ship-fee').value = rule ? rule.fee : 50;
-    document.getElementById('ship-min-val').value = rule ? rule.min_order : 0;
-    document.getElementById('ship-region').value = rule ? rule.region : 'India (All States)';
-    document.getElementById('ship-active').value = rule ? String(rule.active) : 'true';
+    const titleEl = document.getElementById('ship-form-title');
+    if (titleEl) {
+        titleEl.textContent = rule ? `[EDIT SHIPPING RULE: ${rule.rule_name}]` : '[ADD SHIPPING RULE]';
+    }
+    const nameEl = document.getElementById('ship-name');
+    const feeEl = document.getElementById('ship-fee');
+    const minEl = document.getElementById('ship-min');
+    const regionEl = document.getElementById('ship-region');
+    const activeEl = document.getElementById('ship-active');
+
+    if (nameEl) nameEl.value = rule ? rule.rule_name : '';
+    if (feeEl) feeEl.value = rule ? rule.fee : 50;
+    if (minEl) minEl.value = rule ? rule.min_order : 0;
+    if (regionEl) regionEl.value = rule ? rule.region : 'India (All States)';
+    if (activeEl) activeEl.value = rule ? String(rule.active) : 'true';
 
     container.style.display = 'block';
 }
 
 async function saveShippingRuleForm() {
-    const name = document.getElementById('ship-rule-name').value.trim();
-    const fee = Number(document.getElementById('ship-fee').value);
-    const minVal = Number(document.getElementById('ship-min-val').value) || 0;
+    const nameEl = document.getElementById('ship-name');
+    const feeEl = document.getElementById('ship-fee');
+    const minEl = document.getElementById('ship-min');
+
+    const name = nameEl ? nameEl.value.trim() : '';
+    const fee = Number(feeEl ? feeEl.value : 0);
+    const minVal = Number(minEl ? minEl.value : 0) || 0;
 
     if (!name || isNaN(fee)) {
         showToast("Please enter rule name and shipping fee!", "error");
@@ -2274,7 +2284,7 @@ async function deleteShippingRule(ruleId) {
 }
 
 function renderShippingCalculatorPreview() {
-    const previewDiv = document.getElementById('shipping-calc-preview');
+    const previewDiv = document.getElementById('calc-result');
     if (!previewDiv) return;
 
     const cartVal = Number(document.getElementById('calc-order-val')?.value || 250);
@@ -2317,7 +2327,7 @@ function renderStoreBuilder() {
 }
 
 function renderHeroGroupsList() {
-    const container = document.getElementById('hero-groups-container');
+    const container = document.getElementById('hero-slides-container');
     if (!container) return;
 
     container.innerHTML = heroGroups.map(group => `
@@ -2369,11 +2379,11 @@ function openHeroSlideForm(groupId) {
 }
 
 function saveHeroSlideForm() {
-    const title = document.getElementById('hero-title')?.value.trim();
-    const subtitle = document.getElementById('hero-subtitle')?.value.trim();
-    const imgUrl = document.getElementById('hero-img-url')?.value.trim();
-    const ctaText = document.getElementById('hero-cta-text')?.value.trim();
-    const ctaLink = document.getElementById('hero-cta-link')?.value.trim();
+    const title = document.getElementById('hero-slide-title')?.value.trim();
+    const subtitle = document.getElementById('hero-slide-sub')?.value.trim();
+    const imgUrl = document.getElementById('hero-slide-img')?.value.trim();
+    const ctaText = document.getElementById('hero-slide-cta')?.value.trim();
+    const ctaLink = document.getElementById('hero-slide-link')?.value.trim();
 
     if (!title) {
         showToast("Hero slide title is required!", "error");
@@ -2418,9 +2428,9 @@ function renderPromoBannersList() {
 }
 
 function savePromoBannerForm() {
-    const headline = document.getElementById('banner-headline')?.value.trim();
-    const subtitle = document.getElementById('banner-subtitle')?.value.trim();
-    const imgUrl = document.getElementById('banner-img-url')?.value.trim();
+    const headline = document.getElementById('banner-title')?.value.trim();
+    const subtitle = document.getElementById('banner-sub')?.value.trim();
+    const imgUrl = document.getElementById('banner-img')?.value.trim();
 
     if (!headline) {
         showToast("Banner headline is required!", "error");
@@ -2443,7 +2453,7 @@ function savePromoBannerForm() {
 }
 
 function renderStoreSectionsList() {
-    const container = document.getElementById('store-sections-container');
+    const container = document.getElementById('store-blocks-container');
     if (!container) return;
 
     container.innerHTML = storeSections.map((sec, idx) => `
@@ -2586,16 +2596,16 @@ function saveTeamMemberForm() {
 // =============================================================================
 
 function renderAuditLogs() {
-    const tbody = document.getElementById('audit-tbody');
-    if (!tbody) return;
+    const container = document.getElementById('audit-logs-container');
+    if (!container) return;
 
-    tbody.innerHTML = auditLogs.map(l => `
-        <tr>
-            <td><small>${new Date(l.timestamp).toLocaleString()}</small></td>
-            <td><strong style="color:#2563eb;">${l.actor}</strong></td>
-            <td>${l.action}</td>
-        </tr>
-    `).join('') || '<tr><td colspan="3">No system audit logs recorded.</td></tr>';
+    container.innerHTML = auditLogs.map(l => `
+        <div style="font-family:monospace; font-size:0.8rem; border-bottom:1px solid #eee; padding:4px 0;">
+            <span style="color:#666;">[${new Date(l.timestamp).toLocaleString()}]</span>
+            <strong style="color:#2563eb;"> ${l.actor}:</strong>
+            <span> ${l.action}</span>
+        </div>
+    `).join('') || '<div style="font-family:monospace; font-size:0.8rem; color:#888;">No system audit logs recorded.</div>';
 }
 
 function writeAuditLog(actor, action) {
@@ -2898,8 +2908,8 @@ function setupEventListeners() {
         }
     });
 
-    document.getElementById('save-ops-settings-btn')?.addEventListener('click', async () => {
-        const btn = document.getElementById('save-ops-settings-btn');
+    document.getElementById('save-store-ops-settings-btn')?.addEventListener('click', async () => {
+        const btn = document.getElementById('save-store-ops-settings-btn');
         const originalText = btn ? btn.textContent : '';
         if (btn) { btn.disabled = true; btn.textContent = "APPLYING..."; }
 

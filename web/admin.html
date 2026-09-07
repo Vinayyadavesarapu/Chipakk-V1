@@ -1014,7 +1014,7 @@
 
                 <!-- Coupon Form Container -->
                 <div id="coupon-form-container" class="retro-panel" style="background-color: #fff; max-width: 650px; margin-bottom: 30px; display: none;">
-                    <h3 style="margin-bottom: 20px; font-weight: bold;">[CREATE COUPON CODE]</h3>
+                    <h3 id="cpn-form-title" style="margin-bottom: 20px; font-weight: bold;">[CREATE COUPON CODE]</h3>
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
                         <div>
                             <div class="retro-field">
@@ -1368,7 +1368,7 @@
                             <input type="text" id="set-orders-paused-msg" class="retro-input" value="Orders are temporarily paused. Please check back shortly.">
                         </div>
                         <div style="margin-top: auto; padding-top: 15px;">
-                            <button class="retro-btn retro-btn-primary" id="save-ops-settings-btn" style="width: 100%; padding: 10px; font-size: 0.85rem;">APPLY STORE OPERATIONS SETTINGS</button>
+                            <button class="retro-btn retro-btn-primary" id="save-store-ops-settings-btn" style="width: 100%; padding: 10px; font-size: 0.85rem;">APPLY STORE OPERATIONS SETTINGS</button>
                         </div>
                     </div>
                 </div>
@@ -1512,8 +1512,8 @@
         <div style="font-size: 0.9rem;" id="admin-toast-text">System update complete.</div>
     </div>
 
-    <script type="module" src="js/firebase-config.js"></script>
-    <script type="module" src="js/admin.js"></script>
-    <script type="module" src="js/migration.js"></script>
+    <script type="module" src="js/firebase-config.js?v=1.0.0"></script>
+    <script type="module" src="js/admin.js?v=1.0.0"></script>
+    <script type="module" src="js/migration.js?v=1.0.0"></script>
 </body>
 </html>
