@@ -1,0 +1,10 @@
+RewriteEngine On
+
+# CHIPAKK frontend lives in /web
+RewriteRule ^$ web/index.html [L]
+
+# Serve frontend files from /web
+RewriteCond %{REQUEST_URI} !^/web/
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^(.*)$ web/$1 [L]
