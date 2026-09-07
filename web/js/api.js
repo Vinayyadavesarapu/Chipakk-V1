@@ -65,7 +65,13 @@ async function request(endpoint, options = {}) {
       const isHtml = typeof data?.message === 'string' && data.message.trim().startsWith('<');
       const errorMessage = isHtml
         ? 'API ROUTING ERROR — The Admin Panel could not reach the CHIPAKK API.'
-        : ((data && (data.error || data.message)) || `HTTP ${response.status} Request Failed`);
+        : (
+            (data && data.error && typeof data.error === 'object' && data.error.message) ||
+            (data && data.error && typeof data.error === 'object' && data.error.error) ||
+            (data && typeof data.error === 'string' && data.error) ||
+            (data && data.message) ||
+            `HTTP ${response.status} Request Failed`
+          );
       const error = new Error(errorMessage);
       error.status = response.status;
       error.data = data;
