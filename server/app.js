@@ -16,17 +16,39 @@ const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
 
 const app = express();
 
-// Safe CORS Configuration
-const allowedOrigins = process.env.CORS_ORIGIN
+// Explicit Allowed CORS Origins (No wildcard *)
+const defaultAllowedOrigins = [
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  'http://localhost:5500',
+  'http://127.0.0.1:5500',
+  'http://localhost:8080',
+  'http://127.0.0.1:8080',
+  'https://chipakk.shop'
+];
+
+const envOrigins = process.env.CORS_ORIGIN
   ? process.env.CORS_ORIGIN.split(',').map(origin => origin.trim())
-  : ['http://localhost:3000', 'http://127.0.0.1:3000'];
+  : [];
+
+const allowedOrigins = Array.from(new Set([...defaultAllowedOrigins, ...envOrigins]));
 
 const corsOptions = {
   origin: (origin, callback) => {
-    // Allow non-browser requests or matched origins
-    if (!origin || allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+    // Allow server-to-server / non-browser requests
+    if (!origin) {
       return callback(null, true);
     }
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    // Dynamic localhost origin check in local development mode
+    if (process.env.NODE_ENV !== 'production' && /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+      return callback(null, true);
+    }
+
     return callback(new Error(`CORS policy violation: Origin '${origin}' is not permitted.`));
   },
   credentials: true,
@@ -36,9 +58,25 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 
+const path = require('path');
+
 // Body Parsing Middlewares
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Protect private custom artwork files from unauthenticated static access
+app.use('/uploads', (req, res, next) => {
+  if (req.path.includes('custom-artwork') || req.path.startsWith('/custom-artwork-')) {
+    return res.status(403).json({
+      success: false,
+      error: 'Direct unauthenticated static access to private custom print artwork is prohibited.'
+    });
+  }
+  next();
+});
+
+// Serve static uploaded public files (Hostinger / local storage)
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Base Root Route
 app.get('/', (req, res) => {
@@ -50,11 +88,14 @@ app.get('/', (req, res) => {
   });
 });
 
+const { getPublicStoreBuilderHandler } = require('./controllers/storeBuilderController');
+
 // API Routes Mounting
 app.use('/api/health', healthRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/store-builder', getPublicStoreBuilderHandler);
 app.use('/api/admin', adminRoutes);
 
 // 404 Route Not Found Handler

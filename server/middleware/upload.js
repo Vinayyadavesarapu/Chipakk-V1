@@ -8,8 +8,8 @@ if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
 
-// Storage engine configuration
-const storage = multer.diskStorage({
+// Product image storage configuration
+const productStorage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, uploadDir);
   },
@@ -18,6 +18,19 @@ const storage = multer.diskStorage({
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
     const ext = path.extname(file.originalname).toLowerCase();
     cb(null, `product-${uniqueSuffix}${ext}`);
+  }
+});
+
+// Custom artwork storage configuration
+const customArtworkStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    // Generate safe, unique timestamped filename without exposing original path
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const ext = path.extname(file.originalname).toLowerCase();
+    cb(null, `custom-artwork-${uniqueSuffix}${ext}`);
   }
 });
 
@@ -37,9 +50,17 @@ const imageFileFilter = (req, file, cb) => {
   return cb(error, false);
 };
 
-// Multer upload middleware instance
+// Multer upload middleware instances
 const uploadProductImage = multer({
-  storage: storage,
+  storage: productStorage,
+  fileFilter: imageFileFilter,
+  limits: {
+    fileSize: 5 * 1024 * 1024 // 5 MB max file size limit
+  }
+});
+
+const uploadCustomArtwork = multer({
+  storage: customArtworkStorage,
   fileFilter: imageFileFilter,
   limits: {
     fileSize: 5 * 1024 * 1024 // 5 MB max file size limit
@@ -48,5 +69,6 @@ const uploadProductImage = multer({
 
 module.exports = {
   uploadProductImage,
+  uploadCustomArtwork,
   uploadDir
 };
