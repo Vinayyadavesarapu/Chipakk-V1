@@ -1025,8 +1025,32 @@ function renderSalesChart() {
     ctx.clearRect(0, 0, w, h);
 
     const labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-    const revenueData = [1200, 1900, 3000, 5000, 2400, 7200, 9500];
-    const orderData = [12, 19, 30, 50, 24, 72, 95];
+    const dayIndices = [1, 2, 3, 4, 5, 6, 0];
+    const revenueData = [0, 0, 0, 0, 0, 0, 0];
+    const orderData = [0, 0, 0, 0, 0, 0, 0];
+
+    if (Array.isArray(orders) && orders.length > 0) {
+        orders.forEach(o => {
+            if (!o.created_at) return;
+            const d = new Date(o.created_at);
+            const dayOfWeek = d.getDay();
+            const idx = dayIndices.indexOf(dayOfWeek);
+            if (idx !== -1) {
+                revenueData[idx] += (o.total_price || 0);
+                orderData[idx] += 1;
+            }
+        });
+    }
+
+    const summaryBar = document.getElementById('chart-summary-bar');
+    const totalRev = revenueData.reduce((a, b) => a + b, 0);
+    const totalOrds = orderData.reduce((a, b) => a + b, 0);
+    if (summaryBar) {
+        summaryBar.innerHTML = `
+            <div><small style="color:#555; font-weight:bold;">REAL WEEKLY REVENUE</small><br><strong style="font-size:1.1rem; color:#059669;">${totalRev > 0 ? '₹' + totalRev.toLocaleString('en-IN') : '₹0 (NO DATA)'}</strong></div>
+            <div><small style="color:#555; font-weight:bold;">REAL WEEKLY ORDERS</small><br><strong style="font-size:1.1rem; color:#2563eb;">${totalOrds > 0 ? totalOrds : '0 (NO DATA)'}</strong></div>
+        `;
+    }
 
     const padding = 40;
     const chartW = w - padding * 2;
@@ -1042,8 +1066,8 @@ function renderSalesChart() {
         ctx.stroke();
     }
 
-    const maxRev = Math.max(...revenueData, 10000);
-    const maxOrd = Math.max(...orderData, 100);
+    const maxRev = Math.max(...revenueData, 100);
+    const maxOrd = Math.max(...orderData, 1);
     const barW = (chartW / labels.length) / 3;
 
     labels.forEach((label, i) => {

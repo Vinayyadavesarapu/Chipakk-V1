@@ -7,7 +7,7 @@ import { auth } from './firebase-config.js';
 const API_BASE_URL = window.API_BASE_URL || (
   window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
     ? 'http://localhost:3000/api'
-    : '/api'
+    : 'https://api.chipakk.shop/api'
 );
 
 /**
@@ -28,7 +28,9 @@ async function getAuthToken() {
  * Core Request Wrapper
  */
 async function request(endpoint, options = {}) {
-  const url = `${API_BASE_URL}${endpoint.startsWith('/') ? endpoint : '/' + endpoint}`;
+  const url = endpoint.startsWith('http://') || endpoint.startsWith('https://')
+    ? endpoint
+    : `${API_BASE_URL}${endpoint.startsWith('/') ? endpoint : '/' + endpoint}`;
   const headers = { ...(options.headers || {}) };
 
   // Attach Firebase ID Token if user is logged in
@@ -60,7 +62,10 @@ async function request(endpoint, options = {}) {
     }
 
     if (!response.ok) {
-      const errorMessage = (data && (data.error || data.message)) || `HTTP ${response.status} Request Failed`;
+      const isHtml = typeof data?.message === 'string' && data.message.trim().startsWith('<');
+      const errorMessage = isHtml
+        ? 'API ROUTING ERROR — The Admin Panel could not reach the CHIPAKK API.'
+        : ((data && (data.error || data.message)) || `HTTP ${response.status} Request Failed`);
       const error = new Error(errorMessage);
       error.status = response.status;
       error.data = data;
