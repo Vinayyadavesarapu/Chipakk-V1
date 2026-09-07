@@ -1314,7 +1314,7 @@
                 
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; max-width: 1100px;">
                     <!-- Business & Tax Policies -->
-                    <div class="retro-panel" style="background-color: #fff;">
+                    <div class="retro-panel" style="background-color: #fff; display: flex; flex-direction: column;">
                         <h3 style="margin-bottom: 20px; font-weight: bold;">[BUSINESS & TAX POLICIES]</h3>
                         <div class="retro-field"><label>Store Name</label><input type="text" id="set-store-name" class="retro-input" value="CHIPAKK Stickers"></div>
                         <div class="retro-field"><label>Support Email</label><input type="email" id="set-support-email" class="retro-input" value="support@chipakk.shop"></div>
@@ -1324,10 +1324,13 @@
                         <div class="retro-field"><label>Currency Symbol</label><input type="text" id="set-currency" class="retro-input" value="₹ (INR)"></div>
                         <div class="retro-field"><label>Order ID Prefix</label><input type="text" id="set-order-prefix" class="retro-input" value="CHP-"></div>
                         <div class="retro-field"><label>Default Rating Benchmark</label><input type="number" id="set-default-rating" class="retro-input" value="4.7" step="0.1"></div>
+                        <div style="margin-top: auto; padding-top: 15px;">
+                            <button class="retro-btn retro-btn-primary" id="save-business-settings-btn" style="width: 100%; padding: 10px; font-size: 0.85rem;">SAVE BUSINESS & TAX SETTINGS</button>
+                        </div>
                     </div>
 
                     <!-- Operations & Maintenance Panel -->
-                    <div class="retro-panel" style="background-color: #fff;">
+                    <div class="retro-panel" style="background-color: #fff; display: flex; flex-direction: column;">
                         <h3 style="margin-bottom: 20px; font-weight: bold; color: #7c3aed;">[STORE OPERATIONS & MAINTENANCE]</h3>
                         
                         <div class="retro-field">
@@ -1364,11 +1367,10 @@
                             <label for="set-orders-paused-msg">Paused Orders Store Message</label>
                             <input type="text" id="set-orders-paused-msg" class="retro-input" value="Orders are temporarily paused. Please check back shortly.">
                         </div>
+                        <div style="margin-top: auto; padding-top: 15px;">
+                            <button class="retro-btn retro-btn-primary" id="save-ops-settings-btn" style="width: 100%; padding: 10px; font-size: 0.85rem;">APPLY STORE OPERATIONS SETTINGS</button>
+                        </div>
                     </div>
-                </div>
-
-                <div style="max-width: 1100px; margin-top: 20px;">
-                    <button class="retro-btn retro-btn-primary" id="save-settings-btn" style="width: 100%; padding: 12px; font-size: 0.95rem;">APPLY SYSTEM & MAINTENANCE SETTINGS</button>
                 </div>
             </section>
 

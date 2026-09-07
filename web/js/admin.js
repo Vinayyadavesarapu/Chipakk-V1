@@ -2837,10 +2837,10 @@ function setupEventListeners() {
         }
     });
 
-    document.getElementById('save-settings-btn')?.addEventListener('click', async () => {
-        const saveBtn = document.getElementById('save-settings-btn');
-        const originalText = saveBtn ? saveBtn.textContent : '';
-        if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = "APPLYING..."; }
+    document.getElementById('save-business-settings-btn')?.addEventListener('click', async () => {
+        const btn = document.getElementById('save-business-settings-btn');
+        const originalText = btn ? btn.textContent : '';
+        if (btn) { btn.disabled = true; btn.textContent = "SAVING..."; }
 
         const payload = {
             store_name: document.getElementById('set-store-name').value,
@@ -2850,22 +2850,44 @@ function setupEventListeners() {
             gst_pct: Number(document.getElementById('set-gst-rate').value) || 18,
             currency_symbol: document.getElementById('set-currency').value,
             order_prefix: document.getElementById('set-order-prefix').value,
-            default_rating: Number(document.getElementById('set-default-rating').value) || 4.7,
+            default_rating: Number(document.getElementById('set-default-rating').value) || 4.7
+        };
+
+        try {
+            await apiClient.put('/admin/settings', payload);
+            showToast("Business & Tax settings saved successfully.");
+            await refreshSettingsFromAPI();
+        } catch (err) {
+            showToast(`Error saving business settings: ${err.message}`, 'error');
+        } finally {
+            if (btn) { btn.disabled = false; btn.textContent = originalText || "SAVE BUSINESS & TAX SETTINGS"; }
+        }
+    });
+
+    document.getElementById('save-ops-settings-btn')?.addEventListener('click', async () => {
+        const btn = document.getElementById('save-ops-settings-btn');
+        const originalText = btn ? btn.textContent : '';
+        if (btn) { btn.disabled = true; btn.textContent = "APPLYING..."; }
+
+        const isAccepting = document.getElementById('set-orders-accepting').value === 'true';
+
+        const payload = {
             store_status: document.getElementById('set-store-status').value,
             maintenance_active: document.getElementById('set-maintenance-active').value === 'true',
             maintenance_msg: document.getElementById('set-maintenance-msg').value,
-            orders_accepting: document.getElementById('set-orders-accepting').value === 'true',
+            orders_accepting: isAccepting,
+            order_acceptance: isAccepting ? 'ACCEPTING ORDERS' : 'PAUSED',
             orders_paused_msg: document.getElementById('set-orders-paused-msg').value
         };
 
         try {
             await apiClient.put('/admin/settings', payload);
-            showToast("System & Maintenance settings applied.");
+            showToast("Store Operations & Maintenance settings applied.");
             await refreshSettingsFromAPI();
         } catch (err) {
-            showToast(`Error applying settings: ${err.message}`, 'error');
+            showToast(`Error applying store operations settings: ${err.message}`, 'error');
         } finally {
-            if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = originalText || "APPLY SYSTEM SETTINGS"; }
+            if (btn) { btn.disabled = false; btn.textContent = originalText || "APPLY STORE OPERATIONS SETTINGS"; }
         }
     });
 }
