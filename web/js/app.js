@@ -144,17 +144,83 @@ document.addEventListener('DOMContentLoaded', () => {
     // Initial render and data load
     reloadDatabase();
     startCountdownTimer();
+    syncLiveStorefrontData();
 });
 
 // --- MAINTENANCE WINDOW CHECKER ---
 function checkMaintenanceGate() {
     const overlay = document.getElementById('maintenance-overlay');
     const customMessage = document.getElementById('maintenance-custom-message');
-    if (siteSettings.maintenance_active && overlay) {
+    const titleEl = document.getElementById('maintenance-title');
+    const subtitleEl = document.getElementById('maintenance-subtitle');
+    const errorCodeEl = document.getElementById('maintenance-error-code');
+    const imgContainer = document.getElementById('maintenance-image-container');
+    const displayImg = document.getElementById('maintenance-display-image');
+
+    const isMaintenance = siteSettings.maintenance_active === true || siteSettings.maintenance_active === 'true' || siteSettings.store_status === 'MAINTENANCE';
+    const isClosed = siteSettings.store_status === 'TEMPORARILY CLOSED';
+
+    if ((isMaintenance || isClosed) && overlay) {
         overlay.style.display = 'flex';
-        if (customMessage) {
-            customMessage.textContent = siteSettings.maintenance_message || "We'll be back shortly with brand new sticker deployments.";
+        const msg = siteSettings.maintenance_message || siteSettings.maintenance_msg || (isClosed ? "Storefront is temporarily closed." : "We'll be back shortly with brand new sticker deployments.");
+        if (customMessage) customMessage.textContent = msg;
+
+        if (isClosed) {
+            if (titleEl) titleEl.textContent = "CHIPAKK STORE CLOSED";
+            if (subtitleEl) subtitleEl.textContent = "We are currently not accepting visits or orders.";
+            if (errorCodeEl) errorCodeEl.textContent = "ERROR CODE: STORE_TEMPORARILY_CLOSED";
+        } else {
+            if (titleEl) titleEl.textContent = "CHIPAKK SYSTEM EXCEPTION";
+            if (subtitleEl) subtitleEl.textContent = "CHIPAKK.EXE is currently undergoing scheduled updates.";
+            if (errorCodeEl) errorCodeEl.textContent = "ERROR CODE: MAINTENANCE_MODE_ACTIVE";
         }
+
+        const maintenanceImg = siteSettings.maintenance_image || '';
+        if (maintenanceImg && imgContainer && displayImg) {
+            const apiHost = 'https://api.chipakk.shop';
+            const fullImgSrc = maintenanceImg.startsWith('http') ? maintenanceImg : (apiHost + maintenanceImg);
+            displayImg.src = fullImgSrc;
+            imgContainer.style.display = 'block';
+        } else if (imgContainer) {
+            imgContainer.style.display = 'none';
+        }
+    } else if (overlay) {
+        overlay.style.display = 'none';
+    }
+}
+
+async function syncLiveStorefrontData() {
+    const apiHost = 'https://api.chipakk.shop';
+    try {
+        const [settingsRes, eventsRes] = await Promise.allSettled([
+            fetch(`${apiHost}/api/settings`).then(r => r.json()),
+            fetch(`${apiHost}/api/events?status=live`).then(r => r.json())
+        ]);
+
+        if (settingsRes.status === 'fulfilled' && settingsRes.value?.success && settingsRes.value?.data) {
+            siteSettings = { ...siteSettings, ...settingsRes.value.data };
+            localStorage.setItem('site_settings', JSON.stringify(siteSettings));
+            checkMaintenanceGate();
+        }
+
+        if (eventsRes.status === 'fulfilled' && eventsRes.value?.success && eventsRes.value?.data?.events) {
+            const liveEvts = eventsRes.value.data.events.map(evt => ({
+                id: evt.id,
+                name: evt.name,
+                type: evt.event_type === 'flash_sale' ? 'Flash Sale' : evt.event_type,
+                start_time: evt.start_time,
+                end_time: evt.end_time,
+                discount_amount: evt.discount_percent || 0,
+                status: evt.status || 'Live',
+                products: evt.product_ids || []
+            }));
+            activeEvents = liveEvts;
+            localStorage.setItem('events', JSON.stringify(liveEvts));
+            if (currentRoute === 'home') renderHomeGrids();
+            if (currentRoute === 'shop') renderCatalog();
+        }
+    } catch (e) {
+        console.warn('[Storefront live sync skipped]', e.message);
     }
 }
 
@@ -491,29 +557,67 @@ function toggleMobileDrawer(open) {
 }
 
 // --- CHECKOUT ENGINE (PROMOTIONS & SHIPPING RULES) ---
-function applyCouponCode() {
+async function applyCouponCode() {
     const code = document.getElementById('chk-coupon').value.trim().toUpperCase();
     if (!code) return;
 
-    const coupon = couponsList.find(c => c.code === code && c.active);
-    if (!coupon) {
-        showToast("ERROR: INVALID CHEAT CODE (COUPON)");
-        appliedCoupon = null;
-        renderCheckoutSummary();
-        return;
-    }
-
     const subtotal = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
-    if (subtotal < coupon.min_order) {
-        showToast(`ERROR: Minimum order ₹${coupon.min_order} required.`);
-        appliedCoupon = null;
-        renderCheckoutSummary();
-        return;
-    }
 
-    appliedCoupon = coupon;
-    showToast("✓ CHEAT CODE ACTIVATED!");
-    renderCheckoutSummary();
+    const applyBtn = document.getElementById('apply-coupon-btn');
+    const originalText = applyBtn ? applyBtn.textContent : '';
+    if (applyBtn) { applyBtn.disabled = true; applyBtn.textContent = 'CHECKING...'; }
+
+    try {
+        const apiHost = 'https://api.chipakk.shop';
+        const response = await fetch(`${apiHost}/api/coupons/validate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code, subtotal: subtotal * 100 })
+        });
+
+        const data = await response.json();
+
+        if (response.ok && data.success && data.data) {
+            const c = data.data;
+            appliedCoupon = {
+                code: c.code,
+                type: c.discount_type,
+                val: c.discount_type === 'percent' ? c.discount_value : c.discount_rupees,
+                discount_amount: c.discount_rupees,
+                min_order: c.min_order_value_rupees || 0,
+                active: true
+            };
+            showToast("✓ CHEAT CODE ACTIVATED!");
+            renderCheckoutSummary();
+            return;
+        } else {
+            const errMsg = data.error || data.message || "ERROR: INVALID CHEAT CODE (COUPON)";
+            showToast(errMsg);
+            appliedCoupon = null;
+            renderCheckoutSummary();
+            return;
+        }
+    } catch (err) {
+        // Fallback to local coupons if offline or network error
+        const coupon = couponsList.find(c => c.code === code && c.active);
+        if (!coupon) {
+            showToast("ERROR: INVALID CHEAT CODE (COUPON)");
+            appliedCoupon = null;
+            renderCheckoutSummary();
+            return;
+        }
+        if (subtotal < coupon.min_order) {
+            showToast(`ERROR: Minimum order ₹${coupon.min_order} required.`);
+            appliedCoupon = null;
+            renderCheckoutSummary();
+            return;
+        }
+        appliedCoupon = coupon;
+        showToast("✓ CHEAT CODE ACTIVATED!");
+        renderCheckoutSummary();
+    } finally {
+        if (applyBtn) { applyBtn.disabled = false; applyBtn.textContent = originalText || 'APPLY'; }
+    }
 }
 
 function renderCheckoutSummary() {

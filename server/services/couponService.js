@@ -376,10 +376,81 @@ const deleteCoupon = async (id) => {
   return result.affectedRows > 0;
 };
 
+/**
+ * Validate coupon code against subtotal for customer checkout
+ */
+const validateCoupon = async (code, subtotalPaise = 0) => {
+  if (!code || typeof code !== 'string' || !code.trim()) {
+    return { valid: false, message: 'Coupon code is required.' };
+  }
+
+  const normalizedCode = code.trim().toUpperCase();
+  const coupon = await getCouponById(normalizedCode);
+
+  if (!coupon || !coupon.active) {
+    return { valid: false, message: 'Invalid or inactive coupon code.' };
+  }
+
+  const now = new Date();
+  if (coupon.start_date && new Date(coupon.start_date) > now) {
+    return { valid: false, message: 'This coupon is not active yet.' };
+  }
+
+  if (coupon.end_date && new Date(coupon.end_date) < now) {
+    return { valid: false, message: 'This coupon has expired.' };
+  }
+
+  if (coupon.usage_limit && coupon.usage_count >= coupon.usage_limit) {
+    return { valid: false, message: 'This coupon usage limit has been reached.' };
+  }
+
+  const parsedSubtotal = Math.max(parseInt(subtotalPaise, 10) || 0, 0);
+  const minPaise = parseInt(coupon.min_order_value, 10) || 0;
+
+  if (parsedSubtotal < minPaise) {
+    const minRupees = Math.round(minPaise / 100);
+    return { valid: false, message: `Minimum order value of ₹${minRupees} required for this coupon.` };
+  }
+
+  let discountPaise = 0;
+  if (coupon.discount_type === 'percent') {
+    discountPaise = Math.round((parsedSubtotal * coupon.discount_value) / 100);
+  } else {
+    discountPaise = coupon.discount_value;
+  }
+
+  const maxDiscountPaise = coupon.max_discount_amount !== null ? parseInt(coupon.max_discount_amount, 10) : null;
+  if (maxDiscountPaise !== null && discountPaise > maxDiscountPaise) {
+    discountPaise = maxDiscountPaise;
+  }
+
+  if (discountPaise > parsedSubtotal) {
+    discountPaise = parsedSubtotal;
+  }
+
+  return {
+    valid: true,
+    message: 'Coupon code applied successfully.',
+    coupon: {
+      id: coupon.id,
+      code: coupon.code,
+      discount_type: coupon.discount_type,
+      discount_value: coupon.discount_value,
+      min_order_value: minPaise,
+      min_order_value_rupees: coupon.min_order_value_rupees,
+      max_discount_amount: maxDiscountPaise,
+      max_discount_amount_rupees: coupon.max_discount_amount_rupees,
+      discount_paise: discountPaise,
+      discount_rupees: Math.round(discountPaise / 100)
+    }
+  };
+};
+
 module.exports = {
   getCoupons,
   getCouponById,
   createCoupon,
   updateCoupon,
-  deleteCoupon
+  deleteCoupon,
+  validateCoupon
 };

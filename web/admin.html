@@ -765,6 +765,17 @@
                         <label for="cat-desc">Description</label>
                         <input type="text" id="cat-desc" class="retro-input" placeholder="Short sector description">
                     </div>
+                    <div class="retro-field">
+                        <label for="cat-image">Category Banner / Thumbnail Image (URL or Upload)</label>
+                        <div style="display: flex; gap: 8px;">
+                            <input type="text" id="cat-image" class="retro-input" placeholder="e.g. /uploads/cat-gaming.png or https://...">
+                            <button type="button" class="retro-btn" id="upload-cat-img-btn" style="padding: 4px 10px; font-size: 0.75rem; white-space: nowrap;">UPLOAD</button>
+                            <input type="file" id="cat-image-file" accept="image/*" style="display: none;">
+                        </div>
+                        <div id="cat-image-preview-box" style="margin-top: 6px; display: none;">
+                            <img id="cat-image-preview-img" src="" style="height: 48px; border: 1px solid #000; border-radius: 4px; object-fit: cover;">
+                        </div>
+                    </div>
                     <div style="display: flex; gap: 10px; margin-top: 15px;">
                         <button class="retro-btn retro-btn-primary" id="save-cat-btn">SAVE CATEGORY</button>
                         <button class="retro-btn" id="cancel-cat-btn">CANCEL</button>
@@ -1356,6 +1367,18 @@
                         </div>
 
                         <div class="retro-field">
+                            <label for="set-maintenance-image">Maintenance / Closed Display Image (URL or Upload)</label>
+                            <div style="display: flex; gap: 8px;">
+                                <input type="text" id="set-maintenance-image" class="retro-input" placeholder="e.g. /uploads/maintenance.png or https://...">
+                                <button type="button" class="retro-btn" id="upload-maintenance-img-btn" style="padding: 4px 10px; font-size: 0.75rem; white-space: nowrap;">UPLOAD</button>
+                                <input type="file" id="set-maintenance-image-file" accept="image/*" style="display: none;">
+                            </div>
+                            <div id="set-maintenance-image-preview-box" style="margin-top: 6px; display: none;">
+                                <img id="set-maintenance-image-preview-img" src="" style="max-height: 80px; border: 1px solid #000; border-radius: 4px; object-fit: contain;">
+                            </div>
+                        </div>
+
+                        <div class="retro-field">
                             <label for="set-orders-accepting">Order Acceptance Control</label>
                             <select id="set-orders-accepting" class="retro-input">
                                 <option value="true">ACCEPTING NEW ORDERS</option>
@@ -1512,8 +1535,8 @@
         <div style="font-size: 0.9rem;" id="admin-toast-text">System update complete.</div>
     </div>
 
-    <script type="module" src="js/firebase-config.js?v=1.0.0"></script>
-    <script type="module" src="js/admin.js?v=1.0.0"></script>
-    <script type="module" src="js/migration.js?v=1.0.0"></script>
+    <script type="module" src="js/firebase-config.js?v=3.4.0"></script>
+    <script type="module" src="js/admin.js?v=3.4.0"></script>
+    <script type="module" src="js/migration.js?v=3.4.0"></script>
 </body>
 </html>

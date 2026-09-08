@@ -9,6 +9,8 @@ const healthRoutes = require('./routes/health');
 const productRoutes = require('./routes/products');
 const categoryRoutes = require('./routes/categories');
 const settingsRoutes = require('./routes/settings');
+const couponRoutes = require('./routes/coupons');
+const eventRoutes = require('./routes/events');
 const adminRoutes = require('./routes/admin');
 
 // Import Middlewares
@@ -95,6 +97,8 @@ app.use('/api/health', healthRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/coupons', couponRoutes);
+app.use('/api/events', eventRoutes);
 app.use('/api/store-builder', getPublicStoreBuilderHandler);
 app.use('/api/admin', adminRoutes);
 

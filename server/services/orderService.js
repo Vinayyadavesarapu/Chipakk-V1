@@ -169,33 +169,64 @@ const getOrderById = async (orderIdOrNumber) => {
   order.shipping_address = safeJsonParse(order.shipping_address, null);
 
   const totalPricePaise = parseInt(order.total_price, 10) || 0;
-  order.total_price_rupees = Math.round(totalPricePaise / 100);
+  const subtotalPaise = parseInt(order.subtotal, 10) || 0;
+  const discountPaise = parseInt(order.discount_total, 10) || 0;
+  const shippingPaise = parseInt(order.shipping_charge, 10) || 0;
 
-  // Fetch Order Items
+  order.total_price_rupees = Math.round(totalPricePaise / 100);
+  order.subtotal_rupees = Math.round(subtotalPaise / 100);
+  order.discount_total_rupees = Math.round(discountPaise / 100);
+  order.shipping_charge_rupees = Math.round(shippingPaise / 100);
+
+  // Fetch Order Items with product image
   const itemsQuery = `
     SELECT 
-      id,
-      order_id,
-      product_id,
-      variant_id,
-      product_name,
-      sku,
-      variant_options,
-      unit_price,
-      quantity,
-      total_price,
-      admin_product_id_snapshot,
-      production_status,
-      created_at
-    FROM order_items
-    WHERE order_id = ?
-    ORDER BY id ASC
+      oi.id,
+      oi.order_id,
+      oi.product_id,
+      oi.variant_id,
+      oi.product_name,
+      oi.sku,
+      oi.variant_options,
+      oi.unit_price,
+      oi.quantity,
+      oi.total_price,
+      oi.admin_product_id_snapshot,
+      oi.production_status,
+      oi.created_at,
+      (SELECT image_url FROM product_images WHERE product_id = oi.product_id ORDER BY display_order ASC, id ASC LIMIT 1) AS product_image
+    FROM order_items oi
+    WHERE oi.order_id = ?
+    ORDER BY oi.id ASC
   `;
 
   const [itemRows] = await pool.execute(itemsQuery, [numOrderId]);
 
+  // Fetch any linked custom designs/artwork
+  let customDesignsByItem = {};
+  if (itemRows.length > 0) {
+    try {
+      const placeholders = itemRows.map(() => '?').join(',');
+      const itemIds = itemRows.map(i => i.id);
+      const [designRows] = await pool.execute(`
+        SELECT id, order_item_id, file_role, storage_path, image_url, original_filename, verification_status
+        FROM order_item_custom_designs
+        WHERE order_item_id IN (${placeholders})
+      `, itemIds);
+
+      designRows.forEach(d => {
+        if (!customDesignsByItem[d.order_item_id]) customDesignsByItem[d.order_item_id] = [];
+        customDesignsByItem[d.order_item_id].push(d);
+      });
+    } catch (err) {
+      // Ignore if table does not exist or empty
+    }
+  }
+
   order.items = itemRows.map(item => ({
     ...item,
+    img: item.product_image || null,
+    custom_designs: customDesignsByItem[item.id] || [],
     variant_options: safeJsonParse(item.variant_options, null),
     unit_price_rupees: Math.round((parseInt(item.unit_price, 10) || 0) / 100),
     total_price_rupees: Math.round((parseInt(item.total_price, 10) || 0) / 100)

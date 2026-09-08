@@ -2,7 +2,7 @@ import { db, auth, storage } from './firebase-config.js';
 import { signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { collection, query, orderBy, onSnapshot, doc, getDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { ref, uploadBytesResumable, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
-import { apiClient } from './api.js';
+import { apiClient } from './api.js?v=3.3.0';
 
 // =============================================================================
 // LOCAL ADMIN UI DESIGN MODE
@@ -128,13 +128,7 @@ let orders = [];
 let productionQueueItems = [];
 let customers = [];
 let reviews = [];
-let teamMembers = JSON.parse(localStorage.getItem('team_members') || '[]').length > 0
-    ? JSON.parse(localStorage.getItem('team_members'))
-    : [
-        { id: 901, name: "Vinay Yadavesarapu", email: "vinay@chipakk.shop", role: "SUPER ADMIN", permissions: ["Full Access"], active: true, created_at: "2026-08-01" },
-        { id: 902, name: "Anita Sharma", email: "anita@chipakk.shop", role: "CONTENT MANAGER", permissions: ["Catalog", "Reviews", "Store Builder"], active: true, created_at: "2026-08-15" },
-        { id: 903, name: "Karan Malhotra", email: "karan@chipakk.shop", role: "STAFF", permissions: ["Orders & Fulfillment"], active: true, created_at: "2026-08-20" }
-    ];
+let teamMembers = [];
 let shippingRules = [];
 let events = [];
 let coupons = [];
@@ -223,7 +217,9 @@ function normalizeCategory(c) {
         name: c.name,
         slug: c.slug || c.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
         description: c.description || '',
+        image_url: c.image_url || '',
         display_order: c.display_order || c.id,
+        product_count: parseInt(c.product_count, 10) || 0,
         active: c.active === 1 || c.active === true
     };
 }
@@ -371,7 +367,8 @@ async function loadAllAdminData() {
             storeRes,
             revRes,
             setRes,
-            auditRes
+            auditRes,
+            teamRes
         ] = await Promise.allSettled([
             apiClient.get('/admin/products'),
             apiClient.get('/categories'),
@@ -384,7 +381,8 @@ async function loadAllAdminData() {
             apiClient.get('/admin/store-builder'),
             apiClient.get('/admin/reviews'),
             apiClient.get('/admin/settings'),
-            apiClient.get('/admin/audit-logs')
+            apiClient.get('/admin/audit-logs'),
+            apiClient.get('/admin/team')
         ]);
 
         if (prodRes.status === 'fulfilled' && prodRes.value) {
@@ -486,9 +484,15 @@ async function loadAllAdminData() {
             if (Array.isArray(rawLogs)) {
                 auditLogs = rawLogs.map(a => ({
                     timestamp: a.created_at || a.timestamp || new Date().toISOString(),
-                    actor: a.admin_email || a.admin_id || a.actor || 'Admin',
+                    actor: a.actor_email || a.admin_email || a.actor_id || a.actor || 'SYSTEM',
                     action: `${a.action || ''} ${a.entity_type ? '(' + a.entity_type + ' #' + (a.entity_id || '') + ')' : ''}`.trim()
                 }));
+            }
+        }
+        if (teamRes && teamRes.status === 'fulfilled' && teamRes.value) {
+            const rawTeam = teamRes.value.data?.team || teamRes.value.team || (Array.isArray(teamRes.value.data) ? teamRes.value.data : []);
+            if (Array.isArray(rawTeam)) {
+                teamMembers = rawTeam;
             }
         }
 
@@ -1307,21 +1311,33 @@ function renderCategoriesTable() {
     const tbody = document.getElementById('categories-tbody');
     if (!tbody) return;
 
-    tbody.innerHTML = categories.map(c => `
-        <tr>
-            <td><strong>${c.name}</strong></td>
-            <td><code style="background:#eee; padding:2px 6px;">${c.slug}</code></td>
-            <td><small>${c.description || '-'}</small></td>
-            <td><span class="status-badge status-live">${c.display_order}</span></td>
-            <td><span class="status-badge ${c.active ? 'status-live' : 'status-inactive'}">${c.active ? 'ACTIVE' : 'INACTIVE'}</span></td>
-            <td>
-                <div style="display:flex; gap:4px;">
-                    <button class="retro-btn edit-cat-btn" data-id="${c.id}" style="padding:2px 6px; font-size:0.75rem;">EDIT</button>
-                    <button class="retro-btn del-cat-btn" data-id="${c.id}" style="padding:2px 6px; font-size:0.75rem; background:#ef4444; color:#fff;">DEL</button>
-                </div>
-            </td>
-        </tr>
-    `).join('') || '<tr><td colspan="6">No categories found.</td></tr>';
+    tbody.innerHTML = categories.map(c => {
+        const apiHost = apiClient.baseUrl ? apiClient.baseUrl.replace(/\/api$/, '') : 'https://api.chipakk.shop';
+        const imgThumb = c.image_url ? `<img src="${c.image_url.startsWith('http') ? c.image_url : (apiHost + c.image_url)}" style="width:28px; height:28px; object-fit:cover; border:1px solid #000; border-radius:3px; vertical-align:middle; margin-right:6px;">` : '';
+        return `
+            <tr>
+                <td><span class="status-badge status-live">${c.display_order || c.id}</span></td>
+                <td>
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        ${imgThumb}
+                        <div>
+                            <strong>${c.name}</strong>
+                            ${c.description ? `<br><small style="color:#666;">${c.description}</small>` : ''}
+                        </div>
+                    </div>
+                </td>
+                <td><code style="background:#eee; padding:2px 6px;">${c.slug}</code></td>
+                <td><strong style="color:#059669;">${c.product_count}</strong> <small style="color:#666;">products</small></td>
+                <td><span class="status-badge ${c.active ? 'status-live' : 'status-inactive'}">${c.active ? 'ACTIVE' : 'INACTIVE'}</span></td>
+                <td>
+                    <div style="display:flex; gap:4px;">
+                        <button class="retro-btn edit-cat-btn" data-id="${c.id}" style="padding:2px 6px; font-size:0.75rem;">EDIT</button>
+                        <button class="retro-btn del-cat-btn" data-id="${c.id}" style="padding:2px 6px; font-size:0.75rem; background:#ef4444; color:#fff;">DEL</button>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }).join('') || '<tr><td colspan="6">No categories found.</td></tr>';
 
     tbody.querySelectorAll('.edit-cat-btn').forEach(btn => {
         btn.addEventListener('click', () => {
@@ -1345,6 +1361,19 @@ function openCategoryForm(category = null) {
     document.getElementById('cat-slug').value = category ? category.slug : '';
     document.getElementById('cat-desc').value = category ? (category.description || '') : '';
 
+    const catImageInput = document.getElementById('cat-image');
+    if (catImageInput) catImageInput.value = category?.image_url || '';
+
+    const prevBox = document.getElementById('cat-image-preview-box');
+    const prevImg = document.getElementById('cat-image-preview-img');
+    if (category?.image_url && prevBox && prevImg) {
+        const apiHost = apiClient.baseUrl ? apiClient.baseUrl.replace(/\/api$/, '') : 'https://api.chipakk.shop';
+        prevImg.src = category.image_url.startsWith('http') ? category.image_url : (apiHost + category.image_url);
+        prevBox.style.display = 'block';
+    } else if (prevBox) {
+        prevBox.style.display = 'none';
+    }
+
     container.style.display = 'block';
 }
 
@@ -1352,6 +1381,7 @@ async function saveCategoryForm() {
     const name = document.getElementById('cat-name').value.trim();
     const slug = document.getElementById('cat-slug').value.trim() || name.toLowerCase().replace(/\s+/g, '-');
     const desc = document.getElementById('cat-desc').value.trim();
+    const imageUrl = document.getElementById('cat-image')?.value.trim() || null;
 
     if (!name) {
         showToast("Category name is required!", "error");
@@ -1362,7 +1392,7 @@ async function saveCategoryForm() {
     const originalText = saveBtn ? saveBtn.textContent : '';
     if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = "SAVING..."; }
 
-    const payload = { name, slug, description: desc, active: 1 };
+    const payload = { name, slug, description: desc, image_url: imageUrl, active: 1 };
 
     try {
         if (editingCategoryId) {
@@ -1374,6 +1404,7 @@ async function saveCategoryForm() {
         }
         document.getElementById('category-form-container').style.display = 'none';
         await refreshCategoriesFromAPI();
+        await refreshAuditLogsFromAPI();
     } catch (err) {
         showToast(`Error saving category: ${err.message}`, 'error');
     } finally {
@@ -1433,6 +1464,26 @@ function renderProductionQueueTabs() {
     });
 }
 
+function derivePrintAndCutBadges(stage) {
+    let printBadge = '<span class="status-badge status-upcoming">PENDING</span>';
+    let cutBadge = '<span class="status-badge status-inactive">WAITING</span>';
+
+    if (stage === 'Printing') {
+        printBadge = '<span class="status-badge" style="background:#2563eb; color:#fff;">PRINTING</span>';
+        cutBadge = '<span class="status-badge status-inactive">WAITING</span>';
+    } else if (stage === 'Printed') {
+        printBadge = '<span class="status-badge status-live">PRINTED</span>';
+        cutBadge = '<span class="status-badge status-upcoming">READY</span>';
+    } else if (stage === 'Cutting') {
+        printBadge = '<span class="status-badge status-live">PRINTED</span>';
+        cutBadge = '<span class="status-badge" style="background:#7c3aed; color:#fff;">CUTTING</span>';
+    } else if (['Cut', 'Ready to Pack', 'Packed'].includes(stage)) {
+        printBadge = '<span class="status-badge status-live">PRINTED</span>';
+        cutBadge = '<span class="status-badge status-live">CUT</span>';
+    }
+    return { printBadge, cutBadge };
+}
+
 function renderProductionQueueTable() {
     const tbody = document.getElementById('production-tbody');
     if (!tbody) return;
@@ -1444,7 +1495,9 @@ function renderProductionQueueTable() {
         const matchesTab = activeProductionTab === "All" || stage === activeProductionTab;
         const matchesSearch = !searchQuery ||
             (row.admin_id || '').toLowerCase().includes(searchQuery) ||
+            (row.admin_product_id_snapshot || '').toLowerCase().includes(searchQuery) ||
             (row.order_id || '').toLowerCase().includes(searchQuery) ||
+            (row.order_number || '').toLowerCase().includes(searchQuery) ||
             (row.product_name || '').toLowerCase().includes(searchQuery) ||
             (row.customer_name || '').toLowerCase().includes(searchQuery);
         return matchesTab && matchesSearch;
@@ -1454,27 +1507,40 @@ function renderProductionQueueTable() {
         const itemKey = row.order_item_id || row.id;
         const stage = BACKEND_TO_UI_PROD_STATUS[row.production_status] || row.production_status || 'Ready to Print';
         const isChecked = selectedProductionItemIds.includes(String(itemKey));
+        const { printBadge, cutBadge } = derivePrintAndCutBadges(stage);
+
+        let variantText = '';
+        if (row.variant_options) {
+            if (typeof row.variant_options === 'object') {
+                variantText = Object.entries(row.variant_options).map(([k, v]) => `${k}: ${v}`).join(', ');
+            } else {
+                variantText = String(row.variant_options);
+            }
+        }
 
         return `
             <tr>
                 <td><input type="checkbox" class="prod-queue-item-chk" data-id="${itemKey}" ${isChecked ? 'checked' : ''}></td>
-                <td><span class="admin-id-highlight">${row.admin_id || 'CK-001'}</span></td>
-                <td><strong class="admin-id-highlight">${row.order_id || row.order_number}</strong></td>
-                <td><strong>${row.product_name}</strong></td>
-                <td><strong>${row.customer_name}</strong></td>
+                <td><strong class="admin-id-highlight">${row.order_number || row.order_id}</strong></td>
+                <td><strong>${row.customer_name || 'Customer'}</strong>${row.customer_phone ? `<br><small style="color:#666;">${row.customer_phone}</small>` : ''}</td>
+                <td><span class="admin-id-highlight">${row.admin_product_id_snapshot || row.admin_id || row.sku || 'CK-001'}</span></td>
+                <td><strong>${row.product_name}</strong>${variantText ? `<br><small style="color:#666;">${variantText}</small>` : ''}</td>
                 <td><strong>x${row.quantity}</strong></td>
+                <td>${printBadge}</td>
+                <td>${cutBadge}</td>
                 <td>
                     <select class="retro-input prod-stage-select" data-id="${itemKey}" style="padding:2px 4px; font-size:0.75rem;">
                         ${PRODUCTION_STAGES.map(st => `<option value="${st}" ${st === stage ? 'selected' : ''}>${st}</option>`).join('')}
                     </select>
                 </td>
-                <td><span class="status-badge status-upcoming">${row.fulfillment_status || 'New'}</span></td>
+                <td><span class="status-badge status-live">${row.fulfillment_status || 'CONFIRMED'}</span></td>
+                <td><small>${row.created_at ? new Date(row.created_at).toLocaleDateString() : '-'}</small></td>
                 <td>
                     <button class="retro-btn adv-prod-stage-btn" data-id="${itemKey}" style="padding:2px 6px; font-size:0.75rem; background:#2563eb; color:#fff;">ADVANCE →</button>
                 </td>
             </tr>
         `;
-    }).join('') || '<tr><td colspan="9">No POD production items found.</td></tr>';
+    }).join('') || '<tr><td colspan="12">No POD production items found.</td></tr>';
 
     tbody.querySelectorAll('.prod-queue-item-chk').forEach(chk => {
         chk.addEventListener('change', () => {
@@ -1633,16 +1699,60 @@ function renderOrdersTable() {
     });
 }
 
-function openOrderDetailModal(orderId) {
-    const o = orders.find(ord => ord.order_id === orderId || String(ord.id) === String(orderId));
-    if (!o) return;
+async function openOrderDetailModal(orderId) {
+    let o = orders.find(ord => ord.order_id === orderId || String(ord.id) === String(orderId));
+    activeOrderViewing = o || { id: orderId, order_id: orderId, items: [] };
 
-    activeOrderViewing = o;
     const modal = document.getElementById('order-detail-modal');
     if (!modal) return;
 
-    renderOrderDetailModalContent(o);
+    if (o) renderOrderDetailModalContent(o);
     modal.style.display = 'flex';
+
+    // Fetch fresh database order details including line items, images, tracking & breakdown
+    try {
+        const fetchId = o ? o.id : orderId;
+        const res = await apiClient.get(`/admin/orders/${fetchId}`);
+        const freshOrder = res?.data || res;
+        if (freshOrder && (freshOrder.id || freshOrder.order_number)) {
+            const normalized = normalizeOrder(freshOrder);
+            if (Array.isArray(freshOrder.items)) {
+                normalized.items = freshOrder.items.map(it => {
+                    const apiHost = apiClient.baseUrl ? apiClient.baseUrl.replace(/\/api$/, '') : 'https://api.chipakk.shop';
+                    let itemImg = it.img || it.product_image || 'https://img.icons8.com/color/150/000000/sticker.png';
+                    if (itemImg && !itemImg.startsWith('http') && !itemImg.startsWith('//')) {
+                        itemImg = apiHost + itemImg;
+                    }
+                    let variantStr = 'Standard';
+                    if (it.variant_options) {
+                        if (typeof it.variant_options === 'object') {
+                            variantStr = Object.entries(it.variant_options).map(([k, v]) => `${k}: ${v}`).join(', ');
+                        } else {
+                            variantStr = String(it.variant_options);
+                        }
+                    }
+                    return {
+                        ...it,
+                        item_id: it.id,
+                        order_item_id: it.id,
+                        admin_id: it.admin_product_id_snapshot || it.sku || 'CK-001',
+                        title: it.product_name,
+                        variant: variantStr,
+                        qty: it.quantity,
+                        unit_price: it.unit_price_rupees || Math.round((parseInt(it.unit_price, 10) || 0) / 100),
+                        total_price: it.total_price_rupees || Math.round((parseInt(it.total_price, 10) || 0) / 100),
+                        production_status: BACKEND_TO_UI_PROD_STATUS[it.production_status] || it.production_status || 'Ready to Print',
+                        img: itemImg,
+                        custom_designs: it.custom_designs || []
+                    };
+                });
+            }
+            activeOrderViewing = normalized;
+            renderOrderDetailModalContent(normalized);
+        }
+    } catch (err) {
+        console.warn('[Fetch Fresh Order Error]', err.message);
+    }
 }
 
 function renderOrderDetailModalContent(o) {
@@ -1652,7 +1762,19 @@ function renderOrderDetailModalContent(o) {
     document.getElementById('ord-detail-cust-email').textContent = o.email;
     document.getElementById('ord-detail-cust-phone').textContent = o.phone;
     document.getElementById('ord-detail-cust-address').textContent = o.address;
-    document.getElementById('ord-detail-total').textContent = `₹${o.total_price}`;
+    
+    // Detailed price breakdown
+    const subtotal = o.subtotal_rupees !== undefined ? o.subtotal_rupees : o.total_price;
+    const shipping = o.shipping_charge_rupees !== undefined ? o.shipping_charge_rupees : 0;
+    const discount = o.discount_total_rupees !== undefined ? o.discount_total_rupees : 0;
+    const couponInfo = o.coupon_code ? ` [Coupon: ${o.coupon_code}]` : '';
+    
+    document.getElementById('ord-detail-total').innerHTML = `
+        ₹${o.total_price}
+        <div style="font-size:0.75rem; color:#555; font-weight:normal; margin-top:3px;">
+            Subtotal: ₹${subtotal} | Shipping: ₹${shipping} | Discount: -₹${discount}${couponInfo}
+        </div>
+    `;
 
     const payBadge = document.getElementById('ord-detail-pay-status');
     payBadge.textContent = o.payment_status;
@@ -1674,13 +1796,18 @@ function renderOrderDetailModalContent(o) {
     statusSelect.innerHTML = CANONICAL_ORDER_STATUSES.map(s => `<option value="${s}" ${s === o.status ? 'selected' : ''}>${s}</option>`).join('');
 
     const itemsTbody = document.getElementById('ord-detail-items-tbody');
-    itemsTbody.innerHTML = o.items.map((item, idx) => {
+    itemsTbody.innerHTML = (o.items || []).map((item, idx) => {
         const prodStage = item.production_status || 'Ready to Print';
+        const hasArtwork = item.custom_designs && item.custom_designs.length > 0;
         return `
             <tr>
-                <td><img src="${item.img || 'https://img.icons8.com/color/150/000000/sticker.png'}" style="width:40px; height:40px; border:1px solid #000;"></td>
+                <td><img src="${item.img || 'https://img.icons8.com/color/150/000000/sticker.png'}" style="width:40px; height:40px; object-fit:cover; border:1px solid #000;"></td>
                 <td><span class="admin-id-highlight">${item.admin_id || 'CK-001'}</span></td>
-                <td><strong>${item.title}</strong><br><small style="color:#666;">${item.variant || 'Standard 3x3"'}</small></td>
+                <td>
+                    <strong>${item.title}</strong>
+                    <br><small style="color:#666;">${item.variant || 'Standard 3x3"'}</small>
+                    ${hasArtwork ? `<div style="margin-top:2px;"><span class="status-badge" style="background:#7c3aed; color:#fff; font-size:0.65rem;">🎨 CUSTOM ARTWORK (${item.custom_designs.length})</span></div>` : ''}
+                </td>
                 <td><strong>x${item.qty}</strong></td>
                 <td>₹${item.unit_price}</td>
                 <td>
@@ -1693,7 +1820,7 @@ function renderOrderDetailModalContent(o) {
                 </td>
             </tr>
         `;
-    }).join('');
+    }).join('') || '<tr><td colspan="7">No items recorded for this order.</td></tr>';
 
     itemsTbody.querySelectorAll('.item-prod-select').forEach(sel => {
         sel.addEventListener('change', async (e) => {
@@ -2543,52 +2670,72 @@ function renderTeamMembersTable() {
 
     tbody.innerHTML = teamMembers.map(m => `
         <tr>
-            <td><strong>${m.name}</strong></td>
+            <td><strong>${m.name || m.email.split('@')[0]}</strong></td>
             <td>${m.email}</td>
             <td><span class="status-badge" style="background:#7c3aed; color:#fff;">${m.role}</span></td>
-            <td><small>${(m.permissions || []).join(', ')}</small></td>
+            <td><small>${(m.permissions || ['Catalog', 'Orders', 'Production']).join(', ')}</small></td>
             <td><span class="status-badge ${m.active ? 'status-live' : 'status-inactive'}">${m.active ? 'ACTIVE' : 'INACTIVE'}</span></td>
             <td>
                 <button class="retro-btn toggle-team-btn" data-id="${m.id}" style="padding:2px 6px; font-size:0.75rem;">TOGGLE</button>
             </td>
         </tr>
-    `).join('');
+    `).join('') || '<tr><td colspan="6">No team members found in database.</td></tr>';
 
     tbody.querySelectorAll('.toggle-team-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
+        btn.addEventListener('click', async () => {
             const m = teamMembers.find(item => String(item.id) === btn.getAttribute('data-id'));
-            if (m) {
-                m.active = !m.active;
-                updateState();
-                showToast(`Team member ${m.name} set to ${m.active ? 'Active' : 'Inactive'}`);
+            if (!m) return;
+            const newActive = !m.active;
+            try {
+                await apiClient.put(`/admin/team/${m.id}/status`, { active: newActive });
+                m.active = newActive;
+                renderTeamMembersTable();
+                showToast(`Team member ${m.email} set to ${newActive ? 'Active' : 'Inactive'}`);
+                await refreshAuditLogsFromAPI();
+            } catch (err) {
+                showToast(`Error updating team member: ${err.message}`, 'error');
             }
         });
     });
 }
 
-function saveTeamMemberForm() {
-    const name = document.getElementById('team-name')?.value.trim();
+async function refreshTeamFromAPI() {
+    try {
+        const res = await apiClient.get('/admin/team');
+        const rawTeam = res?.data?.team || res?.team || (Array.isArray(res?.data) ? res.data : []);
+        if (Array.isArray(rawTeam)) {
+            teamMembers = rawTeam;
+            renderTeamMembersTable();
+        }
+    } catch (err) {
+        console.warn('[refreshTeamFromAPI error]', err.message);
+    }
+}
+
+async function saveTeamMemberForm() {
     const email = document.getElementById('team-email')?.value.trim();
     const role = document.getElementById('team-role')?.value;
 
-    if (!name || !email) {
-        showToast("Name and Email are required!", "error");
+    if (!email) {
+        showToast("Valid email address is required!", "error");
         return;
     }
 
-    teamMembers.push({
-        id: Date.now(),
-        name,
-        email,
-        role: role || "STAFF",
-        permissions: ["Orders & Fulfillment"],
-        active: true,
-        created_at: new Date().toISOString().slice(0, 10)
-    });
+    const saveBtn = document.getElementById('save-team-btn');
+    const origText = saveBtn ? saveBtn.textContent : '';
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'SAVING...'; }
 
-    document.getElementById('team-form-container').style.display = 'none';
-    updateState();
-    showToast(`Team member '${name}' added.`);
+    try {
+        await apiClient.post('/admin/team', { email, role });
+        showToast(`Team member '${email}' added to database.`);
+        document.getElementById('team-form-container').style.display = 'none';
+        await refreshTeamFromAPI();
+        await refreshAuditLogsFromAPI();
+    } catch (err) {
+        showToast(`Error adding team member: ${err.message}`, 'error');
+    } finally {
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = origText || 'SAVE MEMBER'; }
+    }
 }
 
 // =============================================================================
@@ -2608,6 +2755,23 @@ function renderAuditLogs() {
     `).join('') || '<div style="font-family:monospace; font-size:0.8rem; color:#888;">No system audit logs recorded.</div>';
 }
 
+async function refreshAuditLogsFromAPI() {
+    try {
+        const res = await apiClient.get('/admin/audit-logs');
+        const rawLogs = res?.data?.auditLogs || res?.auditLogs || res?.data?.logs || (Array.isArray(res?.data) ? res.data : []);
+        if (Array.isArray(rawLogs)) {
+            auditLogs = rawLogs.map(a => ({
+                timestamp: a.created_at || a.timestamp || new Date().toISOString(),
+                actor: a.actor_email || a.admin_email || a.actor_id || a.actor || 'SYSTEM',
+                action: `${a.action || ''} ${a.entity_type ? '(' + a.entity_type + ' #' + (a.entity_id || '') + ')' : ''}`.trim()
+            }));
+            renderAuditLogs();
+        }
+    } catch (err) {
+        console.warn('[refreshAuditLogs Error]', err.message);
+    }
+}
+
 function writeAuditLog(actor, action) {
     auditLogs.unshift({ timestamp: new Date().toISOString(), actor, action });
 }
@@ -2616,7 +2780,14 @@ function showToast(message, type = 'success') {
     const toast = document.getElementById('admin-toast');
     const toastText = document.getElementById('admin-toast-text');
     if (!toast || !toastText) return;
-    toastText.textContent = message;
+
+    let text = message;
+    if (message instanceof Error) {
+        text = message.message;
+    } else if (typeof message === 'object' && message !== null) {
+        text = message.message || message.error || JSON.stringify(message);
+    }
+    toastText.textContent = String(text || 'Action completed');
     toast.style.borderLeft = type === 'error' ? '6px solid var(--error-color)' : '6px solid var(--success-color)';
     toast.classList.add('show');
     setTimeout(() => toast.classList.remove('show'), 3500);
@@ -2659,18 +2830,39 @@ function handleGlobalSearch(query) {
 
 function loadSystemSettings() {
     if (document.getElementById('set-store-name')) document.getElementById('set-store-name').value = siteSettings.store_name || '';
-    if (document.getElementById('set-support-email')) document.getElementById('set-support-email').value = siteSettings.business_email || '';
+    if (document.getElementById('set-support-email')) document.getElementById('set-support-email').value = siteSettings.business_email || siteSettings.support_email || '';
     if (document.getElementById('set-support-phone')) document.getElementById('set-support-phone').value = siteSettings.support_phone || '';
     if (document.getElementById('set-gstin')) document.getElementById('set-gstin').value = siteSettings.gstin || '';
-    if (document.getElementById('set-gst-rate')) document.getElementById('set-gst-rate').value = siteSettings.gst_pct || 18;
+    if (document.getElementById('set-gst-rate')) document.getElementById('set-gst-rate').value = siteSettings.gst_pct !== undefined ? siteSettings.gst_pct : (siteSettings.gst_rate || 18);
     if (document.getElementById('set-currency')) document.getElementById('set-currency').value = siteSettings.currency_symbol || '₹ (INR)';
     if (document.getElementById('set-order-prefix')) document.getElementById('set-order-prefix').value = siteSettings.order_prefix || 'CHP-';
     if (document.getElementById('set-default-rating')) document.getElementById('set-default-rating').value = siteSettings.default_rating || 4.7;
 
     if (document.getElementById('set-store-status')) document.getElementById('set-store-status').value = siteSettings.store_status || 'OPEN';
-    if (document.getElementById('set-maintenance-active')) document.getElementById('set-maintenance-active').value = String(siteSettings.maintenance_active || false);
-    if (document.getElementById('set-maintenance-msg')) document.getElementById('set-maintenance-msg').value = siteSettings.maintenance_msg || '';
-    if (document.getElementById('set-orders-accepting')) document.getElementById('set-orders-accepting').value = String(siteSettings.orders_accepting !== false);
+    if (document.getElementById('set-maintenance-active')) document.getElementById('set-maintenance-active').value = String(siteSettings.maintenance_active === true || siteSettings.maintenance_active === 'true');
+    if (document.getElementById('set-maintenance-msg')) document.getElementById('set-maintenance-msg').value = siteSettings.maintenance_message || siteSettings.maintenance_msg || '';
+
+    const maintImgInput = document.getElementById('set-maintenance-image');
+    const maintPrevBox = document.getElementById('set-maintenance-image-preview-box');
+    const maintPrevImg = document.getElementById('set-maintenance-image-preview-img');
+    const maintImgVal = siteSettings.maintenance_image || '';
+    if (maintImgInput) maintImgInput.value = maintImgVal;
+    if (maintPrevBox && maintPrevImg) {
+        if (maintImgVal) {
+            const apiHost = apiClient.baseUrl ? apiClient.baseUrl.replace(/\/api$/, '') : 'https://api.chipakk.shop';
+            maintPrevImg.src = maintImgVal.startsWith('http') ? maintImgVal : (apiHost + maintImgVal);
+            maintPrevBox.style.display = 'block';
+        } else {
+            maintPrevBox.style.display = 'none';
+        }
+    }
+
+    if (document.getElementById('set-orders-accepting')) {
+        const accepting = siteSettings.orders_accepting !== undefined
+            ? (siteSettings.orders_accepting === true || siteSettings.orders_accepting === 'true')
+            : (siteSettings.order_acceptance !== 'PAUSED');
+        document.getElementById('set-orders-accepting').value = String(accepting);
+    }
     if (document.getElementById('set-orders-paused-msg')) document.getElementById('set-orders-paused-msg').value = siteSettings.orders_paused_msg || '';
 }
 
@@ -2886,14 +3078,19 @@ function setupEventListeners() {
         const originalText = btn ? btn.textContent : '';
         if (btn) { btn.disabled = true; btn.textContent = "SAVING..."; }
 
+        const email = document.getElementById('set-support-email').value.trim();
+        const gstVal = Number(document.getElementById('set-gst-rate').value) || 18;
+
         const payload = {
-            store_name: document.getElementById('set-store-name').value,
-            business_email: document.getElementById('set-support-email').value,
-            support_phone: document.getElementById('set-support-phone').value,
-            gstin: document.getElementById('set-gstin').value,
-            gst_pct: Number(document.getElementById('set-gst-rate').value) || 18,
-            currency_symbol: document.getElementById('set-currency').value,
-            order_prefix: document.getElementById('set-order-prefix').value,
+            store_name: document.getElementById('set-store-name').value.trim(),
+            business_email: email,
+            support_email: email,
+            support_phone: document.getElementById('set-support-phone').value.trim(),
+            gstin: document.getElementById('set-gstin').value.trim(),
+            gst_pct: gstVal,
+            gst_rate: gstVal,
+            currency_symbol: document.getElementById('set-currency').value.trim(),
+            order_prefix: document.getElementById('set-order-prefix').value.trim(),
             default_rating: Number(document.getElementById('set-default-rating').value) || 4.7
         };
 
@@ -2914,14 +3111,18 @@ function setupEventListeners() {
         if (btn) { btn.disabled = true; btn.textContent = "APPLYING..."; }
 
         const isAccepting = document.getElementById('set-orders-accepting').value === 'true';
+        const maintenanceMsg = document.getElementById('set-maintenance-msg').value.trim();
+        const maintenanceImage = document.getElementById('set-maintenance-image')?.value.trim() || '';
 
         const payload = {
             store_status: document.getElementById('set-store-status').value,
             maintenance_active: document.getElementById('set-maintenance-active').value === 'true',
-            maintenance_msg: document.getElementById('set-maintenance-msg').value,
+            maintenance_msg: maintenanceMsg,
+            maintenance_message: maintenanceMsg,
+            maintenance_image: maintenanceImage,
             orders_accepting: isAccepting,
             order_acceptance: isAccepting ? 'ACCEPTING ORDERS' : 'PAUSED',
-            orders_paused_msg: document.getElementById('set-orders-paused-msg').value
+            orders_paused_msg: document.getElementById('set-orders-paused-msg').value.trim()
         };
 
         try {
@@ -2934,6 +3135,125 @@ function setupEventListeners() {
             if (btn) { btn.disabled = false; btn.textContent = originalText || "APPLY STORE OPERATIONS SETTINGS"; }
         }
     });
+
+    // Category Image Live Preview and Upload Listener
+    document.getElementById('cat-image')?.addEventListener('input', (e) => {
+        const val = e.target.value.trim();
+        const prevBox = document.getElementById('cat-image-preview-box');
+        const prevImg = document.getElementById('cat-image-preview-img');
+        if (prevBox && prevImg) {
+            if (val) {
+                const apiHost = apiClient.baseUrl ? apiClient.baseUrl.replace(/\/api$/, '') : 'https://api.chipakk.shop';
+                prevImg.src = val.startsWith('http') ? val : (apiHost + val);
+                prevBox.style.display = 'block';
+            } else {
+                prevBox.style.display = 'none';
+            }
+        }
+    });
+
+    document.getElementById('upload-cat-img-btn')?.addEventListener('click', () => {
+        document.getElementById('cat-image-file')?.click();
+    });
+
+    document.getElementById('cat-image-file')?.addEventListener('change', async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const uploadBtn = document.getElementById('upload-cat-img-btn');
+        const origText = uploadBtn ? uploadBtn.textContent : '';
+        if (uploadBtn) { uploadBtn.disabled = true; uploadBtn.textContent = '...'; }
+        try {
+            const formData = new FormData();
+            formData.append('image', file);
+            const res = await apiClient.upload('/admin/upload', formData);
+            const uploadedUrl = res?.data?.url || res?.url;
+            if (uploadedUrl) {
+                const catInput = document.getElementById('cat-image');
+                if (catInput) catInput.value = uploadedUrl;
+                const prevBox = document.getElementById('cat-image-preview-box');
+                const prevImg = document.getElementById('cat-image-preview-img');
+                if (prevBox && prevImg) {
+                    const apiHost = apiClient.baseUrl ? apiClient.baseUrl.replace(/\/api$/, '') : 'https://api.chipakk.shop';
+                    prevImg.src = uploadedUrl.startsWith('http') ? uploadedUrl : (apiHost + uploadedUrl);
+                    prevBox.style.display = 'block';
+                }
+                showToast('Category image uploaded successfully');
+            }
+        } catch (err) {
+            showToast(`Upload failed: ${err.message}`, 'error');
+        } finally {
+            if (uploadBtn) { uploadBtn.disabled = false; uploadBtn.textContent = origText || 'UPLOAD'; }
+            e.target.value = '';
+        }
+    });
+
+    // Maintenance Image Live Preview and Upload Listener
+    document.getElementById('set-maintenance-image')?.addEventListener('input', (e) => {
+        const val = e.target.value.trim();
+        const prevBox = document.getElementById('set-maintenance-image-preview-box');
+        const prevImg = document.getElementById('set-maintenance-image-preview-img');
+        if (prevBox && prevImg) {
+            if (val) {
+                const apiHost = apiClient.baseUrl ? apiClient.baseUrl.replace(/\/api$/, '') : 'https://api.chipakk.shop';
+                prevImg.src = val.startsWith('http') ? val : (apiHost + val);
+                prevBox.style.display = 'block';
+            } else {
+                prevBox.style.display = 'none';
+            }
+        }
+    });
+
+    document.getElementById('upload-maintenance-img-btn')?.addEventListener('click', () => {
+        document.getElementById('set-maintenance-image-file')?.click();
+    });
+
+    document.getElementById('set-maintenance-image-file')?.addEventListener('change', async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const uploadBtn = document.getElementById('upload-maintenance-img-btn');
+        const origText = uploadBtn ? uploadBtn.textContent : '';
+        if (uploadBtn) { uploadBtn.disabled = true; uploadBtn.textContent = '...'; }
+        try {
+            const formData = new FormData();
+            formData.append('image', file);
+            const res = await apiClient.upload('/admin/upload', formData);
+            const uploadedUrl = res?.data?.url || res?.url;
+            if (uploadedUrl) {
+                const maintInput = document.getElementById('set-maintenance-image');
+                if (maintInput) maintInput.value = uploadedUrl;
+                const prevBox = document.getElementById('set-maintenance-image-preview-box');
+                const prevImg = document.getElementById('set-maintenance-image-preview-img');
+                if (prevBox && prevImg) {
+                    const apiHost = apiClient.baseUrl ? apiClient.baseUrl.replace(/\/api$/, '') : 'https://api.chipakk.shop';
+                    prevImg.src = uploadedUrl.startsWith('http') ? uploadedUrl : (apiHost + uploadedUrl);
+                    prevBox.style.display = 'block';
+                }
+                showToast('Maintenance image uploaded successfully');
+            }
+        } catch (err) {
+            showToast(`Upload failed: ${err.message}`, 'error');
+        } finally {
+            if (uploadBtn) { uploadBtn.disabled = false; uploadBtn.textContent = origText || 'UPLOAD'; }
+            e.target.value = '';
+        }
+    });
+
+    // Auto-refresh audit logs on any mutating API action
+    let auditDebounce = null;
+    window.addEventListener('admin-api-activity', () => {
+        clearTimeout(auditDebounce);
+        auditDebounce = setTimeout(() => {
+            refreshAuditLogsFromAPI();
+        }, 1200);
+    });
+
+    // Periodic Polling (every 45s) for team members and audit logs
+    setInterval(() => {
+        if (document.visibilityState === 'visible') {
+            refreshAuditLogsFromAPI();
+            refreshTeamFromAPI();
+        }
+    }, 45000);
 }
 
 // Global Export Routine Helpers

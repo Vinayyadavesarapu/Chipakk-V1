@@ -12,12 +12,15 @@
     <!-- Maintenance System Overlay -->
     <div id="maintenance-overlay" class="maintenance-screen" style="display: none;">
         <div class="maintenance-box">
-            <div class="maintenance-title">CHIPAKK SYSTEM EXCEPTION</div>
-            <p>CHIPAKK.EXE is currently installing a system update.</p>
+            <div id="maintenance-title" class="maintenance-title">CHIPAKK SYSTEM EXCEPTION</div>
+            <div id="maintenance-image-container" style="display: none; margin: 15px auto; text-align: center;">
+                <img id="maintenance-display-image" src="" alt="Store Closed / Maintenance" style="max-width: 100%; max-height: 240px; border: 2px solid #000; border-radius: 6px; object-fit: contain;">
+            </div>
+            <p id="maintenance-subtitle">CHIPAKK.EXE is currently undergoing scheduled updates.</p>
             <br>
             <p id="maintenance-custom-message">We'll be back shortly with brand new sticker deployments.</p>
             <br><br>
-            <p style="font-size: 0.8rem;">ERROR CODE: MAINTENANCE_MODE_ACTIVE</p>
+            <p id="maintenance-error-code" style="font-size: 0.8rem;">ERROR CODE: MAINTENANCE_MODE_ACTIVE</p>
         </div>
     </div>
 
@@ -319,7 +322,7 @@
         </div>
     </footer>
 
-    <script type="module" src="js/firebase-config.js"></script>
-    <script type="module" src="js/app.js"></script>
+    <script type="module" src="js/firebase-config.js?v=3.4.0"></script>
+    <script type="module" src="js/app.js?v=3.4.0"></script>
 </body>
 </html>

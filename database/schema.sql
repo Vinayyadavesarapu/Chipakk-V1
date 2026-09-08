@@ -67,6 +67,7 @@ CREATE TABLE `categories` (
   `name` VARCHAR(255) NOT NULL,
   `slug` VARCHAR(255) NOT NULL,
   `description` TEXT DEFAULT NULL,
+  `image_url` VARCHAR(1000) DEFAULT NULL,
   `active` TINYINT(1) NOT NULL DEFAULT 1,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -74,6 +75,9 @@ CREATE TABLE `categories` (
   UNIQUE KEY `uk_categories_slug` (`slug`),
   KEY `idx_categories_active` (`active`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Migration for existing database:
+-- ALTER TABLE `categories` ADD COLUMN `image_url` VARCHAR(1000) DEFAULT NULL AFTER `description`;
 
 -- -----------------------------------------------------------------------------
 -- 4. PRODUCTS TABLE

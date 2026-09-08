@@ -101,12 +101,12 @@ const getAuditLogs = async ({ limit = 50, offset = 0, actorId, action } = {}) =>
   const params = [];
 
   if (actorId) {
-    conditions.push('actor_id = ?');
+    conditions.push('al.actor_id = ?');
     params.push(String(actorId).trim());
   }
 
   if (action) {
-    conditions.push('action LIKE ?');
+    conditions.push('al.action LIKE ?');
     params.push(`%${String(action).trim()}%`);
   }
 
@@ -115,15 +115,24 @@ const getAuditLogs = async ({ limit = 50, offset = 0, actorId, action } = {}) =>
   const parsedLimit = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 200);
   const parsedOffset = Math.max(parseInt(offset, 10) || 0, 0);
 
-  const countQuery = `SELECT COUNT(*) AS total FROM audit_logs ${whereClause}`;
+  const countQuery = `SELECT COUNT(*) AS total FROM audit_logs al ${whereClause}`;
   const [countRows] = await pool.execute(countQuery, params);
   const total = countRows[0].total || 0;
 
   const logsQuery = `
-    SELECT id, actor_id, actor_email, action, entity_type, entity_id, details, created_at
-    FROM audit_logs
+    SELECT 
+      al.id, 
+      al.actor_id, 
+      COALESCE(al.actor_email, adm.email, IF(al.actor_id = 'SYSTEM', 'SYSTEM', 'admin@chipakk.shop')) AS actor_email, 
+      al.action, 
+      al.entity_type, 
+      al.entity_id, 
+      al.details, 
+      al.created_at
+    FROM audit_logs al
+    LEFT JOIN admins adm ON al.actor_id = adm.firebase_uid
     ${whereClause}
-    ORDER BY created_at DESC, id DESC
+    ORDER BY al.created_at DESC, al.id DESC
     LIMIT ? OFFSET ?
   `;
 
@@ -139,10 +148,12 @@ const getAuditLogs = async ({ limit = 50, offset = 0, actorId, action } = {}) =>
         parsedDetails = r.details;
       }
     }
+    const resolvedEmail = r.actor_email || (r.actor_id === 'SYSTEM' ? 'SYSTEM' : 'admin@chipakk.shop');
     return {
       id: r.id,
       actor_id: r.actor_id,
-      actor_email: r.actor_email,
+      actor_email: resolvedEmail,
+      admin_email: resolvedEmail,
       action: r.action,
       entity_type: r.entity_type,
       entity_id: r.entity_id,

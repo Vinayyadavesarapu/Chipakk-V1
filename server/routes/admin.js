@@ -1,7 +1,12 @@
 const express = require('express');
 const { verifyFirebaseToken, requireAdmin } = require('../middleware/auth');
 const { uploadProductImage, uploadCustomArtwork } = require('../middleware/upload');
-const { getAdminDashboardHandler } = require('../controllers/adminController');
+const {
+  getAdminDashboardHandler,
+  getTeamMembersHandler,
+  updateTeamMemberStatusHandler,
+  createTeamMemberHandler
+} = require('../controllers/adminController');
 const { createCategoryHandler, updateCategoryHandler, deleteCategoryHandler } = require('../controllers/categoryController');
 const {
   getProductsHandler,
@@ -134,9 +139,37 @@ router.patch('/orders/:id/status', updateOrderStatusHandler);
 router.put('/orders/:id/shipping', updateOrderShippingHandler);
 router.post('/orders/:id/ship', updateOrderShippingHandler);
 
+// Generic Admin File Upload (Hostinger Storage)
+router.post('/upload', (req, res, next) => {
+  uploadProductImage.fields([{ name: 'file', maxCount: 1 }, { name: 'image', maxCount: 1 }])(req, res, (err) => {
+    if (err) return next(err);
+    const uploadedFile = (req.files && req.files.file && req.files.file[0]) || (req.files && req.files.image && req.files.image[0]);
+    if (!uploadedFile) {
+      return res.status(400).json({ success: false, error: 'No file uploaded' });
+    }
+    const fileUrl = `/uploads/${uploadedFile.filename}`;
+    return res.status(200).json({
+      success: true,
+      data: {
+        filename: uploadedFile.filename,
+        url: fileUrl,
+        size: uploadedFile.size,
+        mimetype: uploadedFile.mimetype
+      },
+      message: 'File uploaded successfully'
+    });
+  });
+});
+
+// Team Members Management
+router.get('/team', getTeamMembersHandler);
+router.post('/team', createTeamMemberHandler);
+router.put('/team/:id/status', updateTeamMemberStatusHandler);
+router.patch('/team/:id/status', updateTeamMemberStatusHandler);
+
 // Category Management CRUD
-router.post('/categories', createCategoryHandler);
-router.put('/categories/:id', updateCategoryHandler);
+router.post('/categories', uploadProductImage.single('image'), createCategoryHandler);
+router.put('/categories/:id', uploadProductImage.single('image'), updateCategoryHandler);
 router.delete('/categories/:id', deleteCategoryHandler);
 
 // Product Management CRUD

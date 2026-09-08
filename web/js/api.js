@@ -4,11 +4,60 @@ import { auth } from './firebase-config.js';
  * CHIPAKK Centralized API Client
  * Configurable Base URL for Hostinger Node.js Express Backend
  */
-const API_BASE_URL = window.API_BASE_URL || (
-  window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-    ? 'http://localhost:3000/api'
-    : 'https://api.chipakk.shop/api'
-);
+const API_BASE_URL = (window.API_BASE_URL && window.API_BASE_URL !== 'https://chipakk.shop/api')
+  ? window.API_BASE_URL
+  : (
+    window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+      ? 'http://localhost:3000/api'
+      : 'https://api.chipakk.shop/api'
+  );
+
+/**
+ * Format structured error response into human-readable string
+ */
+function extractErrorMessage(data, status) {
+  if (!data) return `HTTP ${status} Request Failed`;
+  if (typeof data === 'string') {
+    if (data.trim().startsWith('<')) {
+      return 'API ROUTING ERROR — The Admin Panel could not reach the CHIPAKK API.';
+    }
+    return data;
+  }
+  if (typeof data.message === 'string' && data.message.trim().startsWith('<')) {
+    return 'API ROUTING ERROR — The Admin Panel could not reach the CHIPAKK API.';
+  }
+
+  if (data.error) {
+    if (typeof data.error === 'string') return data.error;
+    if (typeof data.error === 'object') {
+      if (typeof data.error.message === 'string') return data.error.message;
+      if (typeof data.error.error === 'string') return data.error.error;
+      if (typeof data.error.details === 'string') return data.error.details;
+      if (Array.isArray(data.error.details) && data.error.details.length > 0) {
+        return data.error.details.map(d => (typeof d === 'string' ? d : d.message || JSON.stringify(d))).join(', ');
+      }
+      try {
+        const str = JSON.stringify(data.error);
+        if (str && str !== '{}') return str;
+      } catch (_) {}
+    }
+  }
+
+  if (data.message) {
+    if (typeof data.message === 'string') return data.message;
+    if (typeof data.message === 'object') {
+      if (typeof data.message.message === 'string') return data.message.message;
+      try {
+        const str = JSON.stringify(data.message);
+        if (str && str !== '{}') return str;
+      } catch (_) {}
+    }
+  }
+
+  if (typeof data.details === 'string') return data.details;
+
+  return `HTTP ${status} Request Failed`;
+}
 
 /**
  * Helper to get current Firebase Auth ID Token
@@ -62,16 +111,7 @@ async function request(endpoint, options = {}) {
     }
 
     if (!response.ok) {
-      const isHtml = typeof data?.message === 'string' && data.message.trim().startsWith('<');
-      const errorMessage = isHtml
-        ? 'API ROUTING ERROR — The Admin Panel could not reach the CHIPAKK API.'
-        : (
-            (data && data.error && typeof data.error === 'object' && data.error.message) ||
-            (data && data.error && typeof data.error === 'object' && data.error.error) ||
-            (data && typeof data.error === 'string' && data.error) ||
-            (data && data.message) ||
-            `HTTP ${response.status} Request Failed`
-          );
+      const errorMessage = extractErrorMessage(data, response.status);
       const error = new Error(errorMessage);
       error.status = response.status;
       error.data = data;
@@ -137,7 +177,8 @@ export const apiClient = {
     });
   },
 
-  getBaseUrl: () => API_BASE_URL
+  getBaseUrl: () => API_BASE_URL,
+  baseUrl: API_BASE_URL
 };
 
 export default apiClient;
