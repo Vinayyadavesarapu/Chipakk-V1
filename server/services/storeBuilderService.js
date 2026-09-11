@@ -1,5 +1,5 @@
 const { pool } = require('../config/database');
-const { getSettings } = require('./settingsService');
+const { getSiteSettings } = require('./settingsService');
 
 /**
  * Helper to retrieve JSON setting from site_settings table by key
@@ -179,7 +179,7 @@ const updateStoreBuilderData = async (updatePayload = {}) => {
  */
 const getPublicStoreBuilderData = async () => {
   const adminData = await getStoreBuilderAdminData();
-  const globalSettings = await getSettings();
+  const globalSettings = await getSiteSettings();
 
   // 1. Filter active Announcement Bar
   const announcement_bar = adminData.announcement_bar && adminData.announcement_bar.enabled
