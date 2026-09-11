@@ -53,13 +53,32 @@ const requireAdmin = async (req, res, next) => {
   }
 
   try {
-    const [rows] = await pool.execute(
-      'SELECT id, firebase_uid, email, role, active FROM admins WHERE firebase_uid = ? AND active = 1 LIMIT 1',
-      [req.user.uid]
+    let [rows] = await pool.execute(
+      'SELECT id, firebase_uid, email, role, active FROM admins WHERE (firebase_uid = ? OR (email IS NOT NULL AND LOWER(email) = LOWER(?))) AND active = 1 LIMIT 1',
+      [req.user.uid, req.user.email || '']
     );
+
+    // Bootstrap first admin if admins table is completely empty
+    if (!rows || rows.length === 0) {
+      const [countRows] = await pool.execute('SELECT COUNT(*) AS total FROM admins');
+      if (countRows[0].total === 0 && req.user.email) {
+        await pool.execute(
+          'INSERT INTO admins (firebase_uid, email, role, active) VALUES (?, ?, "super_admin", 1)',
+          [req.user.uid, req.user.email.toLowerCase()]
+        );
+        const [newAdmin] = await pool.execute('SELECT id, firebase_uid, email, role, active FROM admins WHERE firebase_uid = ? LIMIT 1', [req.user.uid]);
+        rows = newAdmin;
+      }
+    }
 
     if (!rows || rows.length === 0) {
       return sendError(res, 'Access denied. Administrative privileges required.', 403);
+    }
+
+    // If admin matched by email but had a placeholder/pending UID, bind actual firebase_uid
+    if (rows[0].firebase_uid !== req.user.uid) {
+      await pool.execute('UPDATE admins SET firebase_uid = ? WHERE id = ?', [req.user.uid, rows[0].id]).catch(() => {});
+      rows[0].firebase_uid = req.user.uid;
     }
 
     // Attach verified admin record to request object

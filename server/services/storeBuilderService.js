@@ -47,29 +47,59 @@ const getStoreBuilderAdminData = async () => {
     marquee_speed: 'normal'
   });
 
-  // 2. Hero Groups
-  const hero_groups = await getSettingByKey('store_builder_hero_groups', [
-    {
-      id: 'hero_default',
-      name: 'Main Hero Carousel',
-      active: true,
+  // 2. Hero Configuration (Mutually Exclusive: fixed vs carousel)
+  const hero_config = await getSettingByKey('store_builder_hero_config', {
+    mode: 'fixed', // 'fixed' | 'carousel'
+    fixed_banner: {
+      image_url: '/uploads/hero-banner-1.png',
+      show_eyebrow: true,
+      eyebrow: 'New designs every week',
+      show_title: true,
+      title: 'STICK YOUR WORLD.',
+      show_description: true,
+      description: 'Premium stickers for a bolder, brighter, more you. Waterproof, scratch-resistant vinyl made for laptops, phones, bottles, and every surface that deserves personality.',
+      show_primary_btn: true,
+      primary_btn_text: 'Shop Now →',
+      primary_btn_url: 'shop.html',
+      show_secondary_btn: true,
+      secondary_btn_text: 'Custom Stickers',
+      secondary_btn_url: 'custom-stickers.html'
+    },
+    carousel: {
       slides: [
         {
           id: 'slide_1',
-          title: 'CUSTOM STICKERS',
-          subtitle: 'High Quality Vinyl Stickers & Decals',
           image_url: '/uploads/hero-banner-1.png',
-          storage_path: 'uploads/hero-banner-1.png',
-          target_url: '/products',
-          cta_text: 'EXPLORE SHOP',
+          show_eyebrow: true,
+          eyebrow: 'New designs every week',
+          show_title: true,
+          title: 'CUSTOM STICKERS',
+          show_description: true,
+          description: 'High Quality Vinyl Stickers & Decals',
+          show_primary_btn: true,
+          primary_btn_text: 'EXPLORE SHOP',
+          primary_btn_url: 'shop.html',
+          show_secondary_btn: true,
+          secondary_btn_text: 'Custom Stickers',
+          secondary_btn_url: 'custom-stickers.html',
           active: true,
           sort_order: 1
         }
       ]
     }
+  });
+
+  // 3. Hero Groups (backwards compatibility)
+  const hero_groups = await getSettingByKey('store_builder_hero_groups', [
+    {
+      id: 'hero_default',
+      name: 'Main Hero Carousel',
+      active: hero_config.mode === 'carousel',
+      slides: hero_config.carousel.slides || []
+    }
   ]);
 
-  // 3. Promo Banners (from banners table & site_settings)
+  // 4. Promo Banners (from banners table & site_settings)
   let promo_banners = await getSettingByKey('store_builder_promo_banners', null);
   if (!promo_banners) {
     const [bannerRows] = await pool.execute(
@@ -78,7 +108,7 @@ const getStoreBuilderAdminData = async () => {
     promo_banners = bannerRows;
   }
 
-  // 4. Content Sections
+  // 5. Content Sections
   const content_sections = await getSettingByKey('store_builder_content_sections', [
     {
       id: 'sec_featured',
@@ -100,6 +130,7 @@ const getStoreBuilderAdminData = async () => {
 
   return {
     announcement_bar,
+    hero_config,
     hero_groups,
     promo_banners,
     content_sections
@@ -110,10 +141,22 @@ const getStoreBuilderAdminData = async () => {
  * Update Store Builder sections while preserving existing, unsupplied sections
  */
 const updateStoreBuilderData = async (updatePayload = {}) => {
-  const { announcement_bar, hero_groups, promo_banners, content_sections } = updatePayload;
+  const { announcement_bar, hero_config, hero_mode, hero_groups, promo_banners, content_sections } = updatePayload;
 
   if (announcement_bar !== undefined) {
     await setSettingByKey('store_builder_announcement_bar', announcement_bar, 'Store Builder Announcement Bar Settings');
+  }
+
+  // Enforce mutual exclusivity between fixed banner and carousel
+  if (hero_config !== undefined || hero_mode !== undefined) {
+    const existing = await getSettingByKey('store_builder_hero_config', {});
+    const targetMode = hero_mode || hero_config?.mode || existing.mode || 'fixed';
+    const mergedConfig = {
+      ...existing,
+      ...(hero_config || {}),
+      mode: targetMode === 'carousel' ? 'carousel' : 'fixed'
+    };
+    await setSettingByKey('store_builder_hero_config', mergedConfig, 'Store Builder Hero Configuration');
   }
 
   if (hero_groups !== undefined) {
@@ -148,28 +191,56 @@ const getPublicStoreBuilderData = async () => {
       }
     : { enabled: false, text: '', mode: 'STATIC', marquee_speed: 'normal' };
 
-  // 2. Filter active Hero Group & active Slides
-  const heroGroups = Array.isArray(adminData.hero_groups) ? adminData.hero_groups : [];
-  const activeHeroGroup = heroGroups.find(g => g.active === true) || heroGroups[0] || null;
-  
+  // 2. Filter active Hero (Fixed Banner vs Carousel)
+  const heroConfig = adminData.hero_config || {};
+  const heroMode = heroConfig.mode || 'fixed';
   let hero = null;
-  if (activeHeroGroup) {
-    const activeSlides = (Array.isArray(activeHeroGroup.slides) ? activeHeroGroup.slides : [])
+
+  if (heroMode === 'fixed') {
+    const fb = heroConfig.fixed_banner || {};
+    hero = {
+      mode: 'fixed',
+      enabled: true,
+      image_url: fb.image_url || '',
+      show_eyebrow: fb.show_eyebrow !== false,
+      eyebrow: fb.eyebrow || 'New designs every week',
+      show_title: fb.show_title !== false,
+      title: fb.title || 'STICK YOUR WORLD.',
+      show_description: fb.show_description !== false,
+      description: fb.description || 'Premium stickers for a bolder, brighter, more you.',
+      show_primary_btn: fb.show_primary_btn !== false,
+      primary_btn_text: fb.primary_btn_text || 'Shop Now →',
+      primary_btn_url: fb.primary_btn_url || 'shop.html',
+      show_secondary_btn: fb.show_secondary_btn !== false,
+      secondary_btn_text: fb.secondary_btn_text || 'Custom Stickers',
+      secondary_btn_url: fb.secondary_btn_url || 'custom-stickers.html'
+    };
+  } else {
+    // Carousel mode
+    const slides = (heroConfig.carousel?.slides || adminData.hero_groups?.[0]?.slides || [])
       .filter(s => s.active === true || s.active === 1)
       .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0))
       .map(s => ({
         id: s.id,
-        title: s.title || '',
-        subtitle: s.subtitle || '',
         image_url: s.image_url || '',
-        target_url: s.target_url || '',
-        cta_text: s.cta_text || 'SHOP NOW'
+        show_eyebrow: s.show_eyebrow !== false,
+        eyebrow: s.eyebrow || '',
+        show_title: s.show_title !== false,
+        title: s.title || '',
+        show_description: s.show_description !== false,
+        description: s.description || s.subtitle || '',
+        show_primary_btn: s.show_primary_btn !== false,
+        primary_btn_text: s.primary_btn_text || s.cta_text || 'Shop Now →',
+        primary_btn_url: s.primary_btn_url || s.target_url || 'shop.html',
+        show_secondary_btn: s.show_secondary_btn === true,
+        secondary_btn_text: s.secondary_btn_text || 'Custom Stickers',
+        secondary_btn_url: s.secondary_btn_url || 'custom-stickers.html'
       }));
 
     hero = {
-      id: activeHeroGroup.id,
-      name: activeHeroGroup.name,
-      slides: activeSlides
+      mode: 'carousel',
+      enabled: slides.length > 0,
+      slides
     };
   }
 

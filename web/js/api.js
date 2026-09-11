@@ -4,13 +4,27 @@ import { auth } from './firebase-config.js';
  * CHIPAKK Centralized API Client
  * Configurable Base URL for Hostinger Node.js Express Backend
  */
-const API_BASE_URL = (window.API_BASE_URL && window.API_BASE_URL !== 'https://chipakk.shop/api')
-  ? window.API_BASE_URL
-  : (
-    window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-      ? 'http://localhost:3000/api'
-      : 'https://api.chipakk.shop/api'
-  );
+function resolveApiBaseUrl() {
+  if (typeof window !== 'undefined') {
+    if (window.API_BASE_URL) return window.API_BASE_URL;
+    try {
+      const stored = localStorage.getItem('chipakk_api_base_url');
+      if (stored) return stored;
+    } catch (_) {}
+
+    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    if (isLocal) {
+      const currentPort = window.location.port;
+      if (currentPort === '3000') {
+        return `${window.location.origin}/api`;
+      }
+      return 'http://localhost:3000/api';
+    }
+  }
+  return 'https://api.chipakk.shop/api';
+}
+
+const API_BASE_URL = resolveApiBaseUrl();
 
 /**
  * Format structured error response into human-readable string

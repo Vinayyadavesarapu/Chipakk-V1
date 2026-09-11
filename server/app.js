@@ -11,6 +11,9 @@ const categoryRoutes = require('./routes/categories');
 const settingsRoutes = require('./routes/settings');
 const couponRoutes = require('./routes/coupons');
 const eventRoutes = require('./routes/events');
+const orderRoutes = require('./routes/orders');
+const customerRoutes = require('./routes/customer');
+const paymentRoutes = require('./routes/payments');
 const adminRoutes = require('./routes/admin');
 
 // Import Middlewares
@@ -26,7 +29,8 @@ const defaultAllowedOrigins = [
   'http://127.0.0.1:5500',
   'http://localhost:8080',
   'http://127.0.0.1:8080',
-  'https://chipakk.shop'
+  'https://chipakk.shop',
+  'https://chipakk.com'
 ];
 
 const envOrigins = process.env.CORS_ORIGIN
@@ -62,8 +66,13 @@ app.use(cors(corsOptions));
 
 const path = require('path');
 
-// Body Parsing Middlewares
-app.use(express.json({ limit: '10mb' }));
+// Body Parsing Middlewares (Capturing rawBody for cryptographic webhook HMAC verification)
+app.use(express.json({
+  limit: '10mb',
+  verify: (req, res, buf) => {
+    req.rawBody = buf.toString('utf8');
+  }
+}));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Protect private custom artwork files from unauthenticated static access
@@ -80,8 +89,56 @@ app.use('/uploads', (req, res, next) => {
 // Serve static uploaded public files (Hostinger / local storage)
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// Base Root Route
-app.get('/', (req, res) => {
+const webDir = path.join(__dirname, '../web');
+const customerDir = path.join(__dirname, '../customer-workspace');
+
+// 1. CHIPAKK Admin Workspace Direct Routes
+app.get(['/admin.html', '/admin'], (req, res) => {
+  res.sendFile(path.join(webDir, 'admin.html'));
+});
+
+// Admin dedicated scripts
+app.get(['/js/admin.js', '/js/api.js', '/js/firebase-config.js', '/js/migration.js'], (req, res) => {
+  const scriptName = path.basename(req.path);
+  res.sendFile(path.join(webDir, 'js', scriptName));
+});
+
+// Admin dedicated stylesheet & referer fallback
+app.get('/css/admin.css', (req, res) => {
+  res.sendFile(path.join(webDir, 'css/style.css'));
+});
+
+app.get('/css/style.css', (req, res, next) => {
+  const referer = req.get('referer') || '';
+  if (referer.includes('admin')) {
+    return res.sendFile(path.join(webDir, 'css/style.css'));
+  }
+  next();
+});
+
+// 2. CHIPAKK Customer Storefront Direct Routes
+const customerPages = [
+  'shop', 'categories', 'custom-stickers', 'product', 'checkout', 'account'
+];
+customerPages.forEach(page => {
+  app.get([`/${page}.html`, `/${page}`], (req, res) => {
+    res.sendFile(path.join(customerDir, `${page}.html`));
+  });
+});
+
+app.get('/robots.txt', (req, res) => {
+  res.sendFile(path.join(customerDir, 'robots.txt'));
+});
+
+app.get('/sitemap.xml', (req, res) => {
+  res.sendFile(path.join(customerDir, 'sitemap.xml'));
+});
+
+// 3. Base Root Route: Serves customer-workspace/index.html for browsers, or API info for JSON clients
+app.get(['/', '/index.html'], (req, res) => {
+  if (req.accepts('html') && !req.xhr) {
+    return res.sendFile(path.join(customerDir, 'index.html'));
+  }
   res.json({
     name: 'CHIPAKK Backend API',
     status: 'online',
@@ -89,6 +146,11 @@ app.get('/', (req, res) => {
     documentation: '/api/health'
   });
 });
+
+// 4. Static Asset Serving: Customer assets first, then Admin assets
+app.use(express.static(customerDir, { index: false }));
+app.use(express.static(webDir, { index: false }));
+app.use('/web', express.static(webDir));
 
 const { getPublicStoreBuilderHandler } = require('./controllers/storeBuilderController');
 
@@ -100,6 +162,9 @@ app.use('/api/settings', settingsRoutes);
 app.use('/api/coupons', couponRoutes);
 app.use('/api/events', eventRoutes);
 app.use('/api/store-builder', getPublicStoreBuilderHandler);
+app.use('/api/orders', orderRoutes);
+app.use('/api/customer', customerRoutes);
+app.use('/api/payments', paymentRoutes);
 app.use('/api/admin', adminRoutes);
 
 // 404 Route Not Found Handler

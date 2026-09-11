@@ -1,10 +1,39 @@
 RewriteEngine On
 
-# CHIPAKK frontend lives in /web
-RewriteRule ^$ web/index.html [L]
+# 1. Bypass rewriting for internal directory requests
+RewriteCond %{REQUEST_URI} ^/(customer-workspace|web|server)/ [NC]
+RewriteRule ^ - [L]
 
-# Serve frontend files from /web
-RewriteCond %{REQUEST_URI} !^/web/
+# 2. CHIPAKK Admin Workspace (web/admin.html and dedicated Admin assets)
+RewriteRule ^admin/?$ web/admin.html [L]
+RewriteRule ^admin\.html$ web/admin.html [L]
+RewriteRule ^css/admin\.css$ web/css/style.css [L]
+RewriteRule ^js/(admin\.js|api\.js|firebase-config\.js|migration\.js)$ web/js/$1 [L]
+RewriteRule ^img/(.*)$ web/img/$1 [L]
+
+# Referer fallback for admin stylesheet
+RewriteCond %{HTTP_REFERER} (admin\.html|/admin) [NC]
+RewriteRule ^css/style\.css$ web/css/style.css [L]
+
+# 3. CHIPAKK Authoritative Customer Storefront Pages (customer-workspace/)
+RewriteRule ^$ customer-workspace/index.html [L]
+RewriteRule ^index\.html$ customer-workspace/index.html [L]
+RewriteRule ^(shop|categories|custom-stickers|product|checkout|account)(\.html)?$ customer-workspace/$1.html [L]
+RewriteRule ^robots\.txt$ customer-workspace/robots.txt [L]
+RewriteRule ^sitemap\.xml$ customer-workspace/sitemap.xml [L]
+
+# 4. CHIPAKK Customer Assets (assets/, css/, js/)
+RewriteRule ^assets/(.*)$ customer-workspace/assets/$1 [L]
+RewriteRule ^css/(.*)$ customer-workspace/css/$1 [L]
+RewriteRule ^js/(.*)$ customer-workspace/js/$1 [L]
+
+# 5. Static file fallback: prefer customer-workspace, fallback to web
 RewriteCond %{REQUEST_FILENAME} !-f
 RewriteCond %{REQUEST_FILENAME} !-d
+RewriteCond %{DOCUMENT_ROOT}/customer-workspace/$1 -f
+RewriteRule ^(.*)$ customer-workspace/$1 [L]
+
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteCond %{DOCUMENT_ROOT}/web/$1 -f
 RewriteRule ^(.*)$ web/$1 [L]

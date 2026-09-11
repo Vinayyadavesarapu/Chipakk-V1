@@ -223,6 +223,7 @@ CREATE TABLE `orders` (
   `shipping_charge` BIGINT NOT NULL DEFAULT 0 COMMENT 'Shipping fee in paise',
   `total_price` BIGINT NOT NULL DEFAULT 0 COMMENT 'Final grand total in paise',
   `coupon_code` VARCHAR(50) DEFAULT NULL,
+  `gateway_order_id` VARCHAR(100) DEFAULT NULL COMMENT 'Razorpay or gateway payment order ID',
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
@@ -230,6 +231,7 @@ CREATE TABLE `orders` (
   KEY `idx_orders_customer` (`customer_id`),
   KEY `idx_orders_payment_status` (`payment_status`),
   KEY `idx_orders_fulfillment_status` (`fulfillment_status`),
+  KEY `idx_orders_gateway_order_id` (`gateway_order_id`),
   KEY `idx_orders_created_at` (`created_at`),
   CONSTRAINT `fk_orders_customer` FOREIGN KEY (`customer_id`) REFERENCES `users` (`id`) ON DELETE SET NULL ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -440,6 +442,90 @@ CREATE TABLE `audit_logs` (
   KEY `idx_audit_logs_actor` (`actor_id`),
   KEY `idx_audit_logs_action` (`action`),
   KEY `idx_audit_logs_created_at` (`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- -----------------------------------------------------------------------------
+-- 21. CUSTOMER_ADDRESSES TABLE
+-- Saved customer delivery addresses linked to users / Firebase UID.
+-- -----------------------------------------------------------------------------
+DROP TABLE IF EXISTS `customer_addresses`;
+CREATE TABLE `customer_addresses` (
+  `id` BIGINT NOT NULL AUTO_INCREMENT,
+  `user_id` BIGINT DEFAULT NULL,
+  `firebase_uid` VARCHAR(128) NOT NULL,
+  `full_name` VARCHAR(255) NOT NULL,
+  `phone` VARCHAR(50) NOT NULL,
+  `address_line` TEXT NOT NULL,
+  `city` VARCHAR(100) NOT NULL,
+  `state` VARCHAR(100) NOT NULL,
+  `pincode` VARCHAR(20) NOT NULL,
+  `country` VARCHAR(100) NOT NULL DEFAULT 'India',
+  `is_default` TINYINT(1) NOT NULL DEFAULT 0,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_customer_addresses_uid` (`firebase_uid`),
+  KEY `idx_customer_addresses_user` (`user_id`),
+  KEY `idx_customer_addresses_default` (`firebase_uid`, `is_default`),
+  CONSTRAINT `fk_customer_addresses_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- -----------------------------------------------------------------------------
+-- 22. PAYMENTS TABLE
+-- Payment transaction attempts, reconciliation, and idempotent webhook audit log.
+-- Never stores sensitive raw card numbers, CVVs, or bank secrets.
+-- -----------------------------------------------------------------------------
+DROP TABLE IF EXISTS `payments`;
+CREATE TABLE `payments` (
+  `id` BIGINT NOT NULL AUTO_INCREMENT,
+  `order_id` BIGINT NOT NULL,
+  `provider` VARCHAR(50) NOT NULL DEFAULT 'razorpay',
+  `gateway_order_id` VARCHAR(100) NOT NULL,
+  `gateway_payment_id` VARCHAR(100) DEFAULT NULL,
+  `gateway_signature` VARCHAR(255) DEFAULT NULL,
+  `amount` BIGINT NOT NULL COMMENT 'Payment attempt amount in paise',
+  `currency` VARCHAR(10) NOT NULL DEFAULT 'INR',
+  `status` ENUM('created', 'authorized', 'captured', 'failed', 'refunded') NOT NULL DEFAULT 'created',
+  `method` VARCHAR(50) DEFAULT NULL COMMENT 'upi, card, netbanking, wallet, etc.',
+  `error_code` VARCHAR(100) DEFAULT NULL,
+  `error_description` TEXT DEFAULT NULL,
+  `raw_event_reference` VARCHAR(100) DEFAULT NULL COMMENT 'Webhook event ID for idempotency deduplication',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_payments_gateway_payment` (`gateway_payment_id`),
+  KEY `idx_payments_order` (`order_id`),
+  KEY `idx_payments_gateway_order` (`gateway_order_id`),
+  KEY `idx_payments_status` (`status`),
+  KEY `idx_payments_event_ref` (`raw_event_reference`),
+  CONSTRAINT `fk_payments_order` FOREIGN KEY (`order_id`) REFERENCES `orders` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- -----------------------------------------------------------------------------
+-- 24. ADMIN_SESSIONS TABLE
+-- Real-time active login session registry and inactivity tracking.
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `admin_sessions` (
+  `id` BIGINT NOT NULL AUTO_INCREMENT,
+  `session_id` VARCHAR(128) NOT NULL,
+  `firebase_uid` VARCHAR(128) NOT NULL,
+  `email` VARCHAR(255) NOT NULL,
+  `admin_name` VARCHAR(255) DEFAULT NULL,
+  `role` VARCHAR(50) NOT NULL DEFAULT 'ADMIN',
+  `ip_address` VARCHAR(100) DEFAULT NULL,
+  `user_agent` TEXT DEFAULT NULL,
+  `login_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `last_activity` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `status` ENUM('active', 'logged_out', 'expired') NOT NULL DEFAULT 'active',
+  `expires_at` DATETIME NOT NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_admin_sessions_session_id` (`session_id`),
+  KEY `idx_admin_sessions_uid` (`firebase_uid`),
+  KEY `idx_admin_sessions_status` (`status`),
+  KEY `idx_admin_sessions_last_activity` (`last_activity`),
+  KEY `idx_admin_sessions_expires_at` (`expires_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Re-enable Foreign Key Checks

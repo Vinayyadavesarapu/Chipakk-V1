@@ -1,20 +1,70 @@
 const { pool } = require('../config/database');
 
 /**
- * Calculate derived loyalty tier based strictly on DELIVERED orders count
- * 0 delivered -> NEW
- * 1-2 delivered -> CUSTOMER
- * 3-5 delivered -> REGULAR
- * 6-9 delivered -> VIP
- * 10+ delivered -> ELITE
+ * Shared Customer Order & Loyalty Architecture:
+ * Single unified customer identity across CHIPAKK + The Marshans.
+ * Computes shared loyalty based on qualifying delivered orders count.
+ * Tier thresholds:
+ * - ELITE: >= 30 completed/qualifying orders
+ * - VIP: >= 15 completed/qualifying orders
+ * - REGULAR: >= 5 completed/qualifying orders
+ * - CUSTOMER: >= 1 completed/qualifying orders
+ * - NEW: 0 qualifying orders
  */
-const calculateLoyaltyTier = (deliveredOrdersCount) => {
-  const count = Math.max(parseInt(deliveredOrdersCount, 10) || 0, 0);
-  if (count >= 10) return 'ELITE';
-  if (count >= 6) return 'VIP';
-  if (count >= 3) return 'REGULAR';
+const calculateLoyaltyTier = (qualifyingOrdersCount) => {
+  const count = Math.max(parseInt(qualifyingOrdersCount, 10) || 0, 0);
+  if (count >= 30) return 'ELITE';
+  if (count >= 15) return 'VIP';
+  if (count >= 5) return 'REGULAR';
   if (count >= 1) return 'CUSTOMER';
   return 'NEW';
+};
+
+/**
+ * Shared Customer Order Count & Loyalty Metrics
+ * Aggregates qualifying orders across CHIPAKK and future storefronts (The Marshans)
+ * under the single customer identity.
+ *
+ * @param {number|string} userId - Numeric internal user ID or firebase_uid
+ * @param {string} [userEmail] - Customer email address
+ * @returns {Promise<{chipakk_orders: number, marshans_orders: number, total_qualifying_orders: number, loyalty_tier: string}>}
+ */
+const getSharedCustomerLoyaltyMetrics = async (userId, userEmail = null) => {
+  let chipakkOrdersCount = 0;
+
+  try {
+    if (userId) {
+      const numId = parseInt(userId, 10);
+      const isNum = !isNaN(numId) && String(numId) === String(userId);
+      const sql = isNum
+        ? "SELECT COUNT(*) AS total FROM orders WHERE customer_id = ? AND fulfillment_status = 'delivered'"
+        : "SELECT COUNT(*) AS total FROM orders o JOIN users u ON o.customer_id = u.id WHERE u.firebase_uid = ? AND o.fulfillment_status = 'delivered'";
+      const [rows] = await pool.execute(sql, [userId]);
+      chipakkOrdersCount = parseInt(rows[0]?.total, 10) || 0;
+    } else if (userEmail) {
+      const [rows] = await pool.execute(
+        "SELECT COUNT(*) AS total FROM orders WHERE customer_email = ? AND fulfillment_status = 'delivered'",
+        [userEmail]
+      );
+      chipakkOrdersCount = parseInt(rows[0]?.total, 10) || 0;
+    }
+  } catch (err) {
+    console.warn('[Shared Loyalty Query Warning]', err.message);
+  }
+
+  // Future Marshans integration point:
+  // Once M_orders table is provisioned in subsequent Marshans phase, query:
+  // SELECT COUNT(*) AS total FROM M_orders WHERE customer_email = ? AND fulfillment_status = 'delivered'
+  const marshansOrdersCount = 0; // Ready for M_orders hook
+
+  const totalQualifyingOrders = chipakkOrdersCount + marshansOrdersCount;
+
+  return {
+    chipakk_orders: chipakkOrdersCount,
+    marshans_orders: marshansOrdersCount,
+    total_qualifying_orders: totalQualifyingOrders,
+    loyalty_tier: calculateLoyaltyTier(totalQualifyingOrders)
+  };
 };
 
 /**
@@ -217,6 +267,8 @@ const getCustomerById = async (idOrUid) => {
 
 module.exports = {
   calculateLoyaltyTier,
+  getSharedCustomerLoyaltyMetrics,
   getCustomers,
   getCustomerById
 };
+

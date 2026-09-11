@@ -5,7 +5,12 @@ const {
   getAdminDashboardHandler,
   getTeamMembersHandler,
   updateTeamMemberStatusHandler,
-  createTeamMemberHandler
+  createTeamMemberHandler,
+  recordAdminLoginHandler,
+  recordAdminLogoutHandler,
+  getActiveSessionsHandler,
+  recordAdminActivityHandler,
+  terminateSessionHandler
 } = require('../controllers/adminController');
 const { createCategoryHandler, updateCategoryHandler, deleteCategoryHandler } = require('../controllers/categoryController');
 const {
@@ -17,6 +22,10 @@ const {
 } = require('../controllers/productController');
 const { getAdminSettingsHandler, updateSettingsHandler } = require('../controllers/settingsController');
 const { getAuditLogsHandler } = require('../controllers/auditController');
+const {
+  getAdminNotificationsHandler,
+  markNotificationReadHandler
+} = require('../controllers/notificationController');
 const {
   getOrdersHandler,
   getOrderByIdHandler,
@@ -71,15 +80,30 @@ const {
 
 const router = express.Router();
 
-// Apply Authentication and Admin Authorization Middleware to all admin routes
+// Allow beacon logout without blocking on token expiration
+router.post('/auth/logout-event', recordAdminLogoutHandler);
+
+// Apply Authentication and Admin Authorization Middleware to all protected admin routes
 router.use(verifyFirebaseToken);
 router.use(requireAdmin);
+
+// Admin Auth Audit Events
+router.post('/auth/login-event', recordAdminLoginHandler);
 
 // Admin Dashboard Overview
 router.get('/dashboard', getAdminDashboardHandler);
 
+// Admin Notifications
+router.get('/notifications', getAdminNotificationsHandler);
+router.post('/notifications/mark-read', markNotificationReadHandler);
+
 // Audit Logs Retrieval
 router.get('/audit-logs', getAuditLogsHandler);
+
+// Active Admin Sessions & Live Activity
+router.get('/active-sessions', getActiveSessionsHandler);
+router.post('/auth/activity', recordAdminActivityHandler);
+router.post('/active-sessions/:id/terminate', terminateSessionHandler);
 
 // Customer Reviews Management & Moderation
 router.get('/reviews', getReviewsHandler);

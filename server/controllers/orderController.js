@@ -161,9 +161,74 @@ const updateOrderShippingHandler = async (req, res, next) => {
   }
 };
 
+/**
+ * Create Customer Order Handler
+ * POST /api/orders
+ */
+const createCustomerOrderHandler = async (req, res, next) => {
+  try {
+    if (!req.user || !req.user.uid) {
+      return sendError(res, 'Authentication required to place an order.', 401);
+    }
+
+    const order = await orderService.createCustomerOrder(req.body || {}, req.user);
+    return sendSuccess(res, order, 'Order placed successfully', 201);
+  } catch (error) {
+    if (error.statusCode) {
+      return sendError(res, error.message, error.statusCode);
+    }
+    return next(error);
+  }
+};
+
+/**
+ * Get Authenticated Customer Orders Handler
+ * GET /api/orders
+ */
+const getCustomerOrdersHandler = async (req, res, next) => {
+  try {
+    if (!req.user || !req.user.uid) {
+      return sendError(res, 'Authentication required to view orders.', 401);
+    }
+
+    const { limit, offset } = req.query;
+    const result = await orderService.getCustomerOrders(req.user.uid, { limit, offset });
+    return sendSuccess(res, result, 'Customer orders retrieved successfully');
+  } catch (error) {
+    return next(error);
+  }
+};
+
+/**
+ * Get Authenticated Customer Single Order Handler
+ * GET /api/orders/:id
+ */
+const getCustomerOrderByIdHandler = async (req, res, next) => {
+  try {
+    if (!req.user || !req.user.uid) {
+      return sendError(res, 'Authentication required to view order details.', 401);
+    }
+
+    const { id } = req.params;
+    const order = await orderService.getCustomerOrderById(id, req.user.uid);
+
+    if (!order) {
+      return sendError(res, 'Order not found or access denied.', 404);
+    }
+
+    return sendSuccess(res, order, 'Order retrieved successfully');
+  } catch (error) {
+    return next(error);
+  }
+};
+
 module.exports = {
   getOrdersHandler,
   getOrderByIdHandler,
   updateOrderStatusHandler,
-  updateOrderShippingHandler
+  updateOrderShippingHandler,
+  createCustomerOrderHandler,
+  getCustomerOrdersHandler,
+  getCustomerOrderByIdHandler
 };
+

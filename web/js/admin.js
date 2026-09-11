@@ -4,13 +4,6 @@ import { collection, query, orderBy, onSnapshot, doc, getDoc } from "https://www
 import { ref, uploadBytesResumable, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 import { apiClient } from './api.js?v=3.3.0';
 
-// =============================================================================
-// LOCAL ADMIN UI DESIGN MODE
-// Set to true when running on localhost / 127.0.0.1 for local UI/UX design testing.
-// In this phase, the login screen is detached so the Admin workspace can be designed directly.
-// =============================================================================
-const ADMIN_UI_DESIGN_MODE = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-
 // DOM Elements
 const loginSection = document.getElementById('login-section');
 const adminWorkspace = document.getElementById('admin-workspace');
@@ -129,6 +122,7 @@ let productionQueueItems = [];
 let customers = [];
 let reviews = [];
 let teamMembers = [];
+let activeSessions = [];
 let shippingRules = [];
 let events = [];
 let coupons = [];
@@ -136,6 +130,11 @@ let heroGroups = [];
 let promoBanners = [];
 let storeSections = [];
 let auditLogs = [];
+let dashboardMetrics = null;
+let monthlyStats = [];
+let heroConfig = null;
+let announcementBarConfig = null;
+let currentChartFilter = 'all';
 let siteSettings = {
     store_name: "CHIPAKK Stickers",
     business_email: "support@chipakk.shop",
@@ -304,9 +303,9 @@ function normalizeCustomer(c) {
 
 function calculateCustomerTier(deliveredOrdersCount) {
     const count = Number(deliveredOrdersCount) || 0;
-    if (count >= 10) return "ELITE";
-    if (count >= 6) return "VIP";
-    if (count >= 3) return "REGULAR";
+    if (count >= 30) return "ELITE";
+    if (count >= 15) return "VIP";
+    if (count >= 5) return "REGULAR";
     if (count >= 1) return "CUSTOMER";
     return "NEW";
 }
@@ -368,7 +367,9 @@ async function loadAllAdminData() {
             revRes,
             setRes,
             auditRes,
-            teamRes
+            teamRes,
+            sessionRes,
+            dashRes
         ] = await Promise.allSettled([
             apiClient.get('/admin/products'),
             apiClient.get('/categories'),
@@ -382,7 +383,9 @@ async function loadAllAdminData() {
             apiClient.get('/admin/reviews'),
             apiClient.get('/admin/settings'),
             apiClient.get('/admin/audit-logs'),
-            apiClient.get('/admin/team')
+            apiClient.get('/admin/team'),
+            apiClient.get('/admin/active-sessions'),
+            apiClient.get('/admin/dashboard')
         ]);
 
         if (prodRes.status === 'fulfilled' && prodRes.value) {
@@ -453,9 +456,23 @@ async function loadAllAdminData() {
         }
         if (storeRes.status === 'fulfilled' && storeRes.value) {
             const storeData = storeRes.value.data || storeRes.value || {};
-            if (Array.isArray(storeData.heroGroups)) heroGroups = storeData.heroGroups;
-            if (Array.isArray(storeData.promoBanners)) promoBanners = storeData.promoBanners;
-            if (Array.isArray(storeData.storeSections)) storeSections = storeData.storeSections;
+            if (storeData.hero_config) heroConfig = storeData.hero_config;
+            if (storeData.announcement_bar) announcementBarConfig = storeData.announcement_bar;
+            if (Array.isArray(storeData.hero_groups)) heroGroups = storeData.hero_groups;
+            else if (Array.isArray(storeData.heroGroups)) heroGroups = storeData.heroGroups;
+            if (Array.isArray(storeData.promo_banners)) promoBanners = storeData.promo_banners;
+            else if (Array.isArray(storeData.promoBanners)) promoBanners = storeData.promoBanners;
+            if (Array.isArray(storeData.content_sections)) storeSections = storeData.content_sections;
+            else if (Array.isArray(storeData.storeSections)) storeSections = storeData.storeSections;
+        }
+        if (dashRes && dashRes.status === 'fulfilled' && dashRes.value) {
+            const dashData = dashRes.value.data || dashRes.value || {};
+            if (dashData.metrics) {
+                dashboardMetrics = dashData.metrics;
+                if (Array.isArray(dashData.metrics.monthlyStats) && dashData.metrics.monthlyStats.length > 0) {
+                    monthlyStats = dashData.metrics.monthlyStats;
+                }
+            }
         }
         if (revRes.status === 'fulfilled' && revRes.value) {
             const rawRevs = revRes.value.data?.reviews || revRes.value.reviews || (Array.isArray(revRes.value.data) ? revRes.value.data : []);
@@ -493,6 +510,12 @@ async function loadAllAdminData() {
             const rawTeam = teamRes.value.data?.team || teamRes.value.team || (Array.isArray(teamRes.value.data) ? teamRes.value.data : []);
             if (Array.isArray(rawTeam)) {
                 teamMembers = rawTeam;
+            }
+        }
+        if (sessionRes && sessionRes.status === 'fulfilled' && sessionRes.value) {
+            const rawSessions = sessionRes.value.data?.sessions || sessionRes.value.sessions || (Array.isArray(sessionRes.value.data) ? sessionRes.value.data : []);
+            if (Array.isArray(rawSessions)) {
+                activeSessions = rawSessions;
             }
         }
 
@@ -715,6 +738,7 @@ function updateState() {
     renderShippingRulesTable();
     renderShippingCalculatorPreview();
     renderTeamMembersTable();
+    renderActiveSessionsTable();
     renderAuditLogs();
     populateCategoryDropdowns();
 
@@ -733,41 +757,57 @@ function saveState() {
 }
 
 // =============================================================================
-// INACTIVITY AUTO-LOGOUT TRACKER (60 MINUTES)
+// INACTIVITY AUTO-LOGOUT TRACKER (60 MINUTES PERSISTED)
 // =============================================================================
 const INACTIVITY_TIMEOUT_MS = 60 * 60 * 1000; // 60 minutes
 const INACTIVITY_CHECK_INTERVAL_MS = 10000; // Check every 10 seconds
-const ACTIVITY_THROTTLE_MS = 1000; // 1 second throttle for user events
+const ACTIVITY_THROTTLE_MS = 15000; // 15 seconds throttle to avoid excessive storage writes
+const STORAGE_ACTIVITY_KEY = 'chipakk_admin_last_activity';
 
-let lastActivityAt = Date.now();
 let inactivityTimer = null;
 let lastThrottledActivityAt = 0;
 let isTrackerActive = false;
 
-function handleUserActivity() {
+function recordAdminActivity(force = false) {
     const now = Date.now();
-    if (now - lastThrottledActivityAt >= ACTIVITY_THROTTLE_MS) {
+    if (force || (now - lastThrottledActivityAt >= ACTIVITY_THROTTLE_MS)) {
         lastThrottledActivityAt = now;
-        lastActivityAt = now;
+        try {
+            localStorage.setItem(STORAGE_ACTIVITY_KEY, String(now));
+        } catch (e) {}
+        if (auth && auth.currentUser) {
+            apiClient.post('/admin/auth/activity').catch(() => {});
+        }
     }
 }
 
+function handleUserActivity() {
+    recordAdminActivity(false);
+}
+
 function handleApiActivity() {
-    lastActivityAt = Date.now();
+    recordAdminActivity(true);
 }
 
 async function checkInactivityState() {
-    if (!isTrackerActive || !auth || !auth.currentUser) return;
-    const elapsed = Date.now() - lastActivityAt;
+    if (!auth || !auth.currentUser) return;
+    const stored = localStorage.getItem(STORAGE_ACTIVITY_KEY);
+    const lastActivity = stored ? parseInt(stored, 10) : lastThrottledActivityAt;
+    const elapsed = Date.now() - (lastActivity || Date.now());
+
     if (elapsed >= INACTIVITY_TIMEOUT_MS) {
         console.warn(`[Inactivity Tracker] Session expired after ${Math.round(elapsed / 1000)}s of inactivity.`);
         stopInactivityTracker();
+        localStorage.removeItem(STORAGE_ACTIVITY_KEY);
+        try {
+            await apiClient.post('/admin/auth/logout-event', { reason: 'inactivity_timeout' });
+        } catch (e) {}
         try {
             await signOut(auth);
         } catch (err) {
             console.error("[Inactivity Logout Error]", err);
         }
-        showToast("SESSION EXPIRED — PLEASE LOG IN AGAIN", "error");
+        showToast("SESSION EXPIRED (1-HOUR INACTIVITY) — PLEASE LOG IN AGAIN", "error");
         if (loginSection) loginSection.style.display = 'flex';
         if (adminWorkspace) adminWorkspace.style.display = 'none';
     }
@@ -776,22 +816,35 @@ async function checkInactivityState() {
 function startInactivityTracker() {
     if (isTrackerActive) return;
     isTrackerActive = true;
-    lastActivityAt = Date.now();
+    recordAdminActivity(true);
 
-    const userEvents = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll'];
+    const userEvents = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll', 'click'];
     userEvents.forEach(evt => window.addEventListener(evt, handleUserActivity, { passive: true }));
 
     window.addEventListener('admin-api-activity', handleApiActivity);
     window.addEventListener('visibilitychange', () => {
-        if (!document.hidden) {
-            checkInactivityState();
-        }
+        if (!document.hidden) checkInactivityState();
     });
     window.addEventListener('focus', checkInactivityState);
 
+    // Cross-tab synchronization
+    window.addEventListener('storage', (e) => {
+        if (e.key === STORAGE_ACTIVITY_KEY) {
+            if (!e.newValue) {
+                // Logged out in another tab
+                stopInactivityTracker();
+                signOut(auth).catch(() => {});
+                if (loginSection) loginSection.style.display = 'flex';
+                if (adminWorkspace) adminWorkspace.style.display = 'none';
+            } else {
+                checkInactivityState();
+            }
+        }
+    });
+
     if (inactivityTimer) clearInterval(inactivityTimer);
     inactivityTimer = setInterval(checkInactivityState, INACTIVITY_CHECK_INTERVAL_MS);
-    console.log("[Inactivity Tracker] Started (60 min timeout)");
+    console.log("[Inactivity Tracker] Started (60 min timeout with cross-tab sync)");
 }
 
 function stopInactivityTracker() {
@@ -802,7 +855,7 @@ function stopInactivityTracker() {
         inactivityTimer = null;
     }
 
-    const userEvents = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll'];
+    const userEvents = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll', 'click'];
     userEvents.forEach(evt => window.removeEventListener(evt, handleUserActivity));
 
     window.removeEventListener('admin-api-activity', handleApiActivity);
@@ -813,11 +866,24 @@ function stopInactivityTracker() {
 // Dev test helper for quick simulation of inactivity timeout
 window.__simulateInactivityTimeout__ = function() {
     console.warn("[Dev Helper] Simulating 60-minute inactivity timeout...");
-    lastActivityAt = Date.now() - (INACTIVITY_TIMEOUT_MS + 1000);
+    localStorage.setItem(STORAGE_ACTIVITY_KEY, String(Date.now() - (INACTIVITY_TIMEOUT_MS + 5000)));
     checkInactivityState();
 };
 
-// =============================================================================
+// Send beacon on tab close / reload
+window.addEventListener('beforeunload', () => {
+    if (auth && auth.currentUser) {
+        try {
+            const payload = JSON.stringify({
+                uid: auth.currentUser.uid,
+                email: auth.currentUser.email,
+                reason: 'browser_unload'
+            });
+            navigator.sendBeacon('/api/admin/auth/logout-event', new Blob([payload], { type: 'application/json' }));
+        } catch (e) {}
+    }
+});
+
 // =============================================================================
 // INITIALIZER & NAVIGATION CONTROLLER
 // =============================================================================
@@ -828,25 +894,36 @@ document.addEventListener('DOMContentLoaded', () => {
     // Auth Listener
     onAuthStateChanged(auth, async (user) => {
         if (user) {
+            // Immediate check: Has more than 1 hour passed since last recorded activity?
+            const stored = localStorage.getItem(STORAGE_ACTIVITY_KEY);
+            if (stored) {
+                const elapsed = Date.now() - parseInt(stored, 10);
+                if (elapsed >= INACTIVITY_TIMEOUT_MS) {
+                    console.warn("[Auth State] Session expired during offline period (>1 hour).");
+                    localStorage.removeItem(STORAGE_ACTIVITY_KEY);
+                    await signOut(auth);
+                    showToast("SESSION EXPIRED (1-HOUR INACTIVITY) — PLEASE LOG IN AGAIN", "error");
+                    if (loginSection) loginSection.style.display = 'flex';
+                    if (adminWorkspace) adminWorkspace.style.display = 'none';
+                    return;
+                }
+            }
+
             console.log("[Auth State] User signed in:", user.email);
             if (loginSection) loginSection.style.display = 'none';
             if (adminWorkspace) adminWorkspace.style.display = 'flex';
             startInactivityTracker();
             initDashboard();
+            try {
+                await apiClient.post('/admin/auth/login-event');
+            } catch (_) {}
             await loadAllAdminData();
         } else {
             console.log("[Auth State] No active user.");
             stopInactivityTracker();
-            if (ADMIN_UI_DESIGN_MODE) {
-                console.log("[ADMIN_UI_DESIGN_MODE] Complete POD Admin Suite Active.");
-                if (loginSection) loginSection.style.display = 'none';
-                if (adminWorkspace) adminWorkspace.style.display = 'flex';
-                initDashboard();
-                loadAllAdminData().catch(() => updateState());
-            } else {
-                if (loginSection) loginSection.style.display = 'flex';
-                if (adminWorkspace) adminWorkspace.style.display = 'none';
-            }
+            localStorage.removeItem(STORAGE_ACTIVITY_KEY);
+            if (loginSection) loginSection.style.display = 'block';
+            if (adminWorkspace) adminWorkspace.style.display = 'none';
         }
     });
 
@@ -862,6 +939,7 @@ document.addEventListener('DOMContentLoaded', () => {
             loginBtn.textContent = "VERIFYING...";
             try {
                 await signInWithEmailAndPassword(auth, email, password);
+                recordAdminActivity(true);
                 showToast("Admin authenticated successfully!");
             } catch (err) {
                 console.error("[Login Error]", err);
@@ -878,6 +956,8 @@ document.addEventListener('DOMContentLoaded', () => {
         logoutBtn.addEventListener('click', async () => {
             try {
                 stopInactivityTracker();
+                localStorage.removeItem(STORAGE_ACTIVITY_KEY);
+                await apiClient.post('/admin/auth/logout-event', { reason: 'user_action' }).catch(() => {});
                 await signOut(auth);
                 showToast("Signed out of Admin Workspace.");
                 if (loginSection) loginSection.style.display = 'flex';
@@ -945,6 +1025,29 @@ function setupNavigation() {
             sections.forEach(sec => {
                 sec.style.display = sec.id === targetSecId ? 'block' : 'none';
             });
+
+            // Close mobile sidebar drawer if open
+            const sidebar = document.querySelector('.admin-sidebar');
+            const backdrop = document.getElementById('admin-sidebar-backdrop');
+            if (sidebar && sidebar.classList.contains('open')) {
+                sidebar.classList.remove('open');
+                if (backdrop) backdrop.style.display = 'none';
+            }
+
+            if (targetSecId === 'tab-logs' || targetSecId === 'tab-audit') {
+                refreshAuditLogsFromAPI();
+                refreshActiveSessionsFromAPI();
+            } else if (targetSecId === 'tab-team') {
+                refreshTeamFromAPI();
+                refreshActiveSessionsFromAPI();
+            } else if (targetSecId === 'tab-dashboard') {
+                renderSalesChart();
+                refreshActiveSessionsFromAPI();
+            } else if (targetSecId === 'tab-homepage' || targetSecId === 'tab-store-builder') {
+                renderStoreBuilder();
+            } else if (targetSecId === 'tab-settings') {
+                refreshAuditLogsFromAPI();
+            }
 
             window.scrollTo({ top: 0, behavior: 'smooth' });
         });
@@ -1035,86 +1138,253 @@ function initSalesComparisonChart() {
     renderSalesChart();
 }
 
-function renderSalesChart() {
+function renderSalesChart(filterMode = currentChartFilter) {
+    currentChartFilter = filterMode;
     const canvas = document.getElementById('sales-comparison-canvas');
     if (!canvas) return;
 
-    const ctx = canvas.getContext('2d');
-    const w = canvas.width;
-    const h = canvas.height;
+    const parent = canvas.parentElement;
+    const dpr = window.devicePixelRatio || 1;
+    const rect = parent.getBoundingClientRect();
+    const w = rect.width > 0 ? rect.width - 24 : 700;
+    const h = 256;
 
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    canvas.style.width = `${w}px`;
+    canvas.style.height = `${h}px`;
+
+    const ctx = canvas.getContext('2d');
+    if (ctx.resetTransform) ctx.resetTransform();
+    ctx.scale(dpr, dpr);
     ctx.clearRect(0, 0, w, h);
 
-    const labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-    const dayIndices = [1, 2, 3, 4, 5, 6, 0];
-    const revenueData = [0, 0, 0, 0, 0, 0, 0];
-    const orderData = [0, 0, 0, 0, 0, 0, 0];
+    // Build or use 6-month statistical data
+    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const now = new Date();
+    let stats = [];
 
+    if (Array.isArray(monthlyStats) && monthlyStats.length === 6) {
+        stats = monthlyStats.map(s => ({ ...s }));
+    } else {
+        for (let i = 5; i >= 0; i--) {
+            const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+            const m = d.getMonth();
+            const y = d.getFullYear();
+            const monthKey = `${y}-${String(m + 1).padStart(2, '0')}`;
+            stats.push({
+                monthKey,
+                month: monthNames[m],
+                year: y,
+                label: `${monthNames[m]} '${String(y).slice(-2)}`,
+                revenue: 0,
+                orders: 0
+            });
+        }
+    }
+
+    // Overlay real orders if available
     if (Array.isArray(orders) && orders.length > 0) {
         orders.forEach(o => {
             if (!o.created_at) return;
+            const st = String(o.status || '').toLowerCase();
+            if (st === 'cancelled' || st === 'failed') return;
             const d = new Date(o.created_at);
-            const dayOfWeek = d.getDay();
-            const idx = dayIndices.indexOf(dayOfWeek);
-            if (idx !== -1) {
-                revenueData[idx] += (o.total_price || 0);
-                orderData[idx] += 1;
+            const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+            const match = stats.find(s => s.monthKey === key);
+            if (match) {
+                if (monthlyStats.length === 0) {
+                    match.revenue += Math.round(Number(o.total_price || 0));
+                    match.orders += 1;
+                }
             }
         });
     }
 
+    const totalRev = stats.reduce((sum, s) => sum + s.revenue, 0);
+    const totalOrds = stats.reduce((sum, s) => sum + s.orders, 0);
+    const aov = totalOrds > 0 ? Math.round(totalRev / totalOrds) : 0;
+
+    // Update Summary Bar
     const summaryBar = document.getElementById('chart-summary-bar');
-    const totalRev = revenueData.reduce((a, b) => a + b, 0);
-    const totalOrds = orderData.reduce((a, b) => a + b, 0);
     if (summaryBar) {
         summaryBar.innerHTML = `
-            <div><small style="color:#555; font-weight:bold;">REAL WEEKLY REVENUE</small><br><strong style="font-size:1.1rem; color:#059669;">${totalRev > 0 ? '₹' + totalRev.toLocaleString('en-IN') : '₹0 (NO DATA)'}</strong></div>
-            <div><small style="color:#555; font-weight:bold;">REAL WEEKLY ORDERS</small><br><strong style="font-size:1.1rem; color:#2563eb;">${totalOrds > 0 ? totalOrds : '0 (NO DATA)'}</strong></div>
+            <div>
+                <small style="color: #6b7280; font-weight: 800; font-size: 0.72rem; text-transform: uppercase;">6-Month Verified Revenue</small><br>
+                <strong style="font-size: 1.25rem; color: #10b981; font-weight: 900;">${totalRev > 0 ? '₹' + totalRev.toLocaleString('en-IN') : '₹0'}</strong>
+            </div>
+            <div>
+                <small style="color: #6b7280; font-weight: 800; font-size: 0.72rem; text-transform: uppercase;">Total Order Volume</small><br>
+                <strong style="font-size: 1.25rem; color: #3b82f6; font-weight: 900;">${totalOrds} Orders</strong>
+            </div>
+            <div>
+                <small style="color: #6b7280; font-weight: 800; font-size: 0.72rem; text-transform: uppercase;">Avg. Order Value (AOV)</small><br>
+                <strong style="font-size: 1.25rem; color: #111827; font-weight: 900;">₹${aov.toLocaleString('en-IN')}</strong>
+            </div>
+            <div>
+                <small style="color: #6b7280; font-weight: 800; font-size: 0.72rem; text-transform: uppercase;">Tracking Window</small><br>
+                <strong style="font-size: 0.95rem; color: #374151; font-weight: 800;">${stats[0]?.label || ''} – ${stats[stats.length - 1]?.label || ''}</strong>
+            </div>
         `;
     }
 
-    const padding = 40;
-    const chartW = w - padding * 2;
-    const chartH = h - padding * 2;
+    const padLeft = 60;
+    const padRight = 50;
+    const padTop = 30;
+    const padBottom = 40;
+    const plotW = Math.max(10, w - padLeft - padRight);
+    const plotH = Math.max(10, h - padTop - padBottom);
 
-    ctx.strokeStyle = "#ddd";
+    const numMonths = stats.length;
+    const colStep = plotW / numMonths;
+
+    // Calculate dynamic axis scales
+    const maxRevVal = Math.max(...stats.map(s => s.revenue), 0);
+    const maxRevScale = maxRevVal > 0 ? Math.ceil(maxRevVal / 1000) * 1000 : 1000;
+    const maxOrdVal = Math.max(...stats.map(s => s.orders), 0);
+    const maxOrdScale = maxOrdVal > 0 ? Math.ceil(maxOrdVal / 5) * 5 : 10;
+
+    // Draw horizontal grid lines & Y-axis labels
+    const gridDivisions = 4;
+    ctx.strokeStyle = '#f3f4f6';
     ctx.lineWidth = 1;
-    for (let i = 0; i <= 5; i++) {
-        const y = padding + (chartH / 5) * i;
+    ctx.setLineDash([]);
+
+    for (let i = 0; i <= gridDivisions; i++) {
+        const y = padTop + (plotH / gridDivisions) * i;
         ctx.beginPath();
-        ctx.moveTo(padding, y);
-        ctx.lineTo(w - padding, y);
+        ctx.moveTo(padLeft, y);
+        ctx.lineTo(w - padRight, y);
         ctx.stroke();
+
+        const fraction = (gridDivisions - i) / gridDivisions;
+
+        // Left axis: Revenue (₹)
+        if (filterMode === 'all' || filterMode === 'revenue') {
+            const revTick = Math.round(fraction * maxRevScale);
+            ctx.fillStyle = '#10b981';
+            ctx.font = 'bold 10px monospace';
+            ctx.textAlign = 'right';
+            const formattedRev = revTick >= 1000 ? `₹${(revTick / 1000).toFixed(1)}k` : `₹${revTick}`;
+            ctx.fillText(formattedRev, padLeft - 8, y + 3);
+        }
+
+        // Right axis: Orders count
+        if (filterMode === 'all' || filterMode === 'orders') {
+            const ordTick = Math.round(fraction * maxOrdScale);
+            ctx.fillStyle = '#3b82f6';
+            ctx.font = 'bold 10px monospace';
+            ctx.textAlign = 'left';
+            ctx.fillText(`${ordTick}`, w - padRight + 8, y + 3);
+        }
     }
 
-    const maxRev = Math.max(...revenueData, 100);
-    const maxOrd = Math.max(...orderData, 1);
-    const barW = (chartW / labels.length) / 3;
+    // Draw Bars for Revenue
+    if (filterMode === 'all' || filterMode === 'revenue') {
+        const barWidth = Math.min(34, colStep * 0.45);
+        stats.forEach((s, idx) => {
+            const colCenterX = padLeft + (idx + 0.5) * colStep;
+            const barH = maxRevVal > 0 ? (s.revenue / maxRevScale) * plotH : 0;
+            const barX = colCenterX - (barWidth / 2);
+            const barY = padTop + plotH - barH;
 
-    labels.forEach((label, i) => {
-        const x = padding + (chartW / labels.length) * i + barW;
+            if (barH > 0) {
+                ctx.fillStyle = '#10b981';
+                ctx.beginPath();
+                const radius = Math.min(4, barH / 2);
+                ctx.moveTo(barX, padTop + plotH);
+                ctx.lineTo(barX, barY + radius);
+                ctx.quadraticCurveTo(barX, barY, barX + radius, barY);
+                ctx.lineTo(barX + barWidth - radius, barY);
+                ctx.quadraticCurveTo(barX + barWidth, barY, barX + barWidth, barY + radius);
+                ctx.lineTo(barX + barWidth, padTop + plotH);
+                ctx.closePath();
+                ctx.fill();
 
-        const revH = (revenueData[i] / maxRev) * chartH;
-        ctx.fillStyle = "#10b981";
-        ctx.fillRect(x, h - padding - revH, barW, revH);
-        ctx.strokeRect(x, h - padding - revH, barW, revH);
+                ctx.fillStyle = '#065f46';
+                ctx.font = 'bold 9px monospace';
+                ctx.textAlign = 'center';
+                ctx.fillText(`₹${s.revenue.toLocaleString('en-IN')}`, colCenterX, barY - 6);
+            }
+        });
+    }
 
-        const ordH = (orderData[i] / maxOrd) * chartH;
-        ctx.fillStyle = "#2563eb";
-        ctx.fillRect(x + barW, h - padding - ordH, barW, ordH);
-        ctx.strokeRect(x + barW, h - padding - ordH, barW, ordH);
+    // Draw Smooth Curve for Orders
+    if (filterMode === 'all' || filterMode === 'orders') {
+        const points = stats.map((s, idx) => {
+            const x = padLeft + (idx + 0.5) * colStep;
+            const y = maxOrdVal > 0 ? (padTop + plotH - (s.orders / maxOrdScale) * plotH) : (padTop + plotH);
+            return { x, y, orders: s.orders };
+        });
 
-        ctx.fillStyle = "#000";
-        ctx.font = "bold 10px monospace";
-        ctx.textAlign = "center";
-        ctx.fillText(label, x + barW, h - padding + 15);
+        if (points.length > 1) {
+            ctx.strokeStyle = '#3b82f6';
+            ctx.lineWidth = 3;
+            ctx.lineJoin = 'round';
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            ctx.moveTo(points[0].x, points[0].y);
+
+            for (let i = 0; i < points.length - 1; i++) {
+                const p0 = points[i];
+                const p1 = points[i + 1];
+                const cp1x = p0.x + (p1.x - p0.x) / 2;
+                const cp1y = p0.y;
+                const cp2x = p0.x + (p1.x - p0.x) / 2;
+                const cp2y = p1.y;
+                ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p1.x, p1.y);
+            }
+            ctx.stroke();
+
+            // Draw circular points & order counts
+            points.forEach(p => {
+                ctx.fillStyle = '#1d4ed8';
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = '#ffffff';
+                ctx.stroke();
+
+                if (p.orders > 0) {
+                    ctx.fillStyle = '#1e40af';
+                    ctx.font = 'bold 9px monospace';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(`${p.orders} ord`, p.x, p.y - 10);
+                }
+            });
+        }
+    }
+
+    // Draw X-Axis Baseline & Month Labels
+    ctx.strokeStyle = '#e5e7eb';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(padLeft, padTop + plotH);
+    ctx.lineTo(w - padRight, padTop + plotH);
+    ctx.stroke();
+
+    stats.forEach((s, idx) => {
+        const colCenterX = padLeft + (idx + 0.5) * colStep;
+        ctx.fillStyle = '#374151';
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(s.label || s.month, colCenterX, padTop + plotH + 18);
     });
 
+    // Empty State Message (when 0 data)
     if (totalRev === 0 && totalOrds === 0) {
-        ctx.fillStyle = "#666666";
-        ctx.font = "bold 12px monospace";
-        ctx.textAlign = "center";
-        ctx.fillText("NO REAL ORDER DATA AVAILABLE (₹0 REVENUE)", w / 2, h / 2 - 10);
+        ctx.fillStyle = 'rgba(250, 250, 250, 0.88)';
+        ctx.fillRect(padLeft, padTop, plotW, plotH);
+
+        ctx.fillStyle = '#111827';
+        ctx.font = '900 13px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText("NO COMPLETED ORDERS YET", w / 2, padTop + plotH / 2 - 8);
+
+        ctx.fillStyle = '#6b7280';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.fillText("Dual-axis metrics will dynamically populate as verified customer orders occur.", w / 2, padTop + plotH / 2 + 12);
     }
 }
 
@@ -2448,6 +2718,70 @@ function renderShippingCalculatorPreview() {
 // =============================================================================
 
 function renderStoreBuilder() {
+    // 1. Populate Announcement Bar controls
+    if (announcementBarConfig) {
+        const textInput = document.getElementById('announcement-text-input');
+        const activeSelect = document.getElementById('announcement-active-toggle');
+        const speedSelect = document.getElementById('announcement-speed-select');
+        const prevText = document.getElementById('announcement-preview-text');
+        if (textInput && announcementBarConfig.text !== undefined) textInput.value = announcementBarConfig.text;
+        if (activeSelect && announcementBarConfig.enabled !== undefined) activeSelect.value = String(announcementBarConfig.enabled);
+        if (speedSelect && announcementBarConfig.marquee_speed) speedSelect.value = announcementBarConfig.marquee_speed;
+        if (prevText && announcementBarConfig.text) prevText.textContent = announcementBarConfig.text;
+    }
+
+    // 2. Populate Hero Mode & Fixed Banner controls
+    const activeHeroMode = heroConfig?.mode || 'fixed';
+    if (typeof window.__chipakk_toggle_hero_mode === 'function') {
+        window.__chipakk_toggle_hero_mode(activeHeroMode);
+    }
+
+    if (heroConfig?.fixed_banner) {
+        const fb = heroConfig.fixed_banner;
+        const eyebrowEnable = document.getElementById('hero-opt-eyebrow-enable');
+        const eyebrowText = document.getElementById('hero-opt-eyebrow-text');
+        const titleEnable = document.getElementById('hero-opt-title-enable');
+        const titleText = document.getElementById('hero-opt-title-text');
+        const descEnable = document.getElementById('hero-opt-desc-enable');
+        const descText = document.getElementById('hero-opt-desc-text');
+        const btn1Enable = document.getElementById('hero-opt-btn1-enable');
+        const btn1Text = document.getElementById('hero-opt-btn1-text');
+        const btn1Url = document.getElementById('hero-opt-btn1-url');
+        const btn2Enable = document.getElementById('hero-opt-btn2-enable');
+        const btn2Text = document.getElementById('hero-opt-btn2-text');
+        const btn2Url = document.getElementById('hero-opt-btn2-url');
+        const imgUrl = document.getElementById('hero-fixed-image-url');
+        const prevImg = document.getElementById('hero-fixed-preview-img');
+        const noImg = document.getElementById('hero-fixed-no-img');
+
+        if (eyebrowEnable && fb.show_eyebrow !== undefined) eyebrowEnable.checked = Boolean(fb.show_eyebrow);
+        if (eyebrowText && fb.eyebrow !== undefined) eyebrowText.value = fb.eyebrow;
+        if (titleEnable && fb.show_title !== undefined) titleEnable.checked = Boolean(fb.show_title);
+        if (titleText && fb.title !== undefined) titleText.value = fb.title;
+        if (descEnable && fb.show_description !== undefined) descEnable.checked = Boolean(fb.show_description);
+        if (descText && fb.description !== undefined) descText.value = fb.description;
+        if (btn1Enable && fb.show_primary_btn !== undefined) btn1Enable.checked = Boolean(fb.show_primary_btn);
+        if (btn1Text && fb.primary_btn_text !== undefined) btn1Text.value = fb.primary_btn_text;
+        if (btn1Url && fb.primary_btn_url !== undefined) btn1Url.value = fb.primary_btn_url;
+        if (btn2Enable && fb.show_secondary_btn !== undefined) btn2Enable.checked = Boolean(fb.show_secondary_btn);
+        if (btn2Text && fb.secondary_btn_text !== undefined) btn2Text.value = fb.secondary_btn_text;
+        if (btn2Url && fb.secondary_btn_url !== undefined) btn2Url.value = fb.secondary_btn_url;
+        if (imgUrl && fb.image_url !== undefined) {
+            imgUrl.value = fb.image_url;
+            if (prevImg) {
+                prevImg.src = fb.image_url;
+                prevImg.style.display = fb.image_url ? 'block' : 'none';
+            }
+            if (noImg) {
+                noImg.style.display = fb.image_url ? 'none' : 'block';
+            }
+        }
+    }
+
+    if (typeof window.__chipakk_update_hero_live_preview === 'function') {
+        window.__chipakk_update_hero_live_preview();
+    }
+
     renderHeroGroupsList();
     renderPromoBannersList();
     renderStoreSectionsList();
@@ -2739,6 +3073,106 @@ async function saveTeamMemberForm() {
 }
 
 // =============================================================================
+// ACTIVE SESSIONS & LIVE LOGIN MANAGEMENT
+// =============================================================================
+
+function renderActiveSessionsTable() {
+    const tbody = document.getElementById('active-sessions-tbody');
+    const badge = document.getElementById('active-sessions-count-badge');
+    const pills = document.getElementById('audit-active-sessions-pills');
+
+    if (badge) {
+        badge.textContent = `${activeSessions.length} ACTIVE`;
+        badge.className = `status-badge ${activeSessions.length > 0 ? 'status-live' : 'status-inactive'}`;
+    }
+
+    if (pills) {
+        if (activeSessions.length === 0) {
+            pills.innerHTML = '<span style="color:#888;">No active sessions currently online</span>';
+        } else {
+            pills.innerHTML = activeSessions.map(s => `
+                <span class="status-badge status-live" style="margin-right: 6px; font-size: 0.75rem;">
+                    🟢 ${s.name || s.email} (${s.role || 'ADMIN'})
+                </span>
+            `).join('');
+        }
+    }
+
+    if (!tbody) return;
+
+    if (activeSessions.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: #888; padding: 18px;">No active sessions found in database. All administrators are currently logged out or expired.</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = activeSessions.map(s => {
+        const isSelf = s.is_current || (auth?.currentUser && auth.currentUser.uid === s.firebase_uid);
+        const loginStr = s.login_time ? new Date(s.login_time).toLocaleString() : 'N/A';
+        const lastActStr = s.last_activity ? new Date(s.last_activity).toLocaleTimeString() : 'N/A';
+        const expiresStr = s.expires_at ? new Date(s.expires_at).toLocaleTimeString() : '1 hour inactivity';
+
+        return `
+            <tr style="${isSelf ? 'background: #f0fdf4;' : ''}">
+                <td>
+                    <strong>${s.name || s.email.split('@')[0]}</strong>
+                    ${isSelf ? '<span class="status-badge" style="background:#000; color:#fff; font-size:0.65rem; margin-left:6px;">YOU (CURRENT)</span>' : ''}
+                </td>
+                <td>${s.email}</td>
+                <td><span class="status-badge" style="background:#7c3aed; color:#fff;">${s.role || 'ADMIN'}</span></td>
+                <td><small>${loginStr}</small></td>
+                <td><small style="font-weight:bold; color:#2563eb;">${lastActStr}</small></td>
+                <td><span class="status-badge status-live">ACTIVE</span></td>
+                <td><small style="color:#d97706;">${expiresStr}</small></td>
+                <td>
+                    <button class="retro-btn terminate-session-btn" data-id="${s.id}" data-email="${s.email}" style="padding:2px 8px; font-size:0.75rem; background:#ef4444; color:#fff; border-color:#000;">
+                        ${isSelf ? 'LOGOUT' : 'FORCE LOGOUT'}
+                    </button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+
+    tbody.querySelectorAll('.terminate-session-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const sid = btn.getAttribute('data-id');
+            const email = btn.getAttribute('data-email');
+            const isSelf = btn.textContent.includes('LOGOUT') && !btn.textContent.includes('FORCE');
+            
+            showConfirmModal(
+                'TERMINATE ADMIN SESSION',
+                `Are you sure you want to terminate session #${sid} for ${email}?`,
+                async () => {
+                    try {
+                        await apiClient.post(`/admin/active-sessions/${sid}/terminate`);
+                        showToast(`Session #${sid} terminated.`);
+                        await refreshActiveSessionsFromAPI();
+                        await refreshAuditLogsFromAPI();
+                        if (isSelf) {
+                            signOut(auth);
+                        }
+                    } catch (err) {
+                        showToast(`Failed to terminate session: ${err.message}`, 'error');
+                    }
+                }
+            );
+        });
+    });
+}
+
+async function refreshActiveSessionsFromAPI() {
+    try {
+        const res = await apiClient.get('/admin/active-sessions');
+        const rawSessions = res?.data?.sessions || res?.sessions || (Array.isArray(res?.data) ? res.data : []);
+        if (Array.isArray(rawSessions)) {
+            activeSessions = rawSessions;
+            renderActiveSessionsTable();
+        }
+    } catch (err) {
+        console.warn('[refreshActiveSessionsFromAPI error]', err.message);
+    }
+}
+
+// =============================================================================
 // 13. AUDIT LOGS RETRIEVAL
 // =============================================================================
 
@@ -2746,13 +3180,29 @@ function renderAuditLogs() {
     const container = document.getElementById('audit-logs-container');
     if (!container) return;
 
-    container.innerHTML = auditLogs.map(l => `
-        <div style="font-family:monospace; font-size:0.8rem; border-bottom:1px solid #eee; padding:4px 0;">
-            <span style="color:#666;">[${new Date(l.timestamp).toLocaleString()}]</span>
-            <strong style="color:#2563eb;"> ${l.actor}:</strong>
-            <span> ${l.action}</span>
-        </div>
-    `).join('') || '<div style="font-family:monospace; font-size:0.8rem; color:#888;">No system audit logs recorded.</div>';
+    container.innerHTML = auditLogs.map(l => {
+        const dateStr = l.timestamp ? new Date(l.timestamp).toLocaleString() : 'N/A';
+        let actionBadge = '';
+        const act = String(l.action || '').toLowerCase();
+        if (act.includes('admin.login')) {
+            actionBadge = '<span class="status-badge status-live" style="font-size:0.68rem; margin-right:4px;">LOGIN</span>';
+        } else if (act.includes('admin.logout')) {
+            actionBadge = '<span class="status-badge" style="background:#6b7280; color:#fff; font-size:0.68rem; margin-right:4px;">LOGOUT</span>';
+        } else if (act.includes('session_expired')) {
+            actionBadge = '<span class="status-badge" style="background:#f59e0b; color:#000; font-size:0.68rem; margin-right:4px;">SESSION EXPIRED</span>';
+        } else if (act.includes('session_terminated')) {
+            actionBadge = '<span class="status-badge status-inactive" style="font-size:0.68rem; margin-right:4px;">TERMINATED</span>';
+        }
+
+        return `
+            <div style="font-family:monospace; font-size:0.82rem; border-bottom:1px solid #eee; padding:6px 0; display:flex; align-items:center; flex-wrap:wrap; gap:6px;">
+                <span style="color:#666; font-size:0.75rem;">[${dateStr}]</span>
+                ${actionBadge}
+                <strong style="color:#2563eb;">${l.actor}:</strong>
+                <span>${l.action}</span>
+            </div>
+        `;
+    }).join('') || '<div style="font-family:monospace; font-size:0.8rem; color:#888;">No system audit logs recorded.</div>';
 }
 
 async function refreshAuditLogsFromAPI() {
@@ -2867,6 +3317,379 @@ function loadSystemSettings() {
 }
 
 function setupEventListeners() {
+    // Sales Chart Toggle Pills & Sync
+    document.querySelectorAll('.chart-toggle-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const mode = btn.getAttribute('data-mode') || 'all';
+            document.querySelectorAll('.chart-toggle-btn').forEach(b => {
+                b.classList.remove('is-active');
+                b.style.background = 'transparent';
+                b.style.color = '#000';
+            });
+            btn.classList.add('is-active');
+            btn.style.background = '#000';
+            btn.style.color = '#fff';
+            renderSalesChart(mode);
+        });
+    });
+
+    document.getElementById('refresh-chart-btn')?.addEventListener('click', async () => {
+        const btn = document.getElementById('refresh-chart-btn');
+        if (btn) btn.textContent = 'SYNCING...';
+        try {
+            const res = await apiClient.get('/admin/dashboard');
+            if (res && res.data && res.data.metrics) {
+                dashboardMetrics = res.data.metrics;
+                if (Array.isArray(res.data.metrics.monthlyStats)) {
+                    monthlyStats = res.data.metrics.monthlyStats;
+                }
+            }
+            renderSalesChart();
+            showToast("Sales comparison chart synchronized with real database.");
+        } catch (err) {
+            renderSalesChart();
+            showToast(`Refreshed chart: ${err.message}`, 'info');
+        } finally {
+            if (btn) btn.textContent = '↻ SYNC';
+        }
+    });
+
+    window.addEventListener('resize', () => {
+        renderSalesChart();
+    });
+
+    // Mobile Sidebar Drawer Toggle & Backdrop
+    const mobileMenuBtn = document.getElementById('admin-mobile-toggle');
+    const sidebarEl = document.querySelector('.admin-sidebar');
+    const backdropEl = document.getElementById('admin-sidebar-backdrop');
+    const closeSidebarBtn = document.getElementById('close-admin-sidebar-btn');
+
+    if (mobileMenuBtn && sidebarEl) {
+        mobileMenuBtn.addEventListener('click', () => {
+            sidebarEl.classList.toggle('open');
+            if (backdropEl) {
+                backdropEl.style.display = sidebarEl.classList.contains('open') ? 'block' : 'none';
+            }
+        });
+    }
+
+    if (backdropEl && sidebarEl) {
+        backdropEl.addEventListener('click', () => {
+            sidebarEl.classList.remove('open');
+            backdropEl.style.display = 'none';
+        });
+    }
+
+    if (closeSidebarBtn && sidebarEl) {
+        closeSidebarBtn.addEventListener('click', () => {
+            sidebarEl.classList.remove('open');
+            if (backdropEl) backdropEl.style.display = 'none';
+        });
+    }
+
+    // Store Builder Hero Mode Switcher
+    window.__chipakk_toggle_hero_mode = function(mode) {
+        const fixedBtn = document.getElementById('hero-toggle-fixed');
+        const carouselBtn = document.getElementById('hero-toggle-carousel');
+        const fixedPanel = document.getElementById('hero-fixed-panel');
+        const carouselPanel = document.getElementById('hero-carousel-panel');
+        const fixedBadge = document.getElementById('hero-fixed-status-badge');
+        const carouselBadge = document.getElementById('hero-carousel-status-badge');
+
+        if (mode === 'fixed') {
+            if (fixedBtn) {
+                fixedBtn.classList.add('is-active');
+                fixedBtn.style.background = '#000';
+                fixedBtn.style.color = '#fff';
+                fixedBtn.textContent = '[✓] FIXED BANNER';
+            }
+            if (carouselBtn) {
+                carouselBtn.classList.remove('is-active');
+                carouselBtn.style.background = 'transparent';
+                carouselBtn.style.color = '#000';
+                carouselBtn.textContent = '[ ] CAROUSEL SLIDER';
+            }
+            if (fixedPanel) fixedPanel.style.display = 'block';
+            if (carouselPanel) carouselPanel.style.display = 'none';
+            if (fixedBadge) {
+                fixedBadge.textContent = 'ACTIVE MODE';
+                fixedBadge.className = 'status-badge status-live';
+            }
+            if (carouselBadge) {
+                carouselBadge.textContent = 'INACTIVE MODE';
+                carouselBadge.className = 'status-badge status-inactive';
+            }
+        } else {
+            if (carouselBtn) {
+                carouselBtn.classList.add('is-active');
+                carouselBtn.style.background = '#000';
+                carouselBtn.style.color = '#fff';
+                carouselBtn.textContent = '[✓] CAROUSEL SLIDER';
+            }
+            if (fixedBtn) {
+                fixedBtn.classList.remove('is-active');
+                fixedBtn.style.background = 'transparent';
+                fixedBtn.style.color = '#000';
+                fixedBtn.textContent = '[ ] FIXED BANNER';
+            }
+            if (fixedPanel) fixedPanel.style.display = 'none';
+            if (carouselPanel) carouselPanel.style.display = 'block';
+            if (fixedBadge) {
+                fixedBadge.textContent = 'INACTIVE MODE';
+                fixedBadge.className = 'status-badge status-inactive';
+            }
+            if (carouselBadge) {
+                carouselBadge.textContent = 'ACTIVE MODE';
+                carouselBadge.className = 'status-badge status-live';
+            }
+        }
+        if (typeof window.__chipakk_update_hero_live_preview === 'function') {
+            window.__chipakk_update_hero_live_preview();
+        }
+    };
+
+    document.getElementById('hero-toggle-fixed')?.addEventListener('click', async () => {
+        window.__chipakk_toggle_hero_mode('fixed');
+        try {
+            await apiClient.put('/admin/store-builder', { hero_mode: 'fixed' });
+            showToast("Store Hero set to FIXED BANNER mode.");
+        } catch (err) {
+            console.warn('[Hero Mode Error]', err.message);
+        }
+    });
+
+    document.getElementById('hero-toggle-carousel')?.addEventListener('click', async () => {
+        window.__chipakk_toggle_hero_mode('carousel');
+        try {
+            await apiClient.put('/admin/store-builder', { hero_mode: 'carousel' });
+            showToast("Store Hero set to CAROUSEL SLIDER mode.");
+        } catch (err) {
+            console.warn('[Hero Mode Error]', err.message);
+        }
+    });
+
+    // Fixed Hero Live Preview & Input Handlers
+    window.__chipakk_update_hero_live_preview = function() {
+        const eyebrowEnable = document.getElementById('hero-opt-eyebrow-enable')?.checked ?? true;
+        const eyebrowText = document.getElementById('hero-opt-eyebrow-text')?.value || '';
+        const titleEnable = document.getElementById('hero-opt-title-enable')?.checked ?? true;
+        const titleText = document.getElementById('hero-opt-title-text')?.value || '';
+        const descEnable = document.getElementById('hero-opt-desc-enable')?.checked ?? true;
+        const descText = document.getElementById('hero-opt-desc-text')?.value || '';
+        const btn1Enable = document.getElementById('hero-opt-btn1-enable')?.checked ?? true;
+        const btn1Text = document.getElementById('hero-opt-btn1-text')?.value || 'Shop Now →';
+        const btn1Url = document.getElementById('hero-opt-btn1-url')?.value || 'shop.html';
+        const btn2Enable = document.getElementById('hero-opt-btn2-enable')?.checked ?? true;
+        const btn2Text = document.getElementById('hero-opt-btn2-text')?.value || 'Custom Stickers';
+        const btn2Url = document.getElementById('hero-opt-btn2-url')?.value || 'custom-stickers.html';
+        const imgUrl = document.getElementById('hero-fixed-image-url')?.value.trim() || '/uploads/hero-banner-1.png';
+
+        const prevEyebrow = document.getElementById('preview-hero-eyebrow');
+        if (prevEyebrow) {
+            prevEyebrow.style.display = eyebrowEnable ? 'inline-block' : 'none';
+            prevEyebrow.textContent = eyebrowText;
+        }
+        const prevTitle = document.getElementById('preview-hero-title');
+        if (prevTitle) {
+            prevTitle.style.display = titleEnable ? 'block' : 'none';
+            prevTitle.textContent = titleText;
+        }
+        const prevDesc = document.getElementById('preview-hero-desc');
+        if (prevDesc) {
+            prevDesc.style.display = descEnable ? 'block' : 'none';
+            prevDesc.textContent = descText;
+        }
+        const prevBtn1 = document.getElementById('preview-hero-btn1');
+        if (prevBtn1) {
+            prevBtn1.style.display = btn1Enable ? 'inline-block' : 'none';
+            prevBtn1.textContent = btn1Text;
+            prevBtn1.href = btn1Url;
+        }
+        const prevBtn2 = document.getElementById('preview-hero-btn2');
+        if (prevBtn2) {
+            prevBtn2.style.display = btn2Enable ? 'inline-block' : 'none';
+            prevBtn2.textContent = btn2Text;
+            prevBtn2.href = btn2Url;
+        }
+        const prevImg = document.getElementById('preview-hero-img');
+        if (prevImg) {
+            prevImg.src = imgUrl;
+        }
+    };
+
+    [
+        'hero-opt-eyebrow-enable', 'hero-opt-eyebrow-text',
+        'hero-opt-title-enable', 'hero-opt-title-text',
+        'hero-opt-desc-enable', 'hero-opt-desc-text',
+        'hero-opt-btn1-enable', 'hero-opt-btn1-text', 'hero-opt-btn1-url',
+        'hero-opt-btn2-enable', 'hero-opt-btn2-text', 'hero-opt-btn2-url'
+    ].forEach(id => {
+        const el = document.getElementById(id);
+        el?.addEventListener('input', window.__chipakk_update_hero_live_preview);
+        el?.addEventListener('change', window.__chipakk_update_hero_live_preview);
+    });
+
+    // Fixed Hero Image Upload
+    document.getElementById('hero-fixed-upload-btn')?.addEventListener('click', () => {
+        document.getElementById('hero-fixed-image-file')?.click();
+    });
+
+    document.getElementById('hero-fixed-image-file')?.addEventListener('change', async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const statusEl = document.getElementById('hero-fixed-upload-status');
+        if (statusEl) statusEl.textContent = 'Uploading...';
+
+        const fd = new FormData();
+        fd.append('file', file);
+        try {
+            const res = await apiClient.upload('/admin/upload', fd);
+            const uploadedUrl = res?.data?.url || res?.url;
+            if (uploadedUrl) {
+                const urlInput = document.getElementById('hero-fixed-image-url');
+                const prevImg = document.getElementById('hero-fixed-preview-img');
+                const noImg = document.getElementById('hero-fixed-no-img');
+                if (urlInput) urlInput.value = uploadedUrl;
+                if (prevImg) {
+                    prevImg.src = uploadedUrl;
+                    prevImg.style.display = 'block';
+                }
+                if (noImg) noImg.style.display = 'none';
+                window.__chipakk_update_hero_live_preview();
+                if (statusEl) statusEl.textContent = '✓ Uploaded';
+                showToast("Hero banner image uploaded successfully.");
+            }
+        } catch (err) {
+            if (statusEl) statusEl.textContent = 'Upload failed';
+            showToast(`Upload failed: ${err.message}`, 'error');
+        }
+    });
+
+    document.getElementById('hero-fixed-image-url')?.addEventListener('input', (e) => {
+        const url = e.target.value.trim();
+        const prevImg = document.getElementById('hero-fixed-preview-img');
+        const noImg = document.getElementById('hero-fixed-no-img');
+        if (url) {
+            if (prevImg) { prevImg.src = url; prevImg.style.display = 'block'; }
+            if (noImg) noImg.style.display = 'none';
+        } else {
+            if (prevImg) prevImg.style.display = 'none';
+            if (noImg) noImg.style.display = 'block';
+        }
+        window.__chipakk_update_hero_live_preview();
+    });
+
+    // Save Fixed Hero Button
+    document.getElementById('save-hero-fixed-btn')?.addEventListener('click', async () => {
+        const fixedBanner = {
+            image_url: document.getElementById('hero-fixed-image-url')?.value.trim() || '',
+            show_eyebrow: document.getElementById('hero-opt-eyebrow-enable')?.checked ?? true,
+            eyebrow: document.getElementById('hero-opt-eyebrow-text')?.value.trim() || '',
+            show_title: document.getElementById('hero-opt-title-enable')?.checked ?? true,
+            title: document.getElementById('hero-opt-title-text')?.value.trim() || '',
+            show_description: document.getElementById('hero-opt-desc-enable')?.checked ?? true,
+            description: document.getElementById('hero-opt-desc-text')?.value.trim() || '',
+            show_primary_btn: document.getElementById('hero-opt-btn1-enable')?.checked ?? true,
+            primary_btn_text: document.getElementById('hero-opt-btn1-text')?.value.trim() || '',
+            primary_btn_url: document.getElementById('hero-opt-btn1-url')?.value.trim() || '',
+            show_secondary_btn: document.getElementById('hero-opt-btn2-enable')?.checked ?? true,
+            secondary_btn_text: document.getElementById('hero-opt-btn2-text')?.value.trim() || '',
+            secondary_btn_url: document.getElementById('hero-opt-btn2-url')?.value.trim() || ''
+        };
+
+        const btn = document.getElementById('save-hero-fixed-btn');
+        const origText = btn ? btn.textContent : '';
+        if (btn) { btn.disabled = true; btn.textContent = 'SAVING...'; }
+        try {
+            await apiClient.put('/admin/store-builder', {
+                hero_mode: 'fixed',
+                hero_config: {
+                    mode: 'fixed',
+                    fixed_banner: fixedBanner
+                }
+            });
+            showToast("Fixed Hero Banner saved and published!");
+        } catch (err) {
+            showToast(`Error saving hero banner: ${err.message}`, 'error');
+        } finally {
+            if (btn) { btn.disabled = false; btn.textContent = origText || '💾 SAVE FIXED HERO BANNER'; }
+        }
+    });
+
+    // Carousel Slide Image Upload
+    document.getElementById('hero-slide-upload-btn')?.addEventListener('click', () => {
+        document.getElementById('hero-slide-file-input')?.click();
+    });
+
+    document.getElementById('hero-slide-file-input')?.addEventListener('change', async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const statusEl = document.getElementById('hero-slide-upload-status');
+        if (statusEl) statusEl.textContent = 'Uploading...';
+
+        const fd = new FormData();
+        fd.append('file', file);
+        try {
+            const res = await apiClient.upload('/admin/upload', fd);
+            const uploadedUrl = res?.data?.url || res?.url;
+            if (uploadedUrl) {
+                const urlInput = document.getElementById('hero-slide-img');
+                const prevImg = document.getElementById('hero-slide-preview-img');
+                if (urlInput) urlInput.value = uploadedUrl;
+                if (prevImg) prevImg.src = uploadedUrl;
+                if (statusEl) statusEl.textContent = '✓ Uploaded';
+                showToast("Slide image uploaded successfully.");
+            }
+        } catch (err) {
+            if (statusEl) statusEl.textContent = 'Upload failed';
+            showToast(`Upload failed: ${err.message}`, 'error');
+        }
+    });
+
+    document.getElementById('hero-slide-img')?.addEventListener('input', (e) => {
+        const prevImg = document.getElementById('hero-slide-preview-img');
+        if (prevImg) prevImg.src = e.target.value.trim();
+    });
+
+    // Announcement Ticker Live Preview & Save
+    document.getElementById('announcement-text-input')?.addEventListener('input', (e) => {
+        const prevText = document.getElementById('announcement-preview-text');
+        if (prevText) prevText.textContent = e.target.value;
+    });
+
+    document.getElementById('save-announcement-btn')?.addEventListener('click', async () => {
+        const text = document.getElementById('announcement-text-input')?.value.trim() || '';
+        const enabled = document.getElementById('announcement-active-toggle')?.value === 'true';
+        const marqueeSpeed = document.getElementById('announcement-speed-select')?.value || 'normal';
+
+        const btn = document.getElementById('save-announcement-btn');
+        const origText = btn ? btn.textContent : '';
+        if (btn) { btn.disabled = true; btn.textContent = 'SAVING...'; }
+        try {
+            await apiClient.put('/admin/store-builder', {
+                announcement_bar: {
+                    enabled,
+                    text,
+                    mode: 'MARQUEE',
+                    marquee_speed: marqueeSpeed
+                }
+            });
+            showToast("Announcement ticker saved and published!");
+        } catch (err) {
+            showToast(`Error saving announcement ticker: ${err.message}`, 'error');
+        } finally {
+            if (btn) { btn.disabled = false; btn.textContent = origText || 'SAVE ANNOUNCEMENT TICKER'; }
+        }
+    });
+
+    // Dynamic 30-Second Auto-Refresh for Audit Logs
+    setInterval(() => {
+        const auditTab = document.getElementById('tab-audit');
+        if (auditTab && auditTab.style.display !== 'none') {
+            refreshAuditLogsFromAPI();
+        }
+    }, 30000);
+
     document.getElementById('apply-analytics-filter-btn')?.addEventListener('click', () => {
         updateState();
         showToast("Analytics timeframe filter applied.");
@@ -3247,13 +4070,35 @@ function setupEventListeners() {
         }, 1200);
     });
 
-    // Periodic Polling (every 45s) for team members and audit logs
+    // Refresh controls for active sessions, team members, and audit logs
+    document.getElementById('refresh-sessions-btn')?.addEventListener('click', async () => {
+        showToast('Refreshing active sessions...');
+        await refreshActiveSessionsFromAPI();
+    });
+
+    document.getElementById('refresh-team-btn')?.addEventListener('click', async () => {
+        showToast('Refreshing team members...');
+        await refreshTeamFromAPI();
+    });
+
+    document.getElementById('refresh-audit-logs-btn')?.addEventListener('click', async () => {
+        showToast('Refreshing audit logs...');
+        await refreshAuditLogsFromAPI();
+    });
+
+    document.getElementById('audit-goto-sessions-btn')?.addEventListener('click', () => {
+        const teamTabLink = document.querySelector('.admin-nav-item[data-tab="tab-team"]');
+        if (teamTabLink) teamTabLink.click();
+    });
+
+    // Periodic Polling (every 30s) for live sessions, team members, and audit logs
     setInterval(() => {
         if (document.visibilityState === 'visible') {
+            refreshActiveSessionsFromAPI();
             refreshAuditLogsFromAPI();
             refreshTeamFromAPI();
         }
-    }, 45000);
+    }, 30000);
 }
 
 // Global Export Routine Helpers

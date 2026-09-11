@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Admin Workspace | CHIPAKK Control Panel</title>
-    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/admin.css">
     <style>
         :root {
             --badge-live: #10b981;
@@ -55,10 +55,12 @@
         .admin-main {
             margin-left: 250px;
             width: calc(100% - 250px);
-            max-width: 1600px;
-            padding: 25px;
+            max-width: none;
+            padding: 25px 35px;
             min-height: 100vh;
             box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
         }
 
         .admin-sidebar-nav {
@@ -379,22 +381,111 @@
             font-weight: 900;
         }
 
+        .retro-panel {
+            border: var(--border-width, 2px) solid var(--text-color, #000);
+            box-shadow: 4px 4px 0px var(--text-color, #000);
+            padding: 20px;
+            box-sizing: border-box;
+            position: relative;
+        }
+
+        .admin-grid-2col {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
+            gap: 20px;
+        }
+
+        .admin-grid-4col {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+            gap: 15px;
+        }
+
         .admin-table-container {
             width: 100%;
             overflow-x: auto;
             border: var(--border-width, 2px) solid var(--text-color, #000);
             background: #fff;
             margin-bottom: 20px;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .admin-mobile-topbar {
+            display: none;
+            align-items: center;
+            justify-content: space-between;
+            background: #ffffff;
+            border-bottom: 2px solid var(--text-color, #000);
+            padding: 10px 14px;
+            margin: -25px -35px 20px -35px;
+            position: sticky;
+            top: 0;
+            z-index: 90;
+        }
+
+        .admin-sidebar-backdrop {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 998;
+            backdrop-filter: blur(2px);
+        }
+
+        .mobile-only-btn {
+            display: none !important;
         }
 
         @media (max-width: 900px) {
+            .mobile-only-btn {
+                display: inline-flex !important;
+            }
+            .admin-mobile-topbar {
+                display: flex;
+                margin: -15px -12px 18px -12px;
+            }
             .admin-sidebar {
-                width: 200px;
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 270px;
+                max-width: 85vw;
+                height: 100vh;
+                z-index: 999;
+                transform: translateX(-100%);
+                transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+                box-shadow: 4px 0 20px rgba(0,0,0,0.25);
+            }
+            .admin-sidebar.open {
+                transform: translateX(0);
             }
             .admin-main {
-                margin-left: 200px;
-                width: calc(100% - 200px);
-                padding: 15px;
+                margin-left: 0 !important;
+                width: 100% !important;
+                padding: 15px 12px;
+                padding-left: max(12px, env(safe-area-inset-left));
+                padding-right: max(12px, env(safe-area-inset-right));
+                padding-bottom: max(20px, env(safe-area-inset-bottom));
+            }
+            .admin-stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+                gap: 10px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .admin-stats-grid {
+                grid-template-columns: 1fr;
+            }
+            .admin-main {
+                padding: 12px 8px;
+            }
+            .retro-panel {
+                padding: 14px 12px;
+                box-shadow: 3px 3px 0px var(--text-color, #000);
             }
         }
     </style>
@@ -433,9 +524,12 @@
         
         <!-- Sidebar Navigation -->
         <aside class="admin-sidebar">
-            <div style="border-bottom: var(--border-width, 2px) solid var(--text-color, #000); padding-bottom: 12px; margin-bottom: 12px;">
-                <h2 class="font-pixel" style="font-size: 2.2rem; letter-spacing: -2px; margin: 0;">CHIPAKK OS</h2>
-                <div style="font-size: 0.72rem; font-weight: bold; opacity: 0.7;">PRINT-ON-DEMAND CONSOLE v3.3</div>
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; border-bottom: var(--border-width, 2px) solid var(--text-color, #000); padding-bottom: 12px; margin-bottom: 12px;">
+                <div>
+                    <h2 class="font-pixel" style="font-size: 2.2rem; letter-spacing: -2px; margin: 0;">CHIPAKK OS</h2>
+                    <div style="font-size: 0.72rem; font-weight: bold; opacity: 0.7;">PRINT-ON-DEMAND CONSOLE v3.3</div>
+                </div>
+                <button id="close-admin-sidebar-btn" class="icon-btn mobile-only-btn" style="display: none; font-size: 1.3rem; font-weight: 900; padding: 2px 8px; border: 2px solid #000; background: #fff; cursor: pointer;" aria-label="Close Sidebar">×</button>
             </div>
 
             <!-- Global Search Box -->
@@ -486,10 +580,24 @@
                 <button class="retro-btn" id="logout-btn" style="width: 100%; box-shadow: none;">LOGOUT</button>
             </div>
         </aside>
+        
+        <!-- Mobile Sidebar Overlay Backdrop -->
+        <div id="admin-sidebar-backdrop" class="admin-sidebar-backdrop"></div>
 
         <!-- Main Workspace Viewport -->
         <main class="admin-main">
             
+            <!-- Mobile Navigation Bar -->
+            <div class="admin-mobile-topbar">
+                <button id="admin-mobile-toggle" class="retro-btn" style="padding: 6px 12px; font-size: 0.8rem; font-weight: 900; display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                    <span>☰</span> MENU
+                </button>
+                <div style="font-family: 'VT323', monospace; font-size: 1.6rem; font-weight: 900; letter-spacing: -1px;">CHIPAKK OS</div>
+                <div style="display: flex; align-items: center; gap: 6px;">
+                    <span class="status-badge status-live" style="font-size: 0.65rem; padding: 2px 6px;">LIVE</span>
+                </div>
+            </div>
+
             <!-- TAB 1: DASHBOARD -->
             <section id="tab-dashboard" class="tab-content" style="display: block;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; flex-wrap: wrap; gap: 10px;">
@@ -557,42 +665,52 @@
                     </div>
                 </div>
 
-                <!-- Sales Comparison Chart Container -->
-                <div class="retro-panel" style="background-color: #fff; margin-bottom: 30px;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-wrap: wrap; gap: 10px;">
+                <!-- Modern Visual Dashboard Graph Container -->
+                <div class="retro-panel" style="background-color: #ffffff; border-radius: 12px; border: 2px solid #000; box-shadow: 4px 4px 0 #000; margin-bottom: 30px; padding: 20px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-wrap: wrap; gap: 12px;">
                         <div>
-                            <h3 style="font-weight: bold; text-transform: uppercase; margin: 0;">📈 Monthly Revenue & Production Volume Comparison</h3>
-                            <p style="font-size: 0.8rem; color: #666; margin: 4px 0 0 0;">Compare sales revenue vs sticker manufacturing order volume across months</p>
-                        </div>
-                        <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
-                            <div style="display: flex; align-items: center; gap: 5px;">
-                                <label style="font-size: 0.75rem; font-weight: bold;">START:</label>
-                                <select id="chart-start-month" class="retro-input" style="padding: 4px; font-size: 0.8rem; width: 110px;"></select>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <span style="font-size: 1.2rem;">📊</span>
+                                <h3 style="font-weight: 900; text-transform: uppercase; margin: 0; font-size: 1.1rem; letter-spacing: -0.02em;">Sales & Order Volume Growth</h3>
                             </div>
-                            <div style="display: flex; align-items: center; gap: 5px;">
-                                <label style="font-size: 0.75rem; font-weight: bold;">END:</label>
-                                <select id="chart-end-month" class="retro-input" style="padding: 4px; font-size: 0.8rem; width: 110px;"></select>
+                            <p style="font-size: 0.8rem; color: #666; margin: 4px 0 0 0;">Monthly verified revenue vs sticker order production volume</p>
+                        </div>
+                        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                            <div class="chart-toggle-group" style="display: inline-flex; border: 2px solid #000; border-radius: 6px; overflow: hidden; background: #f3f4f6;">
+                                <button type="button" class="chart-toggle-btn is-active" data-mode="all" style="padding: 5px 12px; font-size: 0.75rem; font-weight: 800; border: none; cursor: pointer; background: #000; color: #fff;">ALL METRICS</button>
+                                <button type="button" class="chart-toggle-btn" data-mode="revenue" style="padding: 5px 12px; font-size: 0.75rem; font-weight: 800; border: none; cursor: pointer; background: transparent; color: #000;">REVENUE ONLY</button>
+                                <button type="button" class="chart-toggle-btn" data-mode="orders" style="padding: 5px 12px; font-size: 0.75rem; font-weight: 800; border: none; cursor: pointer; background: transparent; color: #000;">ORDERS ONLY</button>
                             </div>
-                            <button id="apply-chart-filter-btn" class="retro-btn retro-btn-primary" style="padding: 4px 10px; font-size: 0.75rem;">UPDATE CHART</button>
+                            <button id="refresh-chart-btn" class="retro-btn" style="padding: 5px 10px; font-size: 0.75rem; font-weight: 800;" title="Refresh real-time chart data">↻ SYNC</button>
                         </div>
                     </div>
 
-                    <div id="chart-summary-bar" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; background: #f9f8f3; padding: 12px; border: 1px solid var(--text-color, #000); margin-bottom: 15px;">
-                        <!-- Injected -->
+                    <!-- Summary Metrics Strip -->
+                    <div id="chart-summary-bar" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; background: #fbfbfa; padding: 14px; border: 1.5px solid #e5e7eb; border-radius: 8px; margin-bottom: 16px;">
+                        <!-- Injected dynamically by admin.js from real database metrics -->
                     </div>
 
-                    <div style="display: flex; gap: 20px; margin-bottom: 10px; justify-content: flex-end;">
-                        <div class="chart-legend-box"><span class="legend-color-dot" style="background: #059669;"></span> Revenue (₹)</div>
-                        <div class="chart-legend-box"><span class="legend-color-dot" style="background: #2563eb;"></span> Order Count</div>
+                    <!-- Chart Legend -->
+                    <div style="display: flex; gap: 16px; margin-bottom: 12px; justify-content: flex-end; align-items: center; font-size: 0.8rem; font-weight: 700;">
+                        <div style="display: flex; align-items: center; gap: 6px;">
+                            <span style="display: inline-block; width: 14px; height: 14px; background: #10b981; border: 1.5px solid #000; border-radius: 3px;"></span>
+                            <span>Revenue (₹)</span>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 6px;">
+                            <span style="display: inline-block; width: 14px; height: 3px; background: #3b82f6; border-radius: 2px;"></span>
+                            <span style="display: inline-block; width: 7px; height: 7px; background: #1d4ed8; border-radius: 50%; margin-left: -10px; margin-right: 2px;"></span>
+                            <span>Order Count</span>
+                        </div>
                     </div>
 
-                    <div style="position: relative; width: 100%; height: 260px; border: 1px solid var(--text-color, #000); background: #ffffff; padding: 10px; box-sizing: border-box;">
-                        <canvas id="sales-comparison-canvas" width="800" height="240" style="width: 100%; height: 100%; display: block;"></canvas>
+                    <!-- Chart Canvas Frame -->
+                    <div style="position: relative; width: 100%; height: 280px; background: #fafafa; border: 1.5px solid #e5e7eb; border-radius: 8px; padding: 12px; box-sizing: border-box; overflow: hidden;">
+                        <canvas id="sales-comparison-canvas" style="width: 100%; height: 100%; display: block;"></canvas>
                     </div>
                 </div>
 
                 <!-- Dashboard Widgets Grid -->
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                <div class="admin-grid-2col">
                     <div class="retro-panel" style="background: #fff;">
                         <h3 style="font-weight: bold; margin-bottom: 12px; font-size: 0.95rem;">📦 RECENT ORDERS</h3>
                         <div class="admin-table-container">
@@ -649,11 +767,11 @@
                 </div>
 
                 <!-- Product Form Container -->
-                <div id="product-form-container" class="retro-panel" style="background-color: #fff; max-width: 800px; margin-bottom: 30px; display: none;">
+                <div id="product-form-container" class="retro-panel" style="background-color: #fff; max-width: 1000px; width: 100%; margin-bottom: 30px; display: none;">
                     <div style="font-size: 0.75rem; font-weight: 900; color: #2563eb; margin-bottom: 6px; letter-spacing: 0.5px;">🖨️ PRINT-ON-DEMAND PRODUCT CONFIGURATION</div>
                     <h3 id="prod-form-title" style="margin-bottom: 20px; font-weight: bold;">[ADD NEW PRODUCT DROP]</h3>
                     
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                    <div class="admin-grid-2col">
                         <div>
                             <div class="retro-field">
                                 <label for="prod-admin-id">Admin Product ID <span style="color:red;">* (Mandatory & Unique)</span></label>
@@ -749,9 +867,9 @@
                 </div>
 
                 <!-- Category Form Container -->
-                <div id="category-form-container" class="retro-panel" style="background-color: #fff; max-width: 600px; margin-bottom: 30px; display: none;">
+                <div id="category-form-container" class="retro-panel" style="background-color: #fff; max-width: 800px; width: 100%; margin-bottom: 30px; display: none;">
                     <h3 id="cat-form-title" style="margin-bottom: 15px; font-weight: bold;">[ADD NEW CATEGORY]</h3>
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                    <div class="admin-grid-2col" style="gap: 15px;">
                         <div class="retro-field">
                             <label for="cat-name">Category Name <span style="color:red;">*</span></label>
                             <input type="text" id="cat-name" class="retro-input" placeholder="e.g. Gaming, Memes" required>
@@ -927,10 +1045,10 @@
                 </div>
 
                 <!-- Event Form Container -->
-                <div id="event-form-container" class="retro-panel" style="background-color: #fff; max-width: 800px; margin-bottom: 30px; display: none;">
+                <div id="event-form-container" class="retro-panel" style="background-color: #fff; max-width: 1000px; width: 100%; margin-bottom: 30px; display: none;">
                     <h3 id="evt-form-title" style="margin-bottom: 20px; font-weight: bold;">[SCHEDULE EVENT PROMOTION]</h3>
                     
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                    <div class="admin-grid-2col">
                         <div>
                             <div class="retro-field">
                                 <label for="evt-name">Event Name <span style="color:red;">*</span></label>
@@ -1024,9 +1142,9 @@
                 </div>
 
                 <!-- Coupon Form Container -->
-                <div id="coupon-form-container" class="retro-panel" style="background-color: #fff; max-width: 650px; margin-bottom: 30px; display: none;">
+                <div id="coupon-form-container" class="retro-panel" style="background-color: #fff; max-width: 850px; width: 100%; margin-bottom: 30px; display: none;">
                     <h3 id="cpn-form-title" style="margin-bottom: 20px; font-weight: bold;">[CREATE COUPON CODE]</h3>
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                    <div class="admin-grid-2col">
                         <div>
                             <div class="retro-field">
                                 <label for="cpn-code">Coupon Code <span style="color:red;">*</span></label>
@@ -1083,10 +1201,10 @@
                 <!-- Announcement Bar Configurator -->
                 <div class="retro-panel" style="background-color: #fff; margin-bottom: 30px;">
                     <h3 style="margin-bottom: 15px; font-weight: bold;">[TOP ANNOUNCEMENT BAR TICKER]</h3>
-                    <div style="display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 15px;">
+                    <div class="admin-grid-4col" style="gap: 15px;">
                         <div class="retro-field">
                             <label for="set-announcement">Announcement Display Text</label>
-                            <input type="text" id="set-announcement" class="retro-input" value="⚡ FREE SHIPPING ON ORDERS ABOVE ₹300 | CODE: START10 ⚡">
+                            <input type="text" id="set-announcement" class="retro-input" value="⚡ FREE SHIPPING ON ORDERS ABOVE ₹499 • CODE: START10 ⚡">
                         </div>
                         <div class="retro-field">
                             <label for="set-announcement-active">Bar Status</label>
@@ -1096,10 +1214,18 @@
                             </select>
                         </div>
                         <div class="retro-field">
-                            <label for="set-announcement-rolling">Rolling / Marquee Mode</label>
+                            <label for="set-announcement-rolling">Display Mode</label>
                             <select id="set-announcement-rolling" class="retro-input">
-                                <option value="true">ON (Horizontal Scroll)</option>
-                                <option value="false">OFF (Static Text)</option>
+                                <option value="true">Marquee (Horizontal Scroll)</option>
+                                <option value="false">Static Text</option>
+                            </select>
+                        </div>
+                        <div class="retro-field">
+                            <label for="set-announcement-speed">Ticker Speed</label>
+                            <select id="set-announcement-speed" class="retro-input">
+                                <option value="fast">Fast (12s)</option>
+                                <option value="normal" selected>Normal (25s)</option>
+                                <option value="slow">Slow (45s)</option>
                             </select>
                         </div>
                     </div>
@@ -1107,45 +1233,175 @@
                     <!-- Live Announcement Bar Preview Box -->
                     <div style="margin-top: 15px; padding: 10px; border: 2px solid #000; background: #fef08a; overflow: hidden;">
                         <div style="font-size: 0.7rem; font-weight: 900; color: #555; margin-bottom: 4px;">LIVE ANNOUNCEMENT TICKER PREVIEW:</div>
-                        <div id="announcement-preview-container" style="font-weight: 900; font-size: 0.85rem;">
-                            <!-- Injected dynamically -->
+                        <div id="announcement-preview-container" style="font-weight: 900; font-size: 0.85rem; white-space: nowrap; overflow: hidden;">
+                            <span id="announcement-preview-text">⚡ FREE SHIPPING ON ORDERS ABOVE ₹499 • CODE: START10 ⚡</span>
                         </div>
                     </div>
 
                     <button class="retro-btn retro-btn-primary" id="save-announcement-btn" style="margin-top: 15px;">SAVE ANNOUNCEMENT TICKER</button>
                 </div>
 
-                <!-- Hero Slider Manager -->
+                <!-- Hero System Manager (Fixed Banner vs Carousel Mutually Exclusive) -->
                 <div class="retro-panel" style="background-color: #fff; margin-bottom: 30px;">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-wrap: wrap; gap: 10px;">
                         <div>
-                            <h3 style="font-weight: bold; text-transform: uppercase; margin: 0;">🖼️ HERO SLIDER MANAGER (SINGLE ACTIVE GROUP RULE)</h3>
-                            <p style="font-size: 0.8rem; color: #666; margin: 4px 0 0 0;">Only ONE Hero Configuration Group can be ACTIVE at a time. Active Hero Groups can contain MULTIPLE slides.</p>
+                            <h3 style="font-weight: 900; text-transform: uppercase; margin: 0;">🖼️ STORE HERO SYSTEM (MUTUALLY EXCLUSIVE MODES)</h3>
+                            <p style="font-size: 0.8rem; color: #666; margin: 4px 0 0 0;">Select either a single high-impact Fixed Hero Banner or a Multi-Slide Carousel. Only ONE mode is active at a time.</p>
                         </div>
-                        <button id="new-hero-slide-btn" class="retro-btn retro-btn-primary" style="padding: 6px 12px; font-size: 0.78rem;">+ ADD HERO SLIDE</button>
+                        <!-- Hero Mode Switcher -->
+                        <div style="display: inline-flex; border: 2px solid #000; border-radius: 6px; overflow: hidden; background: #f3f4f6;">
+                            <button type="button" id="hero-toggle-fixed" class="retro-btn is-active" style="padding: 6px 14px; font-size: 0.8rem; font-weight: 900; border: none; cursor: pointer; background: #000; color: #fff;">[✓] FIXED BANNER</button>
+                            <button type="button" id="hero-toggle-carousel" class="retro-btn" style="padding: 6px 14px; font-size: 0.8rem; font-weight: 900; border: none; cursor: pointer; background: transparent; color: #000;">[ ] CAROUSEL SLIDER</button>
+                        </div>
                     </div>
 
-                    <!-- Hero Slide Form Container -->
-                    <div id="hero-slide-form-container" class="retro-panel" style="background: #fafafa; margin-bottom: 20px; display: none;">
-                        <h4 id="hero-form-title" style="font-weight: 900; margin-bottom: 15px;">[ADD HERO SLIDE]</h4>
-                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                    <!-- 1. FIXED BANNER CONFIGURATION PANEL -->
+                    <div id="hero-fixed-panel" style="background: #fafafa; border: 2px solid #000; padding: 18px; margin-bottom: 20px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; border-bottom: 2px dashed #ccc; padding-bottom: 8px;">
+                            <strong style="font-size: 0.95rem; text-transform: uppercase;">1. Fixed Hero Artwork & Optional Content Blocks</strong>
+                            <span class="status-badge status-live" id="hero-fixed-status-badge">ACTIVE MODE</span>
+                        </div>
+
+                        <div class="admin-grid-2col" style="gap: 20px;">
+                            <!-- Left: Content & Checkbox Toggles -->
                             <div>
-                                <div class="retro-field"><label for="hero-slide-title">Headline</label><input type="text" id="hero-slide-title" class="retro-input" placeholder="e.g. CYBERPUNK STICKER DROPS"></div>
-                                <div class="retro-field"><label for="hero-slide-sub">Subtitle</label><input type="text" id="hero-slide-sub" class="retro-input" placeholder="e.g. Ultra High Gloss Vinyl"></div>
-                                <div class="retro-field"><label for="hero-slide-cta">CTA Text</label><input type="text" id="hero-slide-cta" class="retro-input" placeholder="e.g. EXPLORE DROPS"></div>
+                                <!-- Top Text / Eyebrow -->
+                                <div style="margin-bottom: 12px; background: #fff; padding: 10px; border: 1.5px solid #ddd;">
+                                    <label style="display: flex; align-items: center; gap: 8px; font-weight: bold; cursor: pointer;">
+                                        <input type="checkbox" id="hero-opt-eyebrow-enable" checked>
+                                        <span>Show Top Tag / Eyebrow</span>
+                                    </label>
+                                    <input type="text" id="hero-opt-eyebrow-text" class="retro-input" style="margin-top: 6px;" value="New designs every week" placeholder="e.g. New designs every week">
+                                </div>
+
+                                <!-- Headline Title -->
+                                <div style="margin-bottom: 12px; background: #fff; padding: 10px; border: 1.5px solid #ddd;">
+                                    <label style="display: flex; align-items: center; gap: 8px; font-weight: bold; cursor: pointer;">
+                                        <input type="checkbox" id="hero-opt-title-enable" checked>
+                                        <span>Show Main Title</span>
+                                    </label>
+                                    <input type="text" id="hero-opt-title-text" class="retro-input" style="margin-top: 6px;" value="STICK YOUR WORLD." placeholder="e.g. STICK YOUR WORLD.">
+                                </div>
+
+                                <!-- Description / Subtitle -->
+                                <div style="margin-bottom: 12px; background: #fff; padding: 10px; border: 1.5px solid #ddd;">
+                                    <label style="display: flex; align-items: center; gap: 8px; font-weight: bold; cursor: pointer;">
+                                        <input type="checkbox" id="hero-opt-desc-enable" checked>
+                                        <span>Show Description / Subtitle</span>
+                                    </label>
+                                    <textarea id="hero-opt-desc-text" class="retro-input" style="margin-top: 6px; height: 60px; font-family: inherit;" placeholder="Premium stickers for a bolder, brighter you.">Premium stickers for a bolder, brighter, more you. Waterproof, scratch-resistant vinyl made for laptops, phones, bottles, and every surface that deserves personality.</textarea>
+                                </div>
+
+                                <!-- Primary Button -->
+                                <div style="margin-bottom: 12px; background: #fff; padding: 10px; border: 1.5px solid #ddd;">
+                                    <label style="display: flex; align-items: center; gap: 8px; font-weight: bold; cursor: pointer;">
+                                        <input type="checkbox" id="hero-opt-btn1-enable" checked>
+                                        <span>Show Primary Button</span>
+                                    </label>
+                                    <div class="admin-grid-2col" style="gap: 8px; margin-top: 6px;">
+                                        <input type="text" id="hero-opt-btn1-text" class="retro-input" value="Shop Now →" placeholder="Button Label">
+                                        <input type="text" id="hero-opt-btn1-url" class="retro-input" value="shop.html" placeholder="URL Link">
+                                    </div>
+                                </div>
+
+                                <!-- Secondary Button -->
+                                <div style="margin-bottom: 12px; background: #fff; padding: 10px; border: 1.5px solid #ddd;">
+                                    <label style="display: flex; align-items: center; gap: 8px; font-weight: bold; cursor: pointer;">
+                                        <input type="checkbox" id="hero-opt-btn2-enable" checked>
+                                        <span>Show Secondary Button</span>
+                                    </label>
+                                    <div class="admin-grid-2col" style="gap: 8px; margin-top: 6px;">
+                                        <input type="text" id="hero-opt-btn2-text" class="retro-input" value="Custom Stickers" placeholder="Button Label">
+                                        <input type="text" id="hero-opt-btn2-url" class="retro-input" value="custom-stickers.html" placeholder="URL Link">
+                                    </div>
+                                </div>
                             </div>
+
+                            <!-- Right: Artwork Image Upload & Preview -->
                             <div>
-                                <div class="retro-field"><label for="hero-slide-link">CTA Link</label><input type="text" id="hero-slide-link" class="retro-input" placeholder="e.g. #catalog"></div>
-                                <div class="retro-field"><label for="hero-slide-img">Image URL</label><input type="text" id="hero-slide-img" class="retro-input" placeholder="https://..."></div>
-                                <div style="display: flex; gap: 10px; margin-top: 30px;">
-                                    <button id="save-hero-slide-btn" class="retro-btn retro-btn-primary">SAVE SLIDE</button>
-                                    <button id="cancel-hero-slide-btn" class="retro-btn">CANCEL</button>
+                                <div style="background: #fff; padding: 12px; border: 1.5px solid #000; margin-bottom: 14px;">
+                                    <label style="font-weight: 900; display: block; margin-bottom: 6px;">BANNER ARTWORK IMAGE (1024×1024+)</label>
+                                    <input type="file" id="hero-fixed-image-file" accept="image/*" style="display: none;">
+                                    <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+                                        <button type="button" id="hero-fixed-upload-btn" class="retro-btn retro-btn-primary" style="padding: 6px 12px; font-size: 0.8rem;">📁 CHOOSE IMAGE & UPLOAD</button>
+                                        <span id="hero-fixed-upload-status" style="font-size: 0.75rem; color: #666; align-self: center;"></span>
+                                    </div>
+                                    <div class="retro-field">
+                                        <label for="hero-fixed-image-url"><small>Or enter direct Image URL:</small></label>
+                                        <input type="text" id="hero-fixed-image-url" class="retro-input" value="/uploads/hero-banner-1.png" placeholder="https://... or /uploads/...">
+                                    </div>
+                                    <div style="margin-top: 10px; border: 2px solid #000; height: 180px; background: #f3f4f6; display: flex; align-items: center; justify-content: center; overflow: hidden; position: relative;">
+                                        <img id="hero-fixed-preview-img" src="/uploads/hero-banner-1.png" alt="Hero Artwork Preview" style="max-width: 100%; max-height: 100%; object-fit: contain;">
+                                        <div id="hero-fixed-no-img" style="display: none; color: #888; font-weight: bold; font-size: 0.85rem;">[NO IMAGE UPLOADED]</div>
+                                    </div>
+                                </div>
+
+                                <button type="button" id="save-hero-fixed-btn" class="retro-btn retro-btn-primary" style="width: 100%; padding: 12px; font-size: 0.9rem; font-weight: 900;">💾 SAVE FIXED HERO BANNER</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 2. CAROUSEL SLIDES CONFIGURATION PANEL -->
+                    <div id="hero-carousel-panel" style="background: #fafafa; border: 2px solid #000; padding: 18px; margin-bottom: 20px; display: none;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; border-bottom: 2px dashed #ccc; padding-bottom: 8px;">
+                            <div>
+                                <strong style="font-size: 0.95rem; text-transform: uppercase;">2. Carousel Sliding Hero Manager</strong>
+                                <span class="status-badge status-inactive" id="hero-carousel-status-badge">INACTIVE MODE</span>
+                            </div>
+                            <button id="new-hero-slide-btn" class="retro-btn retro-btn-primary" style="padding: 6px 12px; font-size: 0.78rem;">+ ADD CAROUSEL SLIDE</button>
+                        </div>
+
+                        <!-- Carousel Slide Form Container -->
+                        <div id="hero-slide-form-container" class="retro-panel" style="background: #ffffff; border: 2px solid #000; margin-bottom: 20px; display: none;">
+                            <h4 id="hero-form-title" style="font-weight: 900; margin-bottom: 15px;">[ADD CAROUSEL SLIDE]</h4>
+                            <div class="admin-grid-2col" style="gap: 15px;">
+                                <div>
+                                    <div class="retro-field"><label for="hero-slide-title">Headline Title</label><input type="text" id="hero-slide-title" class="retro-input" placeholder="e.g. CYBERPUNK STICKER DROPS"></div>
+                                    <div class="retro-field"><label for="hero-slide-sub">Subtitle / Details</label><input type="text" id="hero-slide-sub" class="retro-input" placeholder="e.g. Ultra High Gloss Vinyl"></div>
+                                    <div class="retro-field"><label for="hero-slide-cta">CTA Button Text</label><input type="text" id="hero-slide-cta" class="retro-input" placeholder="e.g. EXPLORE DROPS"></div>
+                                    <div class="retro-field"><label for="hero-slide-link">CTA Button Link</label><input type="text" id="hero-slide-link" class="retro-input" placeholder="e.g. shop.html"></div>
+                                </div>
+                                <div>
+                                    <input type="file" id="hero-slide-file-input" accept="image/*" style="display: none;">
+                                    <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+                                        <button type="button" id="hero-slide-upload-btn" class="retro-btn retro-btn-primary" style="padding: 6px 12px; font-size: 0.8rem;">📁 UPLOAD SLIDE IMAGE</button>
+                                        <span id="hero-slide-upload-status" style="font-size: 0.75rem; color: #666; align-self: center;"></span>
+                                    </div>
+                                    <div class="retro-field"><label for="hero-slide-img">Image URL</label><input type="text" id="hero-slide-img" class="retro-input" placeholder="https://... or /uploads/..."></div>
+                                    <div style="margin-top: 8px; height: 110px; border: 2px solid #000; background: #eee; display: flex; align-items: center; justify-content: center; overflow: hidden;">
+                                        <img id="hero-slide-preview-img" src="" alt="Slide Preview" style="max-width: 100%; max-height: 100%; object-fit: contain;">
+                                    </div>
+                                    <div style="display: flex; gap: 10px; margin-top: 15px;">
+                                        <button id="save-hero-slide-btn" class="retro-btn retro-btn-primary">SAVE SLIDE</button>
+                                        <button id="cancel-hero-slide-btn" class="retro-btn">CANCEL</button>
+                                    </div>
                                 </div>
                             </div>
                         </div>
+
+                        <div id="hero-slides-container"></div>
                     </div>
 
-                    <div id="hero-slides-container"></div>
+                    <!-- 3. REAL-TIME STOREFRONT HERO LIVE PREVIEW -->
+                    <div style="border: 2px solid #000; background: #fff; padding: 15px; margin-top: 20px;">
+                        <div style="font-size: 0.75rem; font-weight: 900; color: #555; margin-bottom: 8px; text-transform: uppercase;">
+                            👁️ STOREFRONT HERO LIVE PREVIEW:
+                        </div>
+                        <div id="hero-live-preview-box" style="border: 2px solid #000; background: #fdfaf0; padding: 20px; min-height: 200px; display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap;">
+                            <div style="max-width: 60%; flex: 1 1 280px;">
+                                <div id="preview-hero-eyebrow" style="display: inline-block; background: #ffd400; border: 1.5px solid #000; padding: 2px 8px; font-weight: 800; font-size: 0.75rem; margin-bottom: 8px;">NEW DESIGNS EVERY WEEK</div>
+                                <h2 id="preview-hero-title" style="font-size: 1.8rem; font-weight: 900; line-height: 1.1; margin: 0 0 10px 0; text-transform: uppercase;">STICK YOUR WORLD.</h2>
+                                <p id="preview-hero-desc" style="font-size: 0.85rem; color: #555; line-height: 1.4; margin: 0 0 14px 0;">Premium stickers for a bolder, brighter, more you.</p>
+                                <div id="preview-hero-buttons" style="display: flex; gap: 8px; flex-wrap: wrap;">
+                                    <a id="preview-hero-btn1" href="#" class="retro-btn retro-btn-primary" style="padding: 6px 14px; font-size: 0.8rem;">Shop Now →</a>
+                                    <a id="preview-hero-btn2" href="#" class="retro-btn" style="padding: 6px 14px; font-size: 0.8rem;">Custom Stickers</a>
+                                </div>
+                            </div>
+                            <div style="width: 180px; height: 180px; border: 2px solid #000; background: #fff; display: flex; align-items: center; justify-content: center; overflow: hidden;">
+                                <img id="preview-hero-img" src="/uploads/hero-banner-1.png" alt="Preview Artwork" style="max-width: 100%; max-height: 100%; object-fit: contain;">
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Promotional Banners Manager -->
@@ -1161,7 +1417,7 @@
                     <!-- Banner Form Container -->
                     <div id="banner-form-container" class="retro-panel" style="background: #fafafa; margin-bottom: 20px; display: none;">
                         <h4 id="banner-form-title" style="font-weight: 900; margin-bottom: 15px;">[ADD PROMOTIONAL BANNER]</h4>
-                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                        <div class="admin-grid-2col" style="gap: 15px;">
                             <div>
                                 <div class="retro-field"><label for="banner-title">Banner Headline</label><input type="text" id="banner-title" class="retro-input" placeholder="e.g. GET 20% OFF FIRST ORDER"></div>
                                 <div class="retro-field"><label for="banner-sub">Subtitle / Details</label><input type="text" id="banner-sub" class="retro-input" placeholder="Use code START10 at checkout"></div>
@@ -1206,13 +1462,13 @@
                 </div>
 
                 <!-- Shipping Form Container -->
-                <div id="shipping-form-container" class="retro-panel" style="background-color: #fff; max-width: 600px; margin-bottom: 30px; display: none;">
+                <div id="shipping-form-container" class="retro-panel" style="background-color: #fff; max-width: 800px; width: 100%; margin-bottom: 30px; display: none;">
                     <h3 id="ship-form-title" style="margin-bottom: 15px; font-weight: bold;">[ADD SHIPPING RULE]</h3>
                     <div class="retro-field">
                         <label for="ship-name">Rule Name <span style="color:red;">*</span></label>
                         <input type="text" id="ship-name" class="retro-input" placeholder="e.g. Express Metro Shipping" required>
                     </div>
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                    <div class="admin-grid-2col" style="gap: 15px;">
                         <div class="retro-field">
                             <label for="ship-min">Min Order Value (₹) <span style="color:red;">*</span></label>
                             <input type="number" id="ship-min" class="retro-input" value="0" min="0" required>
@@ -1222,7 +1478,7 @@
                             <input type="number" id="ship-max" class="retro-input" placeholder="Leave blank for No Limit">
                         </div>
                     </div>
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                    <div class="admin-grid-2col" style="gap: 15px;">
                         <div class="retro-field">
                             <label for="ship-region">Target Region</label>
                             <input type="text" id="ship-region" class="retro-input" value="India (All States)">
@@ -1277,15 +1533,42 @@
 
             <!-- TAB: AUDIT LOGS -->
             <section id="tab-logs" class="tab-content" style="display: none;">
-                <h2 style="font-weight: 900; margin-bottom: 25px; text-transform: uppercase;">Security & Operations Audit Logs</h2>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 10px;">
+                    <div>
+                        <h2 style="font-weight: 900; text-transform: uppercase; margin: 0;">Security &amp; Operations Audit Logs</h2>
+                        <p style="font-size: 0.85rem; color: #555; font-weight: bold; margin: 4px 0 0 0;">Cryptographic and operational audit trail of logins, logouts, session expirations, and administrative actions</p>
+                    </div>
+                    <div style="display: flex; gap: 10px;">
+                        <button type="button" id="refresh-audit-logs-btn" class="retro-btn" style="padding: 6px 12px; font-size: 0.78rem;">🔄 REFRESH LOGS</button>
+                    </div>
+                </div>
+
+                <!-- Live Sessions Quick Status Bar -->
+                <div id="audit-active-sessions-summary" class="retro-panel" style="background: #fff; margin-bottom: 20px; padding: 12px 18px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <span style="font-size: 1.2rem;">🛡️</span>
+                        <div>
+                            <strong style="font-size: 0.85rem; text-transform: uppercase;">Active Admin Sessions:</strong>
+                            <span id="audit-active-sessions-pills" style="margin-left: 6px; font-size: 0.82rem; color: #555;">Querying live database...</span>
+                        </div>
+                    </div>
+                    <button type="button" class="retro-btn" id="audit-goto-sessions-btn" style="padding: 4px 10px; font-size: 0.75rem;">VIEW LIVE SESSIONS →</button>
+                </div>
+
                 <div class="audit-log-console" id="audit-logs-container"></div>
             </section>
 
             <!-- TAB: TEAM MEMBERS -->
             <section id="tab-team" class="tab-content" style="display: none;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px;">
-                    <h2 style="font-weight: 900; text-transform: uppercase;">Team Members & Role Access Control</h2>
-                    <button class="retro-btn retro-btn-primary" id="new-team-btn">+ ADD TEAM MEMBER</button>
+                    <div>
+                        <h2 style="font-weight: 900; text-transform: uppercase; margin: 0;">Team Members &amp; Role Access Control</h2>
+                        <p style="font-size: 0.85rem; color: #555; font-weight: bold; margin: 4px 0 0 0;">Manage authorized administrators and team member privileges</p>
+                    </div>
+                    <div style="display: flex; gap: 10px;">
+                        <button class="retro-btn" id="refresh-team-btn" style="padding: 6px 12px; font-size: 0.78rem;">🔄 REFRESH TEAM</button>
+                        <button class="retro-btn retro-btn-primary" id="new-team-btn">+ ADD TEAM MEMBER</button>
+                    </div>
                 </div>
 
                 <!-- Team Form Container -->
@@ -1317,13 +1600,47 @@
                         <tbody id="team-tbody"></tbody>
                     </table>
                 </div>
+
+                <!-- ACTIVE LOGIN & LIVE SESSIONS SECTION -->
+                <div class="retro-panel" style="background-color: #fff; margin-top: 35px; margin-bottom: 30px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-wrap: wrap; gap: 10px;">
+                        <div>
+                            <h3 style="font-weight: 900; text-transform: uppercase; margin: 0; display: flex; align-items: center; gap: 8px;">
+                                🟢 ACTIVE LOGINS &amp; LIVE SESSIONS
+                                <span id="active-sessions-count-badge" class="status-badge status-live" style="font-size: 0.75rem;">0 ACTIVE</span>
+                            </h3>
+                            <p style="font-size: 0.8rem; color: #555; margin: 4px 0 0 0;">Real-time database-backed active sessions for authorized administrative and team personnel</p>
+                        </div>
+                        <button type="button" id="refresh-sessions-btn" class="retro-btn" style="padding: 6px 12px; font-size: 0.78rem;">🔄 REFRESH SESSIONS</button>
+                    </div>
+
+                    <div class="admin-table-container" style="margin-bottom: 0;">
+                        <table class="admin-table" style="font-size: 0.82rem;">
+                            <thead>
+                                <tr>
+                                    <th>Admin / Member</th>
+                                    <th>Email</th>
+                                    <th>Role</th>
+                                    <th>Login Time</th>
+                                    <th>Last Activity</th>
+                                    <th>Session Status</th>
+                                    <th>Expires At</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="active-sessions-tbody">
+                                <tr><td colspan="8" style="text-align: center; color: #888; padding: 15px;">Loading active sessions...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
             </section>
 
             <!-- TAB: SYSTEM SETTINGS -->
             <section id="tab-settings" class="tab-content" style="display: none;">
                 <h2 style="font-weight: 900; margin-bottom: 25px; text-transform: uppercase;">Global System & Maintenance Settings</h2>
                 
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; max-width: 1100px;">
+                <div class="admin-grid-2col" style="gap: 20px; max-width: 1400px; width: 100%;">
                     <!-- Business & Tax Policies -->
                     <div class="retro-panel" style="background-color: #fff; display: flex; flex-direction: column;">
                         <h3 style="margin-bottom: 20px; font-weight: bold;">[BUSINESS & TAX POLICIES]</h3>
@@ -1427,7 +1744,7 @@
                 <div id="ord-timeline-container" class="status-timeline-stepper"></div>
             </div>
 
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px;">
+            <div class="admin-grid-2col" style="gap: 15px; margin-bottom: 20px;">
                 <div class="retro-panel" style="background: #fff; font-size: 0.85rem;">
                     <h4 style="font-weight: 900; border-bottom: 1px solid #ddd; padding-bottom: 6px; margin-bottom: 10px;">📋 ORDER OVERVIEW</h4>
                     <div><strong>Order Status:</strong> <select id="ord-detail-status-select" class="retro-input" style="padding: 2px 6px; font-size: 0.8rem; width: 140px;"></select></div>
@@ -1472,7 +1789,7 @@
             <div class="retro-panel" style="background: #fff; border-top: 3px solid #2563eb;">
                 <h4 style="font-weight: 900; margin-bottom: 12px; color: #2563eb;">🚚 SHIPPING & COURIER TRACKING MANAGEMENT</h4>
                 
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                <div class="admin-grid-2col" style="gap: 15px;">
                     <div>
                         <div class="retro-field">
                             <label for="ord-ship-courier">Courier / Shipping Provider</label>
