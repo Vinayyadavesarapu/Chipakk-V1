@@ -153,16 +153,7 @@
 
               <!-- Main Artwork Photo Frame -->
               <div class="hero-photo-frame">
-                ${hasImg && !imgSrc.includes("logo.png") ? `
-                  <img src="${escapeAttr(imgSrc)}" alt="${imgAlt}" style="width:100%;height:100%;object-fit:cover;display:block;" />
-                ` : `
-                  <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:24px;text-align:center;">
-                    <span class="hero-photo-emoji">🛹</span>
-                    <span style="font-family:var(--font-display);font-size:16px;font-weight:800;letter-spacing:0.04em;background:var(--yellow);padding:4px 12px;border:2px solid var(--black);border-radius:999px;box-shadow:2px 2px 0 var(--black);">
-                      #STICKYOURWORLD
-                    </span>
-                  </div>
-                `}
+                <img src="${escapeAttr(imgSrc || 'assets/images/hero-fallback.svg')}" alt="${imgAlt}" data-hero-img onerror="if(!this.dataset.failed){this.dataset.failed='true';this.src='assets/images/hero-fallback.svg';}" style="width:100%;height:100%;object-fit:cover;display:block;" />
               </div>
 
               <!-- Hand-Drawn Stickers, Speech Bubbles & Accents -->

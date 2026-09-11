@@ -51,7 +51,7 @@ const getStoreBuilderAdminData = async () => {
   const hero_config = await getSettingByKey('store_builder_hero_config', {
     mode: 'fixed', // 'fixed' | 'carousel'
     fixed_banner: {
-      image_url: '/uploads/hero-banner-1.png',
+      image_url: 'assets/images/hero-fallback.svg',
       show_eyebrow: true,
       eyebrow: 'New designs every week',
       show_title: true,
@@ -69,7 +69,7 @@ const getStoreBuilderAdminData = async () => {
       slides: [
         {
           id: 'slide_1',
-          image_url: '/uploads/hero-banner-1.png',
+          image_url: 'assets/images/hero-fallback.svg',
           show_eyebrow: true,
           eyebrow: 'New designs every week',
           show_title: true,
@@ -198,10 +198,12 @@ const getPublicStoreBuilderData = async () => {
 
   if (heroMode === 'fixed') {
     const fb = heroConfig.fixed_banner || {};
+    const rawImg = fb.image_url || '';
+    const safeImg = (!rawImg || rawImg.includes('hero-banner-1.png')) ? 'assets/images/hero-fallback.svg' : rawImg;
     hero = {
       mode: 'fixed',
       enabled: true,
-      image_url: fb.image_url || '',
+      image_url: safeImg,
       show_eyebrow: fb.show_eyebrow !== false,
       eyebrow: fb.eyebrow || 'New designs every week',
       show_title: fb.show_title !== false,
@@ -220,22 +222,26 @@ const getPublicStoreBuilderData = async () => {
     const slides = (heroConfig.carousel?.slides || adminData.hero_groups?.[0]?.slides || [])
       .filter(s => s.active === true || s.active === 1)
       .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0))
-      .map(s => ({
-        id: s.id,
-        image_url: s.image_url || '',
-        show_eyebrow: s.show_eyebrow !== false,
-        eyebrow: s.eyebrow || '',
-        show_title: s.show_title !== false,
-        title: s.title || '',
-        show_description: s.show_description !== false,
-        description: s.description || s.subtitle || '',
-        show_primary_btn: s.show_primary_btn !== false,
-        primary_btn_text: s.primary_btn_text || s.cta_text || 'Shop Now →',
-        primary_btn_url: s.primary_btn_url || s.target_url || 'shop.html',
-        show_secondary_btn: s.show_secondary_btn === true,
-        secondary_btn_text: s.secondary_btn_text || 'Custom Stickers',
-        secondary_btn_url: s.secondary_btn_url || 'custom-stickers.html'
-      }));
+      .map(s => {
+        const rawImg = s.image_url || '';
+        const safeImg = (!rawImg || rawImg.includes('hero-banner-1.png')) ? 'assets/images/hero-fallback.svg' : rawImg;
+        return {
+          id: s.id,
+          image_url: safeImg,
+          show_eyebrow: s.show_eyebrow !== false,
+          eyebrow: s.eyebrow || '',
+          show_title: s.show_title !== false,
+          title: s.title || '',
+          show_description: s.show_description !== false,
+          description: s.description || s.subtitle || '',
+          show_primary_btn: s.show_primary_btn !== false,
+          primary_btn_text: s.primary_btn_text || s.cta_text || 'Shop Now →',
+          primary_btn_url: s.primary_btn_url || s.target_url || 'shop.html',
+          show_secondary_btn: s.show_secondary_btn === true,
+          secondary_btn_text: s.secondary_btn_text || 'Custom Stickers',
+          secondary_btn_url: s.secondary_btn_url || 'custom-stickers.html'
+        };
+      });
 
     hero = {
       mode: 'carousel',
