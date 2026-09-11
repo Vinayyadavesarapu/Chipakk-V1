@@ -46,7 +46,7 @@ const getProductionQueue = async ({
 
   if (search && String(search).trim()) {
     const term = `%${String(search).trim()}%`;
-    conditions.push('(o.order_number LIKE ? OR oi.product_name LIKE ? OR oi.sku LIKE ? OR oi.admin_product_id_snapshot LIKE ? OR o.customer_name LIKE ? OR o.customer_phone LIKE ?)');
+    conditions.push('(o.order_number LIKE ? OR oi.product_name LIKE ? OR oi.sku LIKE ? OR oi.admin_product_id_snapshot LIKE ? OR o.customer_name LIKE ? OR COALESCE(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, "$.phone")), "") LIKE ?)');
     params.push(term, term, term, term, term, term);
   }
 
@@ -83,7 +83,7 @@ const getProductionQueue = async ({
       oi.production_status,
       o.fulfillment_status,
       o.customer_name,
-      o.customer_phone,
+      COALESCE(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, '$.phone')), '') AS customer_phone,
       oi.created_at
     FROM order_items oi
     JOIN orders o ON oi.order_id = o.id
@@ -155,7 +155,7 @@ const getProductionItemById = async (itemId) => {
       oi.production_status,
       o.fulfillment_status,
       o.customer_name,
-      o.customer_phone,
+      COALESCE(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, '$.phone')), '') AS customer_phone,
       oi.created_at
     FROM order_items oi
     JOIN orders o ON oi.order_id = o.id

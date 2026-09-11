@@ -80,7 +80,7 @@ const getCustomers = async ({
 
   if (search && String(search).trim()) {
     const term = `%${String(search).trim()}%`;
-    conditions.push('(u.name LIKE ? OR u.email LIKE ? OR u.phone LIKE ?)');
+    conditions.push('(u.full_name LIKE ? OR u.email LIKE ? OR u.phone LIKE ?)');
     params.push(term, term, term);
   }
 
@@ -99,7 +99,7 @@ const getCustomers = async ({
     SELECT 
       u.id,
       u.firebase_uid,
-      u.name,
+      u.full_name AS name,
       u.email,
       u.phone,
       u.created_at,

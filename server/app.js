@@ -30,7 +30,13 @@ const defaultAllowedOrigins = [
   'http://localhost:8080',
   'http://127.0.0.1:8080',
   'https://chipakk.shop',
-  'https://chipakk.com'
+  'https://www.chipakk.shop',
+  'https://chipakk.com',
+  'https://www.chipakk.com',
+  'https://api.chipakk.shop',
+  'https://themarshans.shop',
+  'https://www.themarshans.shop',
+  'https://mediumturquoise-coyote-345247.hostingersite.com'
 ];
 
 const envOrigins = process.env.CORS_ORIGIN

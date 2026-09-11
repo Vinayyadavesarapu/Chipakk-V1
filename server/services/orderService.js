@@ -59,7 +59,7 @@ const getOrders = async ({
 
   if (search && String(search).trim()) {
     const term = `%${String(search).trim()}%`;
-    conditions.push('(o.order_number LIKE ? OR o.customer_name LIKE ? OR o.customer_email LIKE ? OR o.customer_phone LIKE ?)');
+    conditions.push('(o.order_number LIKE ? OR o.customer_name LIKE ? OR o.customer_email LIKE ? OR COALESCE(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, "$.phone")), "") LIKE ?)');
     params.push(term, term, term, term);
   }
 
@@ -80,7 +80,7 @@ const getOrders = async ({
       o.customer_id,
       o.customer_name,
       o.customer_email,
-      o.customer_phone,
+      COALESCE(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, '$.phone')), '') AS customer_phone,
       o.shipping_address,
       o.payment_method,
       o.payment_status,
@@ -138,7 +138,7 @@ const getOrderById = async (orderIdOrNumber) => {
       o.customer_id,
       o.customer_name,
       o.customer_email,
-      o.customer_phone,
+      COALESCE(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, '$.phone')), '') AS customer_phone,
       o.shipping_address,
       o.payment_method,
       o.payment_status,
@@ -700,7 +700,7 @@ const getCustomerOrders = async (firebaseUid, { limit = 20, offset = 0 } = {}) =
       o.customer_id,
       o.customer_name,
       o.customer_email,
-      o.customer_phone,
+      COALESCE(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, '$.phone')), '') AS customer_phone,
       o.shipping_address,
       o.payment_method,
       o.payment_status,
