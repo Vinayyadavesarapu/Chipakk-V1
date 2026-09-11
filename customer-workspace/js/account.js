@@ -73,6 +73,75 @@
     tabSignIn?.addEventListener("click", () => switchAuthTab("signin"));
     tabSignUp?.addEventListener("click", () => switchAuthTab("signup"));
 
+    // --- Password Visibility Toggles ---
+    $$(".toggle-password-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const targetId = btn.dataset.target;
+        const input = $(`#${targetId}`);
+        if (!input) return;
+        const isPassword = input.type === "password";
+        input.type = isPassword ? "text" : "password";
+        btn.textContent = isPassword ? "🙈" : "👁️";
+      });
+    });
+
+    // --- Google Auth Handlers ---
+    const handleGoogleAuth = async (btn) => {
+      clearAuthErrors();
+      if (btn) setButtonLoading(btn, true, "Connecting Google…");
+      try {
+        await window.CHIPAKK.auth.signInWithGoogle();
+        showToast("Signed in with Google! Welcome to CHIPAKK.");
+      } catch (err) {
+        showToast(err.message || "Google sign in was cancelled or unavailable.", "error");
+      } finally {
+        if (btn) setButtonLoading(btn, false, "Continue with Google");
+      }
+    };
+
+    $("#signInGoogleBtn")?.addEventListener("click", function () { handleGoogleAuth(this); });
+    $("#signUpGoogleBtn")?.addEventListener("click", function () { handleGoogleAuth(this); });
+
+    // --- Forgot Password Handler ---
+    $("#forgotPasswordBtn")?.addEventListener("click", async () => {
+      clearAuthErrors();
+      let email = $("#signInEmail")?.value ? $("#signInEmail").value.trim() : "";
+      if (!email) {
+        const inputEmail = prompt("Enter your account email address to receive a password reset link:");
+        if (!inputEmail) return;
+        email = inputEmail.trim();
+      }
+
+      if (!email || !validateEmail(email)) {
+        showFieldError("fieldSignInEmail", "signInEmailError", "Please enter a valid email address.");
+        showToast("Please enter a valid email address.", "error");
+        return;
+      }
+
+      try {
+        await window.CHIPAKK.auth.resetPassword(email);
+        showToast(`Password reset link sent to ${email}. Check your inbox!`);
+        const signInError = $("#signInError");
+        if (signInError) {
+          signInError.style.display = "block";
+          signInError.style.background = "#f0fdf4";
+          signInError.style.borderColor = "#16a34a";
+          signInError.style.color = "#15803d";
+          signInError.textContent = `Password reset instructions sent to ${email}. Please check your inbox and follow the link.`;
+        }
+      } catch (err) {
+        showToast(err.message || "Could not send password reset email. Please try again.", "error");
+        const signInError = $("#signInError");
+        if (signInError) {
+          signInError.style.display = "block";
+          signInError.style.background = "#fef2f2";
+          signInError.style.borderColor = "#b91c1c";
+          signInError.style.color = "#991b1b";
+          signInError.textContent = err.message || "Could not send password reset email.";
+        }
+      }
+    });
+
     // --- Sign In Handler ---
     const signInForm = $("#signInForm");
     signInForm?.addEventListener("submit", async (e) => {
@@ -231,6 +300,10 @@
     const displayName = window.CHIPAKK?.auth?.getDisplayName ? window.CHIPAKK.auth.getDisplayName(user) : (user.displayName || "CHIPAKK Member");
     const email = user.email || "";
     const firstInitial = displayName ? displayName.charAt(0).toUpperCase() : "🧑‍🚀";
+    let savedPhone = user.phoneNumber || "";
+    try {
+      if (!savedPhone) savedPhone = localStorage.getItem(`chipakk_user_phone_${user.uid}`) || "";
+    } catch (e) {}
 
     const nameEl = $("#accountUserDisplayName");
     const emailEl = $("#accountUserEmail");
@@ -238,6 +311,7 @@
     const addrNameEl = $("#defaultAddressName");
     const profileNameInput = $("#profileDisplayName");
     const profileEmailInput = $("#profileEmail");
+    const profilePhoneInput = $("#profilePhone");
 
     if (nameEl) nameEl.textContent = displayName;
     if (emailEl) emailEl.textContent = email;
@@ -245,14 +319,17 @@
     if (addrNameEl) addrNameEl.textContent = displayName;
     if (profileNameInput) profileNameInput.value = user.displayName || "";
     if (profileEmailInput) profileEmailInput.value = email;
+    if (profilePhoneInput && savedPhone) profilePhoneInput.value = savedPhone;
   }
 
   function initProfileUpdates() {
     const updateBtn = $("#profileUpdateBtn");
     const nameInput = $("#profileDisplayName");
+    const phoneInput = $("#profilePhone");
 
     updateBtn?.addEventListener("click", async () => {
       const newName = nameInput?.value.trim();
+      const newPhone = phoneInput?.value.trim() || "";
       const currentUser = window.CHIPAKK?.auth?.getCurrentUser();
 
       if (!currentUser) return;
@@ -266,8 +343,13 @@
         if (currentUser.updateProfile) {
           await currentUser.updateProfile({ displayName: newName });
         }
+        if (currentUser.uid) {
+          try {
+            localStorage.setItem(`chipakk_user_phone_${currentUser.uid}`, newPhone);
+          } catch (e) {}
+        }
         populateUserProfile(currentUser);
-        showToast("Profile name updated!");
+        showToast("Profile details updated successfully!");
       } catch (err) {
         showToast("Unable to update profile right now.", "error");
       } finally {
@@ -895,12 +977,27 @@
      5. MASTER AUTH STATE LISTENER & SIGN OUT
      ========================================================= */
 
-  function applyAuthState(user) {
+  async function applyAuthState(user) {
     const authContainer = $("#authFormsContainer");
     const dashContainer = $("#accountDashboardContainer");
 
     if (user) {
-      // User is logged in
+      // Check Admin vs Customer isolation via /customer/me
+      try {
+        const fetchAuthFn = window.CHIPAKK?.fetchAuthenticated || window.CHIPAKK?.api?.fetchAuthenticated;
+        if (fetchAuthFn) {
+          const meData = await fetchAuthFn("/customer/me");
+          if (meData && meData.is_admin) {
+            // User is an Administrator — do NOT render admin identity in customer account dashboard
+            if (dashContainer) dashContainer.style.display = "none";
+            if (authContainer) authContainer.style.display = "block";
+            clearAuthErrors();
+            return;
+          }
+        }
+      } catch (_) {}
+
+      // User is a valid logged-in customer
       if (authContainer) authContainer.style.display = "none";
       if (dashContainer) dashContainer.style.display = "block";
       populateUserProfile(user);

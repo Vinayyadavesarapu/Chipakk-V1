@@ -855,8 +855,18 @@
       }
     } catch (e) {}
 
-    function renderCheckoutAuthState(user) {
+    async function renderCheckoutAuthState(user) {
       if (user) {
+        // Enforce Admin vs Customer Isolation: verify via /customer/me
+        try {
+          const meData = await fetchAuthenticated("/customer/me");
+          if (meData && meData.is_admin) {
+            // User is an Administrator — do NOT prefill admin identity on customer checkout
+            renderSignedOutCheckout();
+            return;
+          }
+        } catch (_) {}
+
         const displayName = window.CHIPAKK?.auth?.getDisplayName 
           ? window.CHIPAKK.auth.getDisplayName(user) 
           : (user.displayName || user.email);
@@ -878,15 +888,76 @@
         if (nameInput && !nameInput.value && user.displayName) {
           nameInput.value = user.displayName;
         }
-      } else {
-        if (banner) {
-          banner.style.background = "#eff6ff";
-          banner.style.borderColor = "#2563eb";
-          banner.innerHTML = `
-            <span>Already have a CHIPAKK account?</span>
-            <a href="account.html">Sign in for faster checkout →</a>
-          `;
+
+        // Fetch saved addresses and render address selector for signed-in customer
+        try {
+          const fetchAddressesFn = window.CHIPAKK?.getCustomerAddressesApi || window.CHIPAKK?.api?.getAddresses;
+          if (fetchAddressesFn) {
+            const addresses = await fetchAddressesFn();
+            if (Array.isArray(addresses) && addresses.length > 0) {
+              const addressSection = $("#custAddress")?.closest(".checkout-card") || $("#custAddress")?.parentElement;
+              if (addressSection && !$("#checkoutAddressSelector")) {
+                const selectorWrapper = document.createElement("div");
+                selectorWrapper.id = "checkoutAddressSelectorWrapper";
+                selectorWrapper.style.cssText = "margin-bottom: 16px; background: var(--off-white); border: 2px solid var(--black); border-radius: var(--radius-sm); padding: 12px;";
+                selectorWrapper.innerHTML = `
+                  <label for="checkoutAddressSelector" style="font-weight: 700; font-size: 13px; display: block; margin-bottom: 6px; color: var(--black);">
+                    📍 Select Saved Address (${addresses.length} available)
+                  </label>
+                  <select id="checkoutAddressSelector" style="width: 100%; border: 2px solid var(--black); border-radius: var(--radius-sm); padding: 8px 12px; font-family: inherit; font-size: 13px; font-weight: 600; background: #fff; cursor: pointer;">
+                    <option value="">-- Choose a saved delivery address --</option>
+                    ${addresses.map(a => `
+                      <option value="${escapeAttr(String(a.id))}" ${a.is_default ? "selected" : ""}>
+                        ${escapeHtml(a.type ? a.type.toUpperCase() : "HOME")} ${a.is_default ? "(Default)" : ""} — ${escapeHtml(a.full_name)}, ${escapeHtml(a.city)} (${escapeHtml(a.postal_code)})
+                      </option>
+                    `).join("")}
+                  </select>
+                `;
+                
+                addressSection.insertBefore(selectorWrapper, addressSection.firstChild);
+
+                const selector = $("#checkoutAddressSelector");
+                const autoFillAddr = (selectedId) => {
+                  const addr = addresses.find(a => String(a.id) === String(selectedId));
+                  if (!addr) return;
+                  if (nameInput) nameInput.value = addr.full_name || "";
+                  if (phoneInput) phoneInput.value = addr.phone || "";
+                  if (addressInput) addressInput.value = [addr.address_line1, addr.address_line2].filter(Boolean).join(", ");
+                  if (cityInput) cityInput.value = addr.city || "";
+                  if (stateInput) stateInput.value = addr.state || "";
+                  if (pinInput) pinInput.value = addr.postal_code || "";
+                  showToast("Saved delivery address applied!");
+                };
+
+                selector?.addEventListener("change", (e) => {
+                  if (e.target.value) autoFillAddr(e.target.value);
+                });
+
+                // Auto fill default address on load if present
+                const defaultAddr = addresses.find(a => a.is_default) || addresses[0];
+                if (defaultAddr && (!addressInput || !addressInput.value)) {
+                  autoFillAddr(defaultAddr.id);
+                }
+              }
+            }
+          }
+        } catch (addrErr) {
+          console.warn("[CHIPAKK Checkout] Saved address load notice:", addrErr.message);
         }
+
+      } else {
+        renderSignedOutCheckout();
+      }
+    }
+
+    function renderSignedOutCheckout() {
+      if (banner) {
+        banner.style.background = "#eff6ff";
+        banner.style.borderColor = "#2563eb";
+        banner.innerHTML = `
+          <span>Already have a CHIPAKK account?</span>
+          <a href="account.html">Sign in for faster checkout →</a>
+        `;
       }
     }
 

@@ -1,6 +1,6 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getFirestore } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { getAuth } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getAuth, setPersistence, browserSessionPersistence } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getStorage } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 // TODO: Replace with your Firebase project configuration
@@ -27,6 +27,11 @@ try {
   db = getFirestore(app);
   auth = getAuth(app);
   storage = getStorage(app);
+  if (auth) {
+    setPersistence(auth, browserSessionPersistence).catch(err => {
+      console.warn("[Admin Auth] Session persistence notice:", err.message);
+    });
+  }
   console.log("Firebase initialized");
 } catch (e) {
   console.error("Firebase initialization error. Make sure to add your config!", e);

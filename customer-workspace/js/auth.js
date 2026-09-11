@@ -45,9 +45,9 @@
       }
       authInstance = window.firebase.auth();
 
-      // Ensure standard browser persistence
+      // Enforce browser-session persistence (closing tab/window ends browser session)
       if (authInstance && authInstance.setPersistence && window.firebase.auth.Auth && window.firebase.auth.Auth.Persistence) {
-        authInstance.setPersistence(window.firebase.auth.Auth.Persistence.LOCAL)
+        authInstance.setPersistence(window.firebase.auth.Auth.Persistence.SESSION)
           .catch((err) => {
             console.warn("[CHIPAKK Auth] Persistence setting notice:", err.message);
           });
@@ -288,8 +288,126 @@
     return "CHIPAKK Member";
   }
 
+  // Send password reset email
+  async function resetPassword(email) {
+    if (!authInstance) {
+      throw new Error("Authentication service is unavailable. Please refresh and try again.");
+    }
+    const cleanEmail = (email || "").trim();
+    if (!cleanEmail) {
+      throw new Error("Please enter your email address.");
+    }
+    try {
+      await authInstance.sendPasswordResetEmail(cleanEmail);
+      return true;
+    } catch (err) {
+      const friendlyMsg = mapAuthError(err);
+      const mappedError = new Error(friendlyMsg);
+      mappedError.code = err.code;
+      throw mappedError;
+    }
+  }
+
+  // Verify password reset action code (oobCode)
+  async function verifyPasswordResetCode(code) {
+    if (!authInstance) {
+      throw new Error("Authentication service is unavailable. Please refresh and try again.");
+    }
+    const cleanCode = (code || "").trim();
+    if (!cleanCode) {
+      throw new Error("Invalid or missing password reset link code.");
+    }
+    try {
+      const email = await authInstance.verifyPasswordResetCode(cleanCode);
+      return email;
+    } catch (err) {
+      const friendlyMsg = mapAuthError(err);
+      const mappedError = new Error(friendlyMsg);
+      mappedError.code = err.code;
+      throw mappedError;
+    }
+  }
+
+  // Confirm password reset with new password
+  async function confirmPasswordReset(code, newPassword) {
+    if (!authInstance) {
+      throw new Error("Authentication service is unavailable. Please refresh and try again.");
+    }
+    const cleanCode = (code || "").trim();
+    if (!cleanCode) {
+      throw new Error("Invalid or missing password reset link code.");
+    }
+    if (!newPassword || newPassword.length < 6) {
+      throw new Error("Please choose a password at least 6 characters long.");
+    }
+    try {
+      await authInstance.confirmPasswordReset(cleanCode, newPassword);
+      return true;
+    } catch (err) {
+      const friendlyMsg = mapAuthError(err);
+      const mappedError = new Error(friendlyMsg);
+      mappedError.code = err.code;
+      throw mappedError;
+    }
+  }
+
+  // 60-Minute Inactivity Timeout Engine
+  const INACTIVITY_TIMEOUT_MS = 60 * 60 * 1000; // 60 minutes
+  const ACTIVITY_STORAGE_KEY = "chipakk_last_activity_v1";
+  let activityThrottleTimer = null;
+
+  function updateLastActivity() {
+    if (activityThrottleTimer) return;
+    activityThrottleTimer = setTimeout(() => {
+      activityThrottleTimer = null;
+    }, 15000); // throttle to at most once per 15s
+
+    const now = Date.now();
+    try {
+      sessionStorage.setItem(ACTIVITY_STORAGE_KEY, String(now));
+    } catch (_) {}
+  }
+
+  function getLastActivity() {
+    try {
+      const stored = sessionStorage.getItem(ACTIVITY_STORAGE_KEY);
+      if (stored) return parseInt(stored, 10) || Date.now();
+    } catch (_) {}
+    return Date.now();
+  }
+
+  function startInactivityMonitor() {
+    updateLastActivity();
+
+    const activityEvents = ["click", "pointerdown", "keydown", "touchstart", "scroll"];
+    activityEvents.forEach((evt) => {
+      window.addEventListener(evt, updateLastActivity, { passive: true });
+    });
+
+    setInterval(async () => {
+      if (!currentUser) return;
+      const last = getLastActivity();
+      const elapsed = Date.now() - last;
+      if (elapsed >= INACTIVITY_TIMEOUT_MS) {
+        console.warn("[CHIPAKK Auth] 60-minute inactivity threshold reached. Terminating session.");
+        try {
+          await signOutUser();
+        } catch (_) {}
+        try {
+          sessionStorage.removeItem(ACTIVITY_STORAGE_KEY);
+        } catch (_) {}
+        if (typeof window.CHIPAKK?.showToast === "function") {
+          window.CHIPAKK.showToast("Session expired due to 60 minutes of inactivity. Please sign in again.", "error");
+        } else {
+          alert("Your CHIPAKK session has expired due to 60 minutes of inactivity. Please sign in again.");
+        }
+      }
+    }, 30000); // Check every 30 seconds
+  }
+
   // Initialize on load
   initFirebase();
+  startInactivityMonitor();
 
   // Export to CHIPAKK namespace
   window.CHIPAKK = window.CHIPAKK || {};
@@ -300,6 +418,9 @@
     signUp,
     signOutUser,
     signInWithGoogle,
+    resetPassword,
+    verifyPasswordResetCode,
+    confirmPasswordReset,
     mapAuthError,
     isAuthReady,
     getFirstName,

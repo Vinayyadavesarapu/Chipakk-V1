@@ -1412,8 +1412,18 @@
     const accountBtn = $("#accountBtn");
     const drawerAccountLink = $("#drawerAccountLink");
 
-    function renderAuthState(user) {
+    async function renderAuthState(user) {
       if (user) {
+        // Enforce Admin vs Customer Isolation: verify via /customer/me
+        try {
+          const meData = await fetchAuthenticated("/customer/me");
+          if (meData && meData.is_admin) {
+            // Logged in user is an Administrator — do NOT display admin identity on customer storefront
+            renderSignedOutHeader();
+            return;
+          }
+        } catch (_) {}
+
         const firstName = window.CHIPAKK?.auth?.getFirstName ? window.CHIPAKK.auth.getFirstName(user) : (user.displayName ? user.displayName.split(" ")[0] : "Member");
         if (accountBtn) {
           accountBtn.setAttribute("aria-label", `Account - Signed in as ${firstName}`);
@@ -1428,17 +1438,21 @@
           drawerAccountLink.textContent = `My Account (${firstName})`;
         }
       } else {
-        if (accountBtn) {
-          accountBtn.setAttribute("aria-label", "Account - Sign In");
-          accountBtn.innerHTML = `
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg>
-            <span class="header-account-text">ACCOUNT / SIGN IN</span>
-          `;
-          accountBtn.classList.remove("is-authenticated");
-        }
-        if (drawerAccountLink) {
-          drawerAccountLink.textContent = "My Account / Sign In";
-        }
+        renderSignedOutHeader();
+      }
+    }
+
+    function renderSignedOutHeader() {
+      if (accountBtn) {
+        accountBtn.setAttribute("aria-label", "Account - Sign In");
+        accountBtn.innerHTML = `
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg>
+          <span class="header-account-text">ACCOUNT / SIGN IN</span>
+        `;
+        accountBtn.classList.remove("is-authenticated");
+      }
+      if (drawerAccountLink) {
+        drawerAccountLink.textContent = "My Account / Sign In";
       }
     }
 

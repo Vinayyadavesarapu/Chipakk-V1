@@ -4061,5 +4061,19 @@ input:focus-visible {
   text-decoration: underline;
 }
 
+@media (max-width: 480px) {
+  .auth-card {
+    padding: 20px 16px;
+    border-radius: var(--radius-md);
+  }
+  .auth-container {
+    padding: 0 8px;
+  }
+  .checkout-auth-banner {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
 
 

@@ -1,39 +1,46 @@
+# =========================================================
+# CHIPAKK — Production Server Configuration (.htaccess)
+# Authoritative Static Asset & Server Routing (Zero Referer Hacks)
+# =========================================================
+
 RewriteEngine On
 
-# 1. Bypass rewriting for internal directory requests
-RewriteCond %{REQUEST_URI} ^/(customer-workspace|web|server)/ [NC]
-RewriteRule ^ - [L]
+# ---------------------------------------------------------
+# 1. API & SERVER UPLOADS PASS-THROUGH (DO NOT INTERCEPT)
+# ---------------------------------------------------------
+RewriteRule ^api/ - [L]
+RewriteRule ^uploads/ - [L]
 
-# 2. CHIPAKK Admin Workspace (web/admin.html and dedicated Admin assets)
-RewriteRule ^admin/?$ web/admin.html [L]
-RewriteRule ^admin\.html$ web/admin.html [L]
+# ---------------------------------------------------------
+# 2. ADMIN STYLESHEET & SCRIPT ISOLATION
+# ---------------------------------------------------------
+# Admin stylesheet: /css/admin.css -> web/css/style.css
 RewriteRule ^css/admin\.css$ web/css/style.css [L]
-RewriteRule ^js/(admin\.js|api\.js|firebase-config\.js|migration\.js)$ web/js/$1 [L]
-RewriteRule ^img/(.*)$ web/img/$1 [L]
 
-# Referer fallback for admin stylesheet
-RewriteCond %{HTTP_REFERER} (admin\.html|/admin) [NC]
-RewriteRule ^css/style\.css$ web/css/style.css [L]
+# Admin scripts: /js/admin.js, /js/api.js, /js/firebase-config.js, /js/migration.js
+RewriteRule ^js/(admin|api|firebase-config|migration)\.js$ web/js/$1.js [L]
 
-# 3. CHIPAKK Authoritative Customer Storefront Pages (customer-workspace/)
+# ---------------------------------------------------------
+# 3. CUSTOMER STOREFRONT STYLESHEET & ASSETS
+# ---------------------------------------------------------
+# Customer stylesheet: /css/style.css -> customer-workspace/css/style.css
+RewriteRule ^css/style\.css$ customer-workspace/css/style.css [L]
+
+# Customer scripts: /js/app.js, /js/auth.js, /js/home.js, /js/shop.js, etc.
+RewriteRule ^js/(app|auth|home|shop|categories|custom-stickers|product|checkout|account|reset-password)\.js$ customer-workspace/js/$1.js [L]
+
+# Customer media assets: /assets/* -> customer-workspace/assets/*
+RewriteRule ^assets/(.*)$ customer-workspace/assets/$1 [L]
+
+# ---------------------------------------------------------
+# 4. PAGE ROUTING (ADMIN & CUSTOMER)
+# ---------------------------------------------------------
+# Admin Workspace Route: /admin or /admin.html -> web/admin.html
+RewriteRule ^(admin|admin\.html)$ web/admin.html [L]
+
+# Customer Page Routes: /shop, /categories, /custom-stickers, etc.
+RewriteRule ^(shop|categories|custom-stickers|product|checkout|account|reset-password)(\.html)?$ customer-workspace/$1.html [L]
+
+# Root Customer Homepage Route: / or /index.html -> customer-workspace/index.html
 RewriteRule ^$ customer-workspace/index.html [L]
 RewriteRule ^index\.html$ customer-workspace/index.html [L]
-RewriteRule ^(shop|categories|custom-stickers|product|checkout|account)(\.html)?$ customer-workspace/$1.html [L]
-RewriteRule ^robots\.txt$ customer-workspace/robots.txt [L]
-RewriteRule ^sitemap\.xml$ customer-workspace/sitemap.xml [L]
-
-# 4. CHIPAKK Customer Assets (assets/, css/, js/)
-RewriteRule ^assets/(.*)$ customer-workspace/assets/$1 [L]
-RewriteRule ^css/(.*)$ customer-workspace/css/$1 [L]
-RewriteRule ^js/(.*)$ customer-workspace/js/$1 [L]
-
-# 5. Static file fallback: prefer customer-workspace, fallback to web
-RewriteCond %{REQUEST_FILENAME} !-f
-RewriteCond %{REQUEST_FILENAME} !-d
-RewriteCond %{DOCUMENT_ROOT}/customer-workspace/$1 -f
-RewriteRule ^(.*)$ customer-workspace/$1 [L]
-
-RewriteCond %{REQUEST_FILENAME} !-f
-RewriteCond %{REQUEST_FILENAME} !-d
-RewriteCond %{DOCUMENT_ROOT}/web/$1 -f
-RewriteRule ^(.*)$ web/$1 [L]

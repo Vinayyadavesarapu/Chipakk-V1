@@ -103,22 +103,14 @@ app.get(['/js/admin.js', '/js/api.js', '/js/firebase-config.js', '/js/migration.
   res.sendFile(path.join(webDir, 'js', scriptName));
 });
 
-// Admin dedicated stylesheet & referer fallback
+// Admin dedicated stylesheet
 app.get('/css/admin.css', (req, res) => {
   res.sendFile(path.join(webDir, 'css/style.css'));
 });
 
-app.get('/css/style.css', (req, res, next) => {
-  const referer = req.get('referer') || '';
-  if (referer.includes('admin')) {
-    return res.sendFile(path.join(webDir, 'css/style.css'));
-  }
-  next();
-});
-
 // 2. CHIPAKK Customer Storefront Direct Routes
 const customerPages = [
-  'shop', 'categories', 'custom-stickers', 'product', 'checkout', 'account'
+  'shop', 'categories', 'custom-stickers', 'product', 'checkout', 'account', 'reset-password'
 ];
 customerPages.forEach(page => {
   app.get([`/${page}.html`, `/${page}`], (req, res) => {

@@ -4105,3 +4105,52 @@ function setupEventListeners() {
 window.updateState = updateState;
 window.saveState = saveState;
 window.showToast = showToast;
+
+// Admin 60-Minute Inactivity Auto-Logout Engine
+(function initAdminInactivityMonitor() {
+  const INACTIVITY_TIMEOUT_MS = 60 * 60 * 1000; // 60 minutes
+  const STORAGE_KEY = 'chipakk_admin_last_activity_v1';
+  let activityThrottleTimer = null;
+
+  function updateAdminLastActivity() {
+    if (activityThrottleTimer) return;
+    activityThrottleTimer = setTimeout(() => {
+      activityThrottleTimer = null;
+    }, 15000);
+
+    try {
+      sessionStorage.setItem(STORAGE_KEY, String(Date.now()));
+    } catch (_) {}
+  }
+
+  function getAdminLastActivity() {
+    try {
+      const stored = sessionStorage.getItem(STORAGE_KEY);
+      if (stored) return parseInt(stored, 10) || Date.now();
+    } catch (_) {}
+    return Date.now();
+  }
+
+  updateAdminLastActivity();
+  const events = ['click', 'pointerdown', 'keydown', 'touchstart', 'scroll'];
+  events.forEach(evt => window.addEventListener(evt, updateAdminLastActivity, { passive: true }));
+
+  setInterval(async () => {
+    if (typeof auth !== 'undefined' && auth.currentUser) {
+      const last = getAdminLastActivity();
+      const elapsed = Date.now() - last;
+      if (elapsed >= INACTIVITY_TIMEOUT_MS) {
+        console.warn('[Admin Security] 60-minute inactivity limit reached. Logging out admin.');
+        try {
+          apiClient.post('/admin/auth/logout-event', { reason: 'SESSION_EXPIRED' }).catch(() => {});
+          await signOut(auth);
+        } catch (_) {}
+        try {
+          sessionStorage.removeItem(STORAGE_KEY);
+        } catch (_) {}
+        alert('Your Admin session has expired due to 60 minutes of inactivity. Please sign in again.');
+        window.location.reload();
+      }
+    }
+  }, 30000);
+})();
