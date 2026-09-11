@@ -178,108 +178,151 @@ const updateStoreBuilderData = async (updatePayload = {}) => {
  * Fetch storefront-safe Store Builder data for public customer applications
  */
 const getPublicStoreBuilderData = async () => {
-  const adminData = await getStoreBuilderAdminData();
-  const globalSettings = await getSiteSettings();
+  try {
+    const adminData = await getStoreBuilderAdminData();
+    const globalSettings = await getSiteSettings();
 
-  // 1. Filter active Announcement Bar
-  const announcement_bar = adminData.announcement_bar && adminData.announcement_bar.enabled
-    ? {
+    // 1. Filter active Announcement Bar
+    const announcement_bar = adminData.announcement_bar && adminData.announcement_bar.enabled
+      ? {
+          enabled: true,
+          text: adminData.announcement_bar.text || '',
+          mode: adminData.announcement_bar.mode || 'STATIC',
+          marquee_speed: adminData.announcement_bar.marquee_speed || 'normal'
+        }
+      : { enabled: false, text: '', mode: 'STATIC', marquee_speed: 'normal' };
+
+    // 2. Filter active Hero (Fixed Banner vs Carousel)
+    const heroConfig = adminData.hero_config || {};
+    const heroMode = heroConfig.mode || 'fixed';
+    let hero = null;
+
+    if (heroMode === 'fixed') {
+      const fb = heroConfig.fixed_banner || {};
+      const rawImg = fb.image_url || '';
+      const safeImg = (!rawImg || rawImg.includes('hero-banner-1.png')) ? 'assets/images/hero-fallback.svg' : rawImg;
+      hero = {
+        mode: 'fixed',
         enabled: true,
-        text: adminData.announcement_bar.text || '',
-        mode: adminData.announcement_bar.mode || 'STATIC',
-        marquee_speed: adminData.announcement_bar.marquee_speed || 'normal'
-      }
-    : { enabled: false, text: '', mode: 'STATIC', marquee_speed: 'normal' };
+        image_url: safeImg,
+        show_eyebrow: fb.show_eyebrow !== false,
+        eyebrow: fb.eyebrow || 'New designs every week',
+        show_title: fb.show_title !== false,
+        title: fb.title || 'STICK YOUR WORLD.',
+        show_description: fb.show_description !== false,
+        description: fb.description || 'Premium stickers for a bolder, brighter, more you.',
+        show_primary_btn: fb.show_primary_btn !== false,
+        primary_btn_text: fb.primary_btn_text || 'Shop Now →',
+        primary_btn_url: fb.primary_btn_url || 'shop.html',
+        show_secondary_btn: fb.show_secondary_btn !== false,
+        secondary_btn_text: fb.secondary_btn_text || 'Custom Stickers',
+        secondary_btn_url: fb.secondary_btn_url || 'custom-stickers.html'
+      };
+    } else {
+      // Carousel mode
+      const slides = (heroConfig.carousel?.slides || adminData.hero_groups?.[0]?.slides || [])
+        .filter(s => s.active === true || s.active === 1)
+        .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0))
+        .map(s => {
+          const rawImg = s.image_url || '';
+          const safeImg = (!rawImg || rawImg.includes('hero-banner-1.png')) ? 'assets/images/hero-fallback.svg' : rawImg;
+          return {
+            id: s.id,
+            image_url: safeImg,
+            show_eyebrow: s.show_eyebrow !== false,
+            eyebrow: s.eyebrow || '',
+            show_title: s.show_title !== false,
+            title: s.title || '',
+            show_description: s.show_description !== false,
+            description: s.description || s.subtitle || '',
+            show_primary_btn: s.show_primary_btn !== false,
+            primary_btn_text: s.primary_btn_text || s.cta_text || 'Shop Now →',
+            primary_btn_url: s.primary_btn_url || s.target_url || 'shop.html',
+            show_secondary_btn: s.show_secondary_btn === true,
+            secondary_btn_text: s.secondary_btn_text || 'Custom Stickers',
+            secondary_btn_url: s.secondary_btn_url || 'custom-stickers.html'
+          };
+        });
 
-  // 2. Filter active Hero (Fixed Banner vs Carousel)
-  const heroConfig = adminData.hero_config || {};
-  const heroMode = heroConfig.mode || 'fixed';
-  let hero = null;
+      hero = {
+        mode: 'carousel',
+        enabled: slides.length > 0,
+        slides
+      };
+    }
 
-  if (heroMode === 'fixed') {
-    const fb = heroConfig.fixed_banner || {};
-    const rawImg = fb.image_url || '';
-    const safeImg = (!rawImg || rawImg.includes('hero-banner-1.png')) ? 'assets/images/hero-fallback.svg' : rawImg;
-    hero = {
-      mode: 'fixed',
-      enabled: true,
-      image_url: safeImg,
-      show_eyebrow: fb.show_eyebrow !== false,
-      eyebrow: fb.eyebrow || 'New designs every week',
-      show_title: fb.show_title !== false,
-      title: fb.title || 'STICK YOUR WORLD.',
-      show_description: fb.show_description !== false,
-      description: fb.description || 'Premium stickers for a bolder, brighter, more you.',
-      show_primary_btn: fb.show_primary_btn !== false,
-      primary_btn_text: fb.primary_btn_text || 'Shop Now →',
-      primary_btn_url: fb.primary_btn_url || 'shop.html',
-      show_secondary_btn: fb.show_secondary_btn !== false,
-      secondary_btn_text: fb.secondary_btn_text || 'Custom Stickers',
-      secondary_btn_url: fb.secondary_btn_url || 'custom-stickers.html'
-    };
-  } else {
-    // Carousel mode
-    const slides = (heroConfig.carousel?.slides || adminData.hero_groups?.[0]?.slides || [])
-      .filter(s => s.active === true || s.active === 1)
+    // 3. Query active Promotional Banners directly from banners table
+    let bannerRows = [];
+    try {
+      const [rows] = await pool.execute(
+        'SELECT id, title, image_url, target_url, sort_order FROM banners WHERE active = 1 ORDER BY sort_order ASC, id DESC'
+      );
+      bannerRows = rows;
+    } catch (_) {}
+
+    // 4. Filter active Content Sections
+    const contentSections = (Array.isArray(adminData.content_sections) ? adminData.content_sections : [])
+      .filter(sec => sec.enabled === true || sec.enabled === 1)
       .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0))
-      .map(s => {
-        const rawImg = s.image_url || '';
-        const safeImg = (!rawImg || rawImg.includes('hero-banner-1.png')) ? 'assets/images/hero-fallback.svg' : rawImg;
-        return {
-          id: s.id,
-          image_url: safeImg,
-          show_eyebrow: s.show_eyebrow !== false,
-          eyebrow: s.eyebrow || '',
-          show_title: s.show_title !== false,
-          title: s.title || '',
-          show_description: s.show_description !== false,
-          description: s.description || s.subtitle || '',
-          show_primary_btn: s.show_primary_btn !== false,
-          primary_btn_text: s.primary_btn_text || s.cta_text || 'Shop Now →',
-          primary_btn_url: s.primary_btn_url || s.target_url || 'shop.html',
-          show_secondary_btn: s.show_secondary_btn === true,
-          secondary_btn_text: s.secondary_btn_text || 'Custom Stickers',
-          secondary_btn_url: s.secondary_btn_url || 'custom-stickers.html'
-        };
-      });
+      .map(sec => ({
+        id: sec.id,
+        type: sec.type,
+        title: sec.title || '',
+        config: sec.config || {}
+      }));
 
-    hero = {
-      mode: 'carousel',
-      enabled: slides.length > 0,
-      slides
+    return {
+      announcement_bar,
+      hero,
+      promo_banners: bannerRows,
+      content_sections: contentSections,
+      store_info: {
+        store_name: globalSettings.store_name || 'CHIPAKK',
+        announcement_text: globalSettings.announcement_text || '',
+        announcement_active: globalSettings.announcement_active || false,
+        maintenance_active: globalSettings.maintenance_active || false,
+        free_shipping_threshold: globalSettings.free_shipping_threshold || 0,
+        free_shipping_threshold_rupees: Math.round((globalSettings.free_shipping_threshold || 0) / 100)
+      }
+    };
+  } catch (err) {
+    console.warn('[StoreBuilder DB Fallback Warning] Returning safe default store builder configuration:', err.message);
+    return {
+      announcement_bar: {
+        enabled: true,
+        text: 'WELCOME TO CHIPAKK! FREE SHIPPING OVER ₹499',
+        mode: 'MARQUEE',
+        marquee_speed: 'normal'
+      },
+      hero: {
+        mode: 'fixed',
+        enabled: true,
+        image_url: 'assets/images/hero-fallback.svg',
+        show_eyebrow: true,
+        eyebrow: 'New designs every week',
+        show_title: true,
+        title: 'STICK YOUR WORLD.',
+        show_description: true,
+        description: 'Premium stickers for a bolder, brighter, more you.',
+        show_primary_btn: true,
+        primary_btn_text: 'Shop Now →',
+        primary_btn_url: 'shop.html',
+        show_secondary_btn: true,
+        secondary_btn_text: 'Custom Stickers',
+        secondary_btn_url: 'custom-stickers.html'
+      },
+      promo_banners: [],
+      content_sections: [],
+      store_info: {
+        store_name: 'CHIPAKK',
+        announcement_text: '',
+        announcement_active: false,
+        maintenance_active: false,
+        free_shipping_threshold: 0,
+        free_shipping_threshold_rupees: 0
+      }
     };
   }
-
-  // 3. Query active Promotional Banners directly from banners table
-  const [bannerRows] = await pool.execute(
-    'SELECT id, title, image_url, target_url, sort_order FROM banners WHERE active = 1 ORDER BY sort_order ASC, id DESC'
-  );
-
-  // 4. Filter active Content Sections
-  const contentSections = (Array.isArray(adminData.content_sections) ? adminData.content_sections : [])
-    .filter(sec => sec.enabled === true || sec.enabled === 1)
-    .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0))
-    .map(sec => ({
-      id: sec.id,
-      type: sec.type,
-      title: sec.title || '',
-      config: sec.config || {}
-    }));
-
-  return {
-    announcement_bar,
-    hero,
-    promo_banners: bannerRows,
-    content_sections: contentSections,
-    store_info: {
-      store_name: globalSettings.store_name || 'CHIPAKK',
-      announcement_text: globalSettings.announcement_text || '',
-      announcement_active: globalSettings.announcement_active || false,
-      maintenance_active: globalSettings.maintenance_active || false,
-      free_shipping_threshold: globalSettings.free_shipping_threshold || 0,
-      free_shipping_threshold_rupees: Math.round((globalSettings.free_shipping_threshold || 0) / 100)
-    }
-  };
 };
 
 module.exports = {

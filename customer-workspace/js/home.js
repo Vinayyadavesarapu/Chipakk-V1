@@ -153,7 +153,7 @@
 
               <!-- Main Artwork Photo Frame -->
               <div class="hero-photo-frame">
-                <img src="${escapeAttr(imgSrc || 'assets/images/hero-fallback.svg')}" alt="${imgAlt}" data-hero-img onerror="if(!this.dataset.failed){this.dataset.failed='true';this.src='assets/images/hero-fallback.svg';}" style="width:100%;height:100%;object-fit:cover;display:block;" />
+                <img src="${escapeAttr(imgSrc || 'assets/images/hero-fallback.svg')}" alt="${imgAlt}" data-hero-img onerror="if(!this.dataset.failed){this.dataset.failed='true';this.src='assets/images/hero-fallback.svg';}" style="width:100%;height:100%;max-width:100%;max-height:100%;object-fit:cover;display:block;border-radius:inherit;" />
               </div>
 
               <!-- Hand-Drawn Stickers, Speech Bubbles & Accents -->

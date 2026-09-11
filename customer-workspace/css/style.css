@@ -824,7 +824,8 @@ input:focus-visible {
 .hero-visual {
   position: relative;
   z-index: 2;
-  min-height: 480px;
+  min-height: 440px;
+  max-width: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -832,7 +833,8 @@ input:focus-visible {
 
 .hero-photo-frame {
   position: relative;
-  width: min(380px, 92%);
+  width: min(360px, 90%);
+  max-width: 360px;
   aspect-ratio: 1 / 1.05;
   background: var(--white);
   border: var(--border-w-lg) solid var(--black);
@@ -845,10 +847,21 @@ input:focus-visible {
   z-index: 3;
 }
 
+.hero-photo-frame img,
+.hero-photo-frame [data-hero-img] {
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: cover;
+  display: block;
+  border-radius: 50% 50% 46% 46% / 54% 54% 46% 46%;
+}
+
 .hero-photo-frame::before {
   content: "";
   position: absolute;
-  inset: -16px;
+  inset: -14px;
   border: var(--border-w-lg) solid var(--blue);
   border-radius: 46% 46% 50% 50% / 50% 50% 54% 54%;
   transform: rotate(-4deg);
