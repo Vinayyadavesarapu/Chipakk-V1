@@ -3682,14 +3682,6 @@ function setupEventListeners() {
         }
     });
 
-    // Dynamic 30-Second Auto-Refresh for Audit Logs
-    setInterval(() => {
-        const auditTab = document.getElementById('tab-audit');
-        if (auditTab && auditTab.style.display !== 'none') {
-            refreshAuditLogsFromAPI();
-        }
-    }, 30000);
-
     document.getElementById('apply-analytics-filter-btn')?.addEventListener('click', () => {
         updateState();
         showToast("Analytics timeframe filter applied.");
@@ -4061,9 +4053,17 @@ function setupEventListeners() {
         }
     });
 
-    // Auto-refresh audit logs on any mutating API action
+    // Auto-refresh audit logs on mutating API actions (POST, PUT, DELETE) only
     let auditDebounce = null;
-    window.addEventListener('admin-api-activity', () => {
+    window.addEventListener('admin-api-activity', (e) => {
+        const method = (e.detail?.method || 'GET').toUpperCase();
+        const endpoint = e.detail?.endpoint || '';
+
+        // Ignore read-only GET queries and audit-log fetches to break infinite feedback loops
+        if (method === 'GET' || endpoint.includes('audit-logs')) {
+            return;
+        }
+
         clearTimeout(auditDebounce);
         auditDebounce = setTimeout(() => {
             refreshAuditLogsFromAPI();
@@ -4091,14 +4091,16 @@ function setupEventListeners() {
         if (teamTabLink) teamTabLink.click();
     });
 
-    // Periodic Polling (every 30s) for live sessions, team members, and audit logs
-    setInterval(() => {
-        if (document.visibilityState === 'visible') {
-            refreshActiveSessionsFromAPI();
-            refreshAuditLogsFromAPI();
-            refreshTeamFromAPI();
-        }
-    }, 30000);
+    // Single Guarded Periodic Polling (every 30s) for live sessions, team members, and audit logs
+    if (!window.__adminPollingInterval) {
+        window.__adminPollingInterval = setInterval(() => {
+            if (document.visibilityState === 'visible') {
+                refreshActiveSessionsFromAPI();
+                refreshAuditLogsFromAPI();
+                refreshTeamFromAPI();
+            }
+        }, 30000);
+    }
 }
 
 // Global Export Routine Helpers

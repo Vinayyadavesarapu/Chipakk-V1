@@ -133,7 +133,12 @@ async function request(endpoint, options = {}) {
     }
 
     if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('admin-api-activity'));
+      window.dispatchEvent(new CustomEvent('admin-api-activity', {
+        detail: {
+          method: (options.method || 'GET').toUpperCase(),
+          endpoint: endpoint || ''
+        }
+      }));
     }
 
     return data;
