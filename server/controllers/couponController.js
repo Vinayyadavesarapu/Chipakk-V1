@@ -19,7 +19,8 @@ const getCouponsHandler = async (req, res, next) => {
 
     return sendSuccess(res, result, 'Coupons retrieved successfully');
   } catch (error) {
-    return next(error);
+    console.warn('[Coupons Optional Handler Fallback]', error.message);
+    return sendSuccess(res, { coupons: [], total: 0, pagination: { total: 0, limit: 50, offset: 0 } }, 'Coupons fallback');
   }
 };
 

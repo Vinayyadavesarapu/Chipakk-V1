@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /checkout.html
+Disallow: /account.html
+
+Sitemap: https://chipakk.shop/sitemap.xml

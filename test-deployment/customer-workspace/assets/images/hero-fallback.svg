@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" width="100%" height="100%">
+  <defs>
+    <style>
+      .bg { fill: #f7f3e9; }
+      .card-bg { fill: #ffffff; stroke: #111111; stroke-width: 4; }
+      .accent-blue { fill: #1e46e0; }
+      .accent-yellow { fill: #ffd400; }
+      .accent-red { fill: #ff4433; }
+      .stroke-black { stroke: #111111; stroke-width: 4; }
+      .text-black { fill: #111111; font-family: 'Baloo 2', 'Archivo Black', 'Arial Black', sans-serif; font-weight: 800; }
+      .text-white { fill: #ffffff; font-family: 'Baloo 2', 'Archivo Black', 'Arial Black', sans-serif; font-weight: 800; }
+    </style>
+  </defs>
+
+  <!-- Background Base -->
+  <rect width="800" height="600" class="bg" />
+
+  <!-- Outer Shadow & Card Frame -->
+  <rect x="36" y="36" width="736" height="536" fill="#111111" rx="16" />
+  <rect x="28" y="28" width="736" height="536" class="card-bg" rx="16" />
+
+  <!-- Diagonal Grid Background Pattern Accent -->
+  <g opacity="0.08">
+    <line x1="0" y1="0" x2="800" y2="600" stroke="#111111" stroke-width="12" />
+    <line x1="200" y1="0" x2="800" y2="450" stroke="#111111" stroke-width="12" />
+    <line x1="0" y1="200" x2="600" y2="600" stroke="#111111" stroke-width="12" />
+  </g>
+
+  <!-- Big Decorative Background Circle -->
+  <circle cx="560" cy="240" r="140" fill="#1e46e0" stroke="#111111" stroke-width="5" />
+  <circle cx="240" cy="400" r="90" fill="#ffd400" stroke="#111111" stroke-width="5" />
+
+  <!-- Sticker 1: #STICKYOURWORLD Pill Badge -->
+  <g transform="translate(180, 110) rotate(-6)">
+    <rect x="-10" y="-10" width="340" height="64" fill="#111111" rx="32" />
+    <rect x="-14" y="-14" width="340" height="64" class="accent-yellow" stroke="#111111" stroke-width="4" rx="32" />
+    <text x="156" y="26" class="text-black" font-size="24" text-anchor="middle" letter-spacing="1">⚡ #STICKYOURWORLD</text>
+  </g>
+
+  <!-- Main Center Sticker Card Artwork -->
+  <g transform="translate(400, 310) rotate(3)">
+    <!-- Shadow -->
+    <rect x="-180" y="-120" width="360" height="240" fill="#111111" rx="18" />
+    <!-- White Sticker -->
+    <rect x="-188" y="-128" width="360" height="240" fill="#ffffff" stroke="#111111" stroke-width="5" rx="18" />
+
+    <!-- Blue Header Banner inside sticker -->
+    <rect x="-188" y="-128" width="360" height="70" class="accent-blue" stroke="#111111" stroke-width="5" rx="14" />
+    <text x="0" y="-82" class="text-white" font-size="28" text-anchor="middle" letter-spacing="2">CHIPAKK ARTWORK</text>
+
+    <!-- Sticker Graphics inside card -->
+    <text x="-90" y="20" font-size="64">🛹</text>
+    <text x="10" y="20" font-size="64">⚡</text>
+    <text x="90" y="20" font-size="64">👑</text>
+
+    <text x="0" y="80" class="text-black" font-size="18" text-anchor="middle" letter-spacing="1">PREMIUM VINYL DECALS</text>
+  </g>
+
+  <!-- Sticker 2: ORIGINAL ART Badge -->
+  <g transform="translate(140, 240) rotate(8)">
+    <rect x="4" y="4" width="200" height="48" fill="#111111" rx="8" />
+    <rect x="0" y="0" width="200" height="48" class="accent-red" stroke="#111111" stroke-width="4" rx="8" />
+    <text x="100" y="31" class="text-white" font-size="18" text-anchor="middle">★ ORIGINAL ART</text>
+  </g>
+
+  <!-- Sticker 3: WATERPROOF & SCRATCH RESISTANT -->
+  <g transform="translate(490, 470) rotate(-4)">
+    <rect x="4" y="4" width="240" height="44" fill="#111111" rx="8" />
+    <rect x="0" y="0" width="240" height="44" class="bg" stroke="#111111" stroke-width="4" rx="8" />
+    <text x="120" y="28" class="text-black" font-size="14" text-anchor="middle">100% WATERPROOF VINYL</text>
+  </g>
+
+  <!-- Scribble / Star Deco -->
+  <path d="M 100 500 L 140 500 M 120 480 L 120 520" stroke="#111111" stroke-width="5" stroke-linecap="round" />
+  <path d="M 680 120 L 720 120 M 700 100 L 700 140" stroke="#111111" stroke-width="5" stroke-linecap="round" />
+
+</svg>

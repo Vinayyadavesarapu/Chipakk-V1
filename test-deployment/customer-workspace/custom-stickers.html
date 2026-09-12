@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Create Custom Stickers — CHIPAKK Studio</title>
+  <meta name="description" content="Turn your artwork, logo, or design into custom die-cut vinyl stickers with matte, glossy, holographic, and transparent finishes. Instant proofing &amp; volume pricing." />
+  <link rel="canonical" href="https://chipakk.shop/custom-stickers.html" />
+  <meta name="robots" content="index, follow" />
+
+  <!-- Open Graph / Facebook -->
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://chipakk.shop/custom-stickers.html" />
+  <meta property="og:title" content="Create Custom Stickers — CHIPAKK Studio" />
+  <meta property="og:description" content="Turn your artwork, logo, or design into custom die-cut vinyl stickers with matte, glossy, holographic, and transparent finishes. Instant proofing &amp; volume pricing." />
+  <meta property="og:image" content="https://chipakk.shop/assets/images/logo.png" />
+  <meta property="og:site_name" content="CHIPAKK" />
+
+  <!-- Twitter -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Create Custom Stickers — CHIPAKK Studio" />
+  <meta name="twitter:description" content="Turn your artwork, logo, or design into custom die-cut vinyl stickers with matte, glossy, holographic, and transparent finishes. Instant proofing &amp; volume pricing." />
+  <meta name="twitter:image" content="https://chipakk.shop/assets/images/logo.png" />
+
+  <!-- JSON-LD Structured Data -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Service",
+        "name": "Custom Sticker Printing",
+        "serviceType": "Sticker Printing Service",
+        "provider": {
+          "@type": "Organization",
+          "name": "CHIPAKK",
+          "url": "https://chipakk.shop/"
+        },
+        "description": "Custom die-cut vinyl sticker printing with matte, gloss, holographic, and transparent finishes.",
+        "areaServed": "IN"
+      },
+      {
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+          {
+            "@type": "ListItem",
+            "position": 1,
+            "name": "Home",
+            "item": "https://chipakk.shop/"
+          },
+          {
+            "@type": "ListItem",
+            "position": 2,
+            "name": "Custom Stickers",
+            "item": "https://chipakk.shop/custom-stickers.html"
+          }
+        ]
+      }
+    ]
+  }
+  </script>
+
+  <link rel="icon" type="image/png" href="assets/images/logo.png" />
+  <link rel="stylesheet" href="css/style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700;800&family=Archivo+Black&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+</head>
+<body>
+
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <!-- Loading Overlay -->
+  <div class="loading-overlay" id="loadingOverlay" data-hidden="false" aria-hidden="true">
+    <div class="loader-circle">
+      <video src="assets/video/loading_01.mp4" autoplay muted loop playsinline aria-hidden="true"></video>
+    </div>
+    <p class="loader-text">Loading studio<span class="dots"></span></p>
+  </div>
+
+  <!-- Header -->
+  <header class="site-header">
+    <div id="globalAnnouncementBar" class="global-announcement-bar" style="display: none;"></div>
+    <div class="brand-family-bar">
+      <div class="brand-family-inner">
+        <div class="storefront-switcher" role="navigation" aria-label="Brand storefronts">
+          <a href="https://themarshans.shop" target="_blank" rel="noopener" class="store-switch-link store-marshans" title="Visit THE MARSHANS Storefront">
+            <span class="store-switch-icon">🪐</span> THE MARSHANS
+          </a>
+          <span class="store-switch-divider">↔</span>
+          <span class="store-switch-link store-chipakk is-active" title="You are on CHIPAKK">
+            <span class="store-switch-icon">⚡</span> CHIPAKK
+          </span>
+        </div>
+        <span class="brand-family-note">SHARED ACCOUNT PLATFORM • ONE LOGIN</span>
+      </div>
+    </div>
+    <div class="header-inner">
+      <button class="btn-icon hamburger" id="hamburgerBtn" aria-label="Open menu" aria-expanded="false" aria-controls="mobileDrawer">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
+
+      <a href="index.html" class="logo-link" aria-label="CHIPAKK home">
+        <img src="assets/images/logo.png" alt="CHIPAKK" width="180" height="120" />
+      </a>
+
+      <nav class="main-nav" aria-label="Primary">
+        <a href="index.html">Home</a>
+        <a href="shop.html">Shop</a>
+        <a href="custom-stickers.html" class="is-active">Custom Stickers</a>
+        <a href="categories.html">Categories</a>
+      </nav>
+
+      <div class="header-actions">
+        <form class="header-search-inline" id="headerSearchForm" role="search">
+          <label for="headerSearchInput" class="visually-hidden">Search stickers</label>
+          <input type="search" id="headerSearchInput" placeholder="Search stickers…" autocomplete="off" />
+          <button type="submit" aria-label="Search">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          </button>
+        </form>
+
+        <button class="btn-icon mobile-only" id="mobileSearchBtn" aria-label="Open search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        </button>
+
+        <button class="btn-account-nav" id="accountBtn" aria-label="Account - Sign In">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg>
+          <span class="header-account-text">ACCOUNT / SIGN IN</span>
+        </button>
+
+        <button class="btn-icon" id="cartBtn" aria-label="Open cart" aria-controls="cartDrawer" aria-expanded="false">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 4h2l2.4 12.2a2 2 0 0 0 2 1.6h7.6a2 2 0 0 0 2-1.6L21 8H6"/><circle cx="9.5" cy="21" r="1.4"/><circle cx="17.5" cy="21" r="1.4"/></svg>
+          <span class="badge-count" id="cartCount" hidden>0</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Search Panel -->
+    <div class="search-panel" id="searchPanel" role="dialog" aria-modal="true" aria-label="Search stickers" hidden>
+      <div class="search-panel-inner">
+        <form id="searchPanelForm" role="search" style="flex:1;display:flex;">
+          <label for="searchPanelInput" class="visually-hidden">Search stickers</label>
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" style="flex-shrink:0;"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input type="search" id="searchPanelInput" placeholder="Search stickers…" autocomplete="off" />
+          <button type="submit" class="btn btn-primary" style="margin:4px;">Search</button>
+        </form>
+        <button class="panel-close" id="searchCloseBtn" aria-label="Close search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Mobile Drawer -->
+  <nav class="mobile-drawer" id="mobileDrawer" aria-label="Mobile" hidden>
+    <div class="drawer-top">
+      <img src="assets/images/logo.png" alt="CHIPAKK" />
+      <button class="panel-close" id="drawerCloseBtn" aria-label="Close menu">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/></svg>
+      </button>
+    </div>
+    <div class="drawer-storefront-switcher">
+      <span class="drawer-store-label">OUR BRANDS</span>
+      <div class="drawer-store-links">
+        <span class="drawer-store-btn is-current">⚡ CHIPAKK</span>
+        <a href="https://themarshans.shop" target="_blank" rel="noopener" class="drawer-store-btn">🪐 THE MARSHANS →</a>
+      </div>
+    </div>
+    <ul class="drawer-nav">
+      <li><a href="index.html">Home</a></li>
+      <li><a href="shop.html">Shop</a></li>
+      <li><a href="custom-stickers.html" class="is-accent is-active">Custom Stickers</a></li>
+      <li><a href="categories.html">Categories</a></li>
+      <li><a href="account.html" id="drawerAccountLink">My Account / Sign In</a></li>
+    </ul>
+    <div class="drawer-cta">
+      <a href="custom-stickers.html" class="btn btn-blue btn-block">Create Your Sticker</a>
+    </div>
+  </nav>
+
+  <div class="overlay-backdrop" id="overlayBackdrop" hidden></div>
+
+  <!-- Main Content -->
+  <main id="main">
+
+    <!-- Custom Studio Hero Banner -->
+    <div class="custom-hero-banner">
+      <h1 class="hero-title">CREATE CUSTOM <span>STICKERS</span></h1>
+      <p>Upload your logo, illustration, or brand artwork. We precision-cut and ship waterproof vinyl that turns your ideas into reality.</p>
+    </div>
+
+    <div class="container" style="padding-top: 36px; padding-bottom: 72px;">
+
+      <!-- 4-Step Process Bar -->
+      <div class="flow-step-bar">
+        <div class="flow-step">
+          <span class="flow-step-num">1</span>
+          <b>Upload Artwork</b>
+          <p>PNG, JPG, SVG, or PDF up to 25MB.</p>
+        </div>
+        <div class="flow-step">
+          <span class="flow-step-num">2</span>
+          <b>Choose Options</b>
+          <p>Select shape cut, finish, and dimensions.</p>
+        </div>
+        <div class="flow-step">
+          <span class="flow-step-num">3</span>
+          <b>We Print It</b>
+          <p>Full-color Japanese UV ink on thick vinyl.</p>
+        </div>
+        <div class="flow-step">
+          <span class="flow-step-num">4</span>
+          <b>We Ship It</b>
+          <p>Fast production and doorstep delivery.</p>
+        </div>
+      </div>
+
+      <!-- Studio Interactive Builder Grid -->
+      <div class="studio-grid">
+
+        <!-- Left Column: Builder Controls -->
+        <div class="studio-builder-card">
+
+          <!-- Step 1: Upload File -->
+          <div class="studio-step-section">
+            <h3><span class="flow-step-num" style="width:24px;height:24px;font-size:12px;margin-bottom:0;">1</span> Upload Your Artwork</h3>
+            <div class="upload-dropzone" id="artworkDropzone">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+              </svg>
+              <b style="font-family:var(--font-display);font-size:16px;display:block;text-transform:uppercase;">Click to Browse or Drag &amp; Drop</b>
+              <span style="font-size:13px;color:#666;margin-top:4px;display:block;">Supports PNG, JPG, SVG, AI, PSD, PDF (High resolution recommended)</span>
+              <input type="file" id="artworkFileInput" accept="image/*,.pdf,.svg" style="display:none;" />
+            </div>
+
+            <div class="upload-preview-box" id="artworkPreviewBox">
+              <img src="" id="artworkPreviewThumb" class="upload-preview-thumb" alt="Uploaded artwork preview" />
+              <div style="flex:1;min-width:0;">
+                <strong id="artworkFileName" style="font-size:14px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">artwork.png</strong>
+                <span style="font-size:12px;color:#16a34a;font-weight:700;">File ready for print proof</span>
+              </div>
+              <button type="button" class="btn-icon" id="removeArtworkBtn" style="border:1px solid var(--black);border-radius:4px;padding:6px;" aria-label="Remove artwork">✕</button>
+            </div>
+          </div>
+
+          <!-- Step 2: Choose Cut Style -->
+          <div class="studio-step-section">
+            <h3><span class="flow-step-num" style="width:24px;height:24px;font-size:12px;margin-bottom:0;">2</span> Choose Sticker Cut</h3>
+            <div class="cut-cards-grid">
+              <div class="cut-option-card is-active" data-cut-type="Die Cut">
+                <b>Die Cut Stickers</b>
+                <p>Cut precisely around the contour of your design. The most popular choice.</p>
+              </div>
+              <div class="cut-option-card" data-cut-type="Kiss Cut">
+                <b>Kiss Cut Stickers</b>
+                <p>Delicate outline cut with an extra border backing for quick, easy peeling.</p>
+              </div>
+              <div class="cut-option-card" data-cut-type="Holographic">
+                <b>Holographic Cut</b>
+                <p>Iridescent rainbow metallic reflection that shifts in natural light.</p>
+              </div>
+              <div class="cut-option-card" data-cut-type="Clear Vinyl">
+                <b>Clear Vinyl Stickers</b>
+                <p>Crystal transparent background, allowing glass or surfaces to show through.</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Step 3: Size & Finish -->
+          <div class="studio-step-section">
+            <h3><span class="flow-step-num" style="width:24px;height:24px;font-size:12px;margin-bottom:0;">3</span> Select Size &amp; Finish</h3>
+            <div style="margin-bottom:14px;">
+              <span style="font-family:var(--font-display);font-size:13px;font-weight:800;text-transform:uppercase;display:block;margin-bottom:8px;">Size:</span>
+              <div class="option-pills-row">
+                <button type="button" class="option-pill-btn size-pill-btn" data-size-val='2" x 2"'>2" x 2"</button>
+                <button type="button" class="option-pill-btn size-pill-btn is-active" data-size-val='3" x 3"'>3" x 3" (Standard)</button>
+                <button type="button" class="option-pill-btn size-pill-btn" data-size-val='4" x 4"'>4" x 4"</button>
+              </div>
+            </div>
+
+            <div>
+              <span style="font-family:var(--font-display);font-size:13px;font-weight:800;text-transform:uppercase;display:block;margin-bottom:8px;">Lamination Finish:</span>
+              <div class="option-pills-row">
+                <button type="button" class="option-pill-btn finish-pill-btn is-active" data-finish-val="Glossy">Vibrant Glossy</button>
+                <button type="button" class="option-pill-btn finish-pill-btn" data-finish-val="Matte">Smooth Velvet Matte</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Step 4: Quantity & Pack Pricing -->
+          <div class="studio-step-section">
+            <h3><span class="flow-step-num" style="width:24px;height:24px;font-size:12px;margin-bottom:0;">4</span> Quantity &amp; Pack Tiers</h3>
+            <div class="tier-pills-grid">
+              <button type="button" class="tier-pill-btn" data-qty-val="10">
+                <b>10 pcs</b>
+                <span>₹49.9 / ea</span>
+              </button>
+              <button type="button" class="tier-pill-btn" data-qty-val="25">
+                <b>25 pcs</b>
+                <span>₹35.9 / ea</span>
+              </button>
+              <button type="button" class="tier-pill-btn is-active" data-qty-val="50">
+                <b>50 pcs ⭐</b>
+                <span>₹29.9 / ea</span>
+              </button>
+              <button type="button" class="tier-pill-btn" data-qty-val="100">
+                <b>100 pcs</b>
+                <span>₹24.9 / ea</span>
+              </button>
+              <button type="button" class="tier-pill-btn" data-qty-val="250">
+                <b>250 pcs</b>
+                <span>₹19.9 / ea</span>
+              </button>
+              <button type="button" class="tier-pill-btn" data-qty-val="500">
+                <b>500 pcs 👑</b>
+                <span>₹16.9 / ea</span>
+              </button>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Right Column: Sticky Summary Box -->
+        <div class="studio-summary-card">
+          <h2 class="studio-summary-title">Order Summary</h2>
+
+          <div class="summary-row">
+            <span>Cut Style:</span>
+            <b id="sumCut">Die Cut</b>
+          </div>
+
+          <div class="summary-row">
+            <span>Finish:</span>
+            <b id="sumFinish">Glossy</b>
+          </div>
+
+          <div class="summary-row">
+            <span>Size:</span>
+            <b id="sumSize">3" x 3"</b>
+          </div>
+
+          <div class="summary-row">
+            <span>Quantity:</span>
+            <b id="sumQty">50 pcs</b>
+          </div>
+
+          <div class="summary-row">
+            <span>Price / Sticker:</span>
+            <b id="sumUnitPrice">₹29.9/each</b>
+          </div>
+
+          <div class="summary-row total">
+            <span>Estimated Total:</span>
+            <span id="sumTotalPrice">₹1,499</span>
+          </div>
+
+          <div style="background:var(--off-white);border:1px solid var(--black);border-radius:var(--radius-sm);padding:12px;font-size:12px;line-height:1.5;">
+            ✓ <b>Free Digital Proof:</b> We email you a cutline proof before printing.<br />
+            ✓ <b>Fast Turnaround:</b> Ships within 3-4 business days.<br />
+            ✓ <b>100% Satisfaction Guarantee.</b>
+          </div>
+
+          <button type="button" class="btn btn-primary" id="addCustomToCartBtn" style="width:100%;font-size:15px;padding:16px;">
+            Add Custom Pack to Cart →
+          </button>
+        </div>
+
+      </div>
+
+    </div>
+  </main>
+
+  <!-- Footer -->
+  <footer class="site-footer">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <img src="assets/images/logo.png" alt="CHIPAKK" />
+        <p>Premium, creative stickers for a bolder, brighter, more you. Stick it. Own it.</p>
+      </div>
+      <div class="footer-col">
+        <b>Shop</b>
+        <ul>
+          <li><a href="shop.html">All Stickers</a></li>
+          <li><a href="categories.html">Categories</a></li>
+          <li><a href="custom-stickers.html">Custom Stickers</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <b>Account</b>
+        <ul>
+          <li><a href="account.html">My Orders</a></li>
+          <li><a href="account.html">Wishlist</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <b>Company</b>
+        <ul>
+          <li><a href="#">Shipping FAQ</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <div class="footer-bottom-inner">
+        <span>© <span id="footerYear">2026</span> CHIPAKK. All rights reserved.</span>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Cart Drawer -->
+  <aside class="cart-drawer" id="cartDrawer" role="dialog" aria-modal="true" aria-label="Shopping cart" hidden>
+    <div class="cart-header">
+      <div class="cart-header-title-wrap">
+        <h2>Your Cart</h2>
+        <span class="cart-header-badge" id="cartHeaderBadge">[ 0 ITEMS ]</span>
+      </div>
+      <button class="panel-close" id="cartCloseBtn" aria-label="Close cart">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/></svg>
+      </button>
+    </div>
+
+    <!-- Free Shipping Progress Bar -->
+    <div class="cart-shipping-banner" id="cartShippingBanner">
+      <div class="cart-shipping-header">
+        <span class="cart-shipping-icon" id="cartShippingIcon">🚚</span>
+        <span class="cart-shipping-text" id="cartShippingMsg">Calculating shipping eligibility...</span>
+      </div>
+      <div class="cart-shipping-track">
+        <div class="cart-shipping-bar" id="cartShippingBar" style="width: 0%;"></div>
+      </div>
+    </div>
+
+    <div class="cart-items" id="cartItems"></div>
+
+    <div class="cart-footer" id="cartFooter">
+      <div class="cart-summary-table">
+        <div class="cart-summary-line">
+          <span class="cart-summary-label">Subtotal</span>
+          <span class="cart-summary-val" id="cartSubtotal">₹0</span>
+        </div>
+        <div class="cart-summary-line">
+          <span class="cart-summary-label">Shipping</span>
+          <span class="cart-summary-val" id="cartShippingFee">₹0</span>
+        </div>
+        <div class="cart-summary-line cart-total-line">
+          <span class="cart-summary-label">Estimated Total</span>
+          <span class="cart-total-val" id="cartTotal">₹0</span>
+        </div>
+      </div>
+      <button class="btn btn-primary btn-block cart-checkout-btn" id="checkoutBtn" disabled>Proceed to Checkout →</button>
+      <p class="cart-note">Free shipping automatically applied on eligible orders.</p>
+    </div>
+  </aside>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/app.js"></script>
+  <script src="js/custom-stickers.js"></script>
+</body>
+</html>

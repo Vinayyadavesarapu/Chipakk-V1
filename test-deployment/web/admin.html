@@ -1,0 +1,1859 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Workspace | CHIPAKK Control Panel</title>
+    <link rel="stylesheet" href="css/admin.css">
+    <style>
+        :root {
+            --badge-live: #10b981;
+            --badge-upcoming: #f59e0b;
+            --badge-ended: #6b7280;
+            --badge-inactive: #ef4444;
+            --badge-paid: #059669;
+            --badge-pending: #d97706;
+            --badge-shipped: #2563eb;
+            --badge-delivered: #10b981;
+        }
+
+        body {
+            background-color: #f6f5f0;
+            margin: 0;
+            padding: 0;
+            font-family: system-ui, -apple-system, sans-serif;
+        }
+
+        .nav-category-header {
+            font-size: 0.65rem;
+            font-weight: 900;
+            letter-spacing: 1px;
+            color: #777;
+            text-transform: uppercase;
+            margin-top: 14px;
+            margin-bottom: 4px;
+            padding-left: 6px;
+        }
+
+        .admin-sidebar {
+            width: 250px;
+            background: #ffffff;
+            border-right: var(--border-width, 2px) solid var(--text-color, #000);
+            padding: 15px;
+            box-sizing: border-box;
+            height: 100vh;
+            position: fixed;
+            top: 0;
+            left: 0;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            z-index: 100;
+            flex-shrink: 0;
+        }
+
+        .admin-main {
+            margin-left: 250px;
+            width: calc(100% - 250px);
+            max-width: none;
+            padding: 25px 35px;
+            min-height: 100vh;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .admin-sidebar-nav {
+            list-style: none;
+            margin: 0 0 6px 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+        }
+        .admin-nav-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: var(--text-color, #000);
+            text-decoration: none;
+            font-weight: 800;
+            padding: 7px 10px;
+            border: 2px solid transparent;
+            text-transform: uppercase;
+            font-size: 0.8rem;
+            letter-spacing: 0.5px;
+            transition: all 0.15s ease-in-out;
+            cursor: pointer;
+        }
+        .admin-nav-item.active, .admin-nav-item:hover {
+            background-color: var(--bg-color, #f6f5f0);
+            border-color: var(--text-color, #000);
+            transform: translateX(3px);
+        }
+        .status-badge {
+            font-weight: 800;
+            padding: 3px 8px;
+            border: 1.5px solid var(--text-color, #000);
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            display: inline-block;
+            border-radius: 2px;
+        }
+        .status-live { background-color: var(--badge-live); color: #ffffff; }
+        .status-upcoming { background-color: var(--badge-upcoming); color: #ffffff; }
+        .status-ended { background-color: var(--badge-ended); color: #ffffff; }
+        .status-inactive { background-color: var(--badge-inactive); color: #ffffff; }
+
+        .admin-stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+            gap: 14px;
+            margin-bottom: 25px;
+        }
+        .admin-stat-card {
+            background: #ffffff;
+            border: var(--border-width, 2px) solid var(--text-color, #000);
+            padding: 14px;
+            box-shadow: 4px 4px 0px var(--text-color, #000);
+            position: relative;
+        }
+        .admin-stat-label {
+            font-size: 0.72rem;
+            font-weight: 800;
+            color: #555;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .admin-stat-val {
+            font-size: 1.9rem;
+            font-weight: 900;
+            margin-top: 4px;
+            color: var(--text-color, #000);
+        }
+        .admin-stat-sub {
+            font-size: 0.72rem;
+            margin-top: 4px;
+            color: #666;
+            font-weight: 700;
+        }
+
+        /* Image Management UI */
+        .img-gallery-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+            gap: 12px;
+            margin-top: 10px;
+            padding: 10px;
+            border: 2px solid var(--text-color, #000);
+            background: #ffffff;
+            min-height: 110px;
+        }
+        .img-thumb-card {
+            border: 2px solid var(--text-color, #000);
+            padding: 6px;
+            background: #fafafa;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            position: relative;
+        }
+        .img-thumb-card img {
+            width: 100%;
+            height: 75px;
+            object-fit: cover;
+            border: 1px solid #ccc;
+        }
+        .img-thumb-card .primary-tag {
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            background: var(--accent-color, #ff0055);
+            color: #fff;
+            font-size: 0.6rem;
+            font-weight: 900;
+            padding: 2px 4px;
+            border: 1px solid #000;
+        }
+        .img-thumb-actions {
+            display: flex;
+            gap: 4px;
+            margin-top: 6px;
+            width: 100%;
+            justify-content: center;
+        }
+        .img-btn-sm {
+            padding: 2px 5px;
+            font-size: 0.65rem;
+            font-weight: bold;
+            border: 1px solid var(--text-color, #000);
+            background: #fff;
+            cursor: pointer;
+        }
+        .img-btn-sm:hover {
+            background: var(--text-color, #000);
+            color: #fff;
+        }
+
+        /* Modal styling */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0,0,0,0.65);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        .modal-body-scroll {
+            max-height: 85vh;
+            overflow-y: auto;
+            padding-right: 5px;
+        }
+
+        .chart-legend-box {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.8rem;
+            font-weight: bold;
+        }
+        .legend-color-dot {
+            width: 12px;
+            height: 12px;
+            border: 1px solid #000;
+            display: inline-block;
+        }
+
+        /* Filter Tabs */
+        .order-filter-tabs {
+            display: flex;
+            gap: 6px;
+            overflow-x: auto;
+            padding-bottom: 8px;
+            margin-bottom: 15px;
+            border-bottom: 2px solid var(--text-color, #000);
+        }
+        .order-tab-btn {
+            padding: 6px 12px;
+            font-size: 0.78rem;
+            font-weight: 800;
+            border: 2px solid var(--text-color, #000);
+            background: #fff;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        .order-tab-btn.active {
+            background: var(--text-color, #000);
+            color: #fff;
+        }
+
+        /* Highlighted Admin Product ID Box */
+        .admin-id-highlight {
+            font-family: monospace;
+            font-size: 0.95rem;
+            font-weight: 900;
+            background: #fef08a;
+            color: #000;
+            padding: 2px 6px;
+            border: 1px solid #000;
+            display: inline-block;
+        }
+
+        /* Status Stepper */
+        .status-timeline-stepper {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: relative;
+            margin: 20px 0;
+            padding: 10px 0;
+        }
+        .status-timeline-stepper::before {
+            content: '';
+            position: absolute;
+            top: 25px;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background: #ddd;
+            z-index: 1;
+        }
+        .timeline-step-node {
+            position: relative;
+            z-index: 2;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+        }
+        .timeline-step-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: #fff;
+            border: 2px solid #aaa;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            font-weight: 900;
+            color: #777;
+        }
+        .timeline-step-node.completed .timeline-step-icon {
+            background: #10b981;
+            border-color: #059669;
+            color: #fff;
+        }
+        .timeline-step-node.current .timeline-step-icon {
+            background: #2563eb;
+            border-color: #1d4ed8;
+            color: #fff;
+            box-shadow: 0 0 0 4px rgba(37,99,235,0.25);
+        }
+        .timeline-step-label {
+            font-size: 0.7rem;
+            font-weight: 800;
+            text-transform: uppercase;
+            color: #555;
+            text-align: center;
+        }
+
+        /* Marquee Ticker Preview Animation */
+        @keyframes marquee-scroll {
+            0% { transform: translateX(100%); }
+            100% { transform: translateX(-100%); }
+        }
+        .marquee-running {
+            display: inline-block;
+            white-space: nowrap;
+            animation: marquee-scroll 12s linear infinite;
+        }
+
+        /* Product selection checklist */
+        .product-select-grid {
+            max-height: 200px;
+            overflow-y: auto;
+            border: 2px solid var(--text-color, #000);
+            padding: 10px;
+            background: #fff;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .product-select-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 6px 10px;
+            border: 1px solid #ddd;
+            background: #fafafa;
+        }
+        .product-select-item:hover {
+            background: #f0ede4;
+        }
+        .chip-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 8px;
+        }
+        .chip-item {
+            background: var(--text-color, #000);
+            color: #fff;
+            font-size: 0.75rem;
+            font-weight: bold;
+            padding: 3px 8px;
+            border-radius: 2px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .chip-remove-btn {
+            cursor: pointer;
+            color: #ff8888;
+            font-weight: 900;
+        }
+
+        .retro-panel {
+            border: var(--border-width, 2px) solid var(--text-color, #000);
+            box-shadow: 4px 4px 0px var(--text-color, #000);
+            padding: 20px;
+            box-sizing: border-box;
+            position: relative;
+        }
+
+        .admin-grid-2col {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
+            gap: 20px;
+        }
+
+        .admin-grid-4col {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+            gap: 15px;
+        }
+
+        .admin-table-container {
+            width: 100%;
+            overflow-x: auto;
+            border: var(--border-width, 2px) solid var(--text-color, #000);
+            background: #fff;
+            margin-bottom: 20px;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .admin-mobile-topbar {
+            display: none;
+            align-items: center;
+            justify-content: space-between;
+            background: #ffffff;
+            border-bottom: 2px solid var(--text-color, #000);
+            padding: 10px 14px;
+            margin: -25px -35px 20px -35px;
+            position: sticky;
+            top: 0;
+            z-index: 90;
+        }
+
+        .admin-sidebar-backdrop {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 998;
+            backdrop-filter: blur(2px);
+        }
+
+        .mobile-only-btn {
+            display: none !important;
+        }
+
+        @media (max-width: 900px) {
+            .mobile-only-btn {
+                display: inline-flex !important;
+            }
+            .admin-mobile-topbar {
+                display: flex;
+                margin: -15px -12px 18px -12px;
+            }
+            .admin-sidebar {
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 270px;
+                max-width: 85vw;
+                height: 100vh;
+                z-index: 999;
+                transform: translateX(-100%);
+                transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+                box-shadow: 4px 0 20px rgba(0,0,0,0.25);
+            }
+            .admin-sidebar.open {
+                transform: translateX(0);
+            }
+            .admin-main {
+                margin-left: 0 !important;
+                width: 100% !important;
+                padding: 15px 12px;
+                padding-left: max(12px, env(safe-area-inset-left));
+                padding-right: max(12px, env(safe-area-inset-right));
+                padding-bottom: max(20px, env(safe-area-inset-bottom));
+            }
+            .admin-stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+                gap: 10px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .admin-stats-grid {
+                grid-template-columns: 1fr;
+            }
+            .admin-main {
+                padding: 12px 8px;
+            }
+            .retro-panel {
+                padding: 14px 12px;
+                box-shadow: 3px 3px 0px var(--text-color, #000);
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Login Area (Hidden in LOCAL UI DESIGN MODE) -->
+    <div id="login-section" class="container" style="max-width: 450px; margin-top: 100px; display: block;">
+        <div class="retro-panel" style="background-color: #fff;">
+            <div style="text-align: center; margin-bottom: 20px;">
+                <h1 class="font-pixel" style="font-size: 2.5rem; letter-spacing: -1px; margin-bottom: 5px;">CHIPAKK</h1>
+                <p style="font-weight: bold; text-transform: uppercase; font-size: 0.8rem; letter-spacing: 1px;">Control Panel Terminal</p>
+            </div>
+            
+            <p style="margin-bottom: 15px; font-size: 0.8rem; background-color: var(--bg-color); padding: 10px; border: 1px dashed var(--text-color);">
+                Authorized personnel access only via Firebase credentials.
+            </p>
+
+            <div class="retro-field">
+                <label for="admin-email">Admin Email</label>
+                <input type="email" id="admin-email" class="retro-input" placeholder="admin@example.com">
+            </div>
+            <div class="retro-field">
+                <label for="admin-password">Secure Password</label>
+                <input type="password" id="admin-password" class="retro-input" placeholder="••••••••">
+            </div>
+            <button class="retro-btn retro-btn-primary" id="login-btn" style="width: 100%; margin-top: 10px;">
+                ACCESS TERMINAL
+            </button>
+            <p id="login-error" style="color: var(--error-color); margin-top: 10px; font-weight: bold; font-size: 0.85rem; text-align: center;"></p>
+        </div>
+    </div>
+
+    <!-- Admin Panel Workspace -->
+    <div id="admin-workspace" style="display: none;">
+        
+        <!-- Sidebar Navigation -->
+        <aside class="admin-sidebar">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; border-bottom: var(--border-width, 2px) solid var(--text-color, #000); padding-bottom: 12px; margin-bottom: 12px;">
+                <div>
+                    <h2 class="font-pixel" style="font-size: 2.2rem; letter-spacing: -2px; margin: 0;">CHIPAKK OS</h2>
+                    <div style="font-size: 0.72rem; font-weight: bold; opacity: 0.7;">PRINT-ON-DEMAND CONSOLE v3.3</div>
+                </div>
+                <button id="close-admin-sidebar-btn" class="icon-btn mobile-only-btn" style="display: none; font-size: 1.3rem; font-weight: 900; padding: 2px 8px; border: 2px solid #000; background: #fff; cursor: pointer;" aria-label="Close Sidebar">×</button>
+            </div>
+
+            <!-- Global Search Box -->
+            <div style="margin-bottom: 12px;">
+                <input type="text" id="global-admin-search" class="retro-input" placeholder="🔍 Global Search (ID, Order, Cust)..." style="font-size: 0.75rem; padding: 6px;">
+            </div>
+
+            <!-- Sidebar Navigation Categories -->
+            <div class="nav-category-header">DASHBOARD</div>
+            <ul class="admin-sidebar-nav">
+                <li><a href="#" class="admin-nav-item active" data-tab="tab-dashboard">📊 Dashboard</a></li>
+            </ul>
+
+            <div class="nav-category-header">CATALOG</div>
+            <ul class="admin-sidebar-nav">
+                <li><a href="#" class="admin-nav-item" data-tab="tab-products">🏷️ Products & Drops</a></li>
+                <li><a href="#" class="admin-nav-item" data-tab="tab-categories">📁 Categories</a></li>
+                <li><a href="#" class="admin-nav-item" data-tab="tab-reviews">⭐ Reviews</a></li>
+            </ul>
+
+            <div class="nav-category-header">SALES</div>
+            <ul class="admin-sidebar-nav">
+                <li><a href="#" class="admin-nav-item" data-tab="tab-orders">🛒 Orders</a></li>
+                <li><a href="#" class="admin-nav-item" data-tab="tab-customers">👥 Customers</a></li>
+                <li><a href="#" class="admin-nav-item" data-tab="tab-events">🔥 Events & Sales</a></li>
+                <li><a href="#" class="admin-nav-item" data-tab="tab-coupons">🎟️ Coupons</a></li>
+            </ul>
+
+            <div class="nav-category-header">OPERATIONS</div>
+            <ul class="admin-sidebar-nav">
+                <li><a href="#" class="admin-nav-item" data-tab="tab-production">🖨️ Production Queue</a></li>
+                <li><a href="#" class="admin-nav-item" data-tab="tab-shipping">🚚 Shipping Rules</a></li>
+                <li><a href="#" class="admin-nav-item" data-tab="tab-logs">📜 Audit Logs</a></li>
+            </ul>
+
+            <div class="nav-category-header">STORE</div>
+            <ul class="admin-sidebar-nav">
+                <li><a href="#" class="admin-nav-item" data-tab="tab-homepage">🎨 Store Builder</a></li>
+            </ul>
+
+            <div class="nav-category-header">SYSTEM</div>
+            <ul class="admin-sidebar-nav">
+                <li><a href="#" class="admin-nav-item" data-tab="tab-team">👥 Team Members</a></li>
+                <li><a href="#" class="admin-nav-item" data-tab="tab-settings">⚙️ System Settings</a></li>
+            </ul>
+
+            <div style="margin-top: auto; padding-top: 15px; border-top: 2px solid var(--text-color, #000);">
+                <button class="retro-btn" id="logout-btn" style="width: 100%; box-shadow: none;">LOGOUT</button>
+            </div>
+        </aside>
+        
+        <!-- Mobile Sidebar Overlay Backdrop -->
+        <div id="admin-sidebar-backdrop" class="admin-sidebar-backdrop"></div>
+
+        <!-- Main Workspace Viewport -->
+        <main class="admin-main">
+            
+            <!-- Mobile Navigation Bar -->
+            <div class="admin-mobile-topbar">
+                <button id="admin-mobile-toggle" class="retro-btn" style="padding: 6px 12px; font-size: 0.8rem; font-weight: 900; display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                    <span>☰</span> MENU
+                </button>
+                <div style="font-family: 'VT323', monospace; font-size: 1.6rem; font-weight: 900; letter-spacing: -1px;">CHIPAKK OS</div>
+                <div style="display: flex; align-items: center; gap: 6px;">
+                    <span class="status-badge status-live" style="font-size: 0.65rem; padding: 2px 6px;">LIVE</span>
+                </div>
+            </div>
+
+            <!-- TAB 1: DASHBOARD -->
+            <section id="tab-dashboard" class="tab-content" style="display: block;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; flex-wrap: wrap; gap: 10px;">
+                    <div>
+                        <h2 style="font-weight: 900; text-transform: uppercase; margin: 0;">Print-on-Demand Operations Dashboard</h2>
+                        <p style="font-size: 0.85rem; color: #555; font-weight: bold; margin: 4px 0 0 0;">Real-time metrics for sticker manufacturing queue, orders, revenue & active drops</p>
+                    </div>
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <span style="font-size: 0.8rem; font-weight: bold;">ANALYTICS PERIOD:</span>
+                        <select id="analytics-date-filter" class="retro-input" style="width: 170px; padding: 6px;">
+                            <option value="current_vs_prev">Current vs Prev Month</option>
+                            <option value="last_3_months">Last 3 Months</option>
+                            <option value="last_6_months">Last 6 Months</option>
+                        </select>
+                        <button id="apply-analytics-filter-btn" class="retro-btn retro-btn-primary" style="padding: 6px 12px; font-size: 0.78rem;">APPLY</button>
+                    </div>
+                </div>
+                
+                <!-- Print-on-Demand Stats Grid -->
+                <div class="admin-stats-grid">
+                    <div class="admin-stat-card">
+                        <div class="admin-stat-label">Total Orders</div>
+                        <div id="stat-total-orders" class="admin-stat-val">0</div>
+                        <div class="admin-stat-sub">Lifetime order volume</div>
+                    </div>
+                    <div class="admin-stat-card">
+                        <div class="admin-stat-label">Cancelled Orders</div>
+                        <div id="stat-cancelled-orders" class="admin-stat-val" style="color: var(--error-color, #ef4444);">0</div>
+                        <div class="admin-stat-sub">Cancellations</div>
+                    </div>
+                    <div class="admin-stat-card">
+                        <div class="admin-stat-label">Total Revenue</div>
+                        <div id="stat-total-revenue" class="admin-stat-val" style="color: #059669;">₹0</div>
+                        <div class="admin-stat-sub">Gross sales total</div>
+                    </div>
+                    <div class="admin-stat-card">
+                        <div class="admin-stat-label">Revenue This Month</div>
+                        <div id="stat-month-revenue" class="admin-stat-val" style="color: #2563eb;">₹0</div>
+                        <div id="stat-month-revenue-sub" class="admin-stat-sub">Current month total</div>
+                    </div>
+                    <div class="admin-stat-card">
+                        <div class="admin-stat-label">Orders Today</div>
+                        <div id="stat-orders-today" class="admin-stat-val" style="color: #7c3aed;">0</div>
+                        <div class="admin-stat-sub">Placed last 24 hours</div>
+                    </div>
+                    <div class="admin-stat-card">
+                        <div class="admin-stat-label">Awaiting Confirmation</div>
+                        <div id="stat-awaiting-conf" class="admin-stat-val" style="color: #d97706;">0</div>
+                        <div class="admin-stat-sub">New orders to review</div>
+                    </div>
+                    <div class="admin-stat-card">
+                        <div class="admin-stat-label">Ready to Print</div>
+                        <div id="stat-ready-print" class="admin-stat-val" style="color: #2563eb;">0</div>
+                        <div class="admin-stat-sub">Pending printer queue</div>
+                    </div>
+                    <div class="admin-stat-card">
+                        <div class="admin-stat-label">Printing / Cutting</div>
+                        <div id="stat-in-production" class="admin-stat-val" style="color: #059669;">0</div>
+                        <div class="admin-stat-sub">Items being manufactured</div>
+                    </div>
+                    <div class="admin-stat-card">
+                        <div class="admin-stat-label">Ready to Pack</div>
+                        <div id="stat-ready-pack" class="admin-stat-val" style="color: #10b981;">0</div>
+                        <div class="admin-stat-sub">Cut & ready to pack</div>
+                    </div>
+                </div>
+
+                <!-- Modern Visual Dashboard Graph Container -->
+                <div class="retro-panel" style="background-color: #ffffff; border-radius: 12px; border: 2px solid #000; box-shadow: 4px 4px 0 #000; margin-bottom: 30px; padding: 20px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-wrap: wrap; gap: 12px;">
+                        <div>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <span style="font-size: 1.2rem;">📊</span>
+                                <h3 style="font-weight: 900; text-transform: uppercase; margin: 0; font-size: 1.1rem; letter-spacing: -0.02em;">Sales & Order Volume Growth</h3>
+                            </div>
+                            <p style="font-size: 0.8rem; color: #666; margin: 4px 0 0 0;">Monthly verified revenue vs sticker order production volume</p>
+                        </div>
+                        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                            <div class="chart-toggle-group" style="display: inline-flex; border: 2px solid #000; border-radius: 6px; overflow: hidden; background: #f3f4f6;">
+                                <button type="button" class="chart-toggle-btn is-active" data-mode="all" style="padding: 5px 12px; font-size: 0.75rem; font-weight: 800; border: none; cursor: pointer; background: #000; color: #fff;">ALL METRICS</button>
+                                <button type="button" class="chart-toggle-btn" data-mode="revenue" style="padding: 5px 12px; font-size: 0.75rem; font-weight: 800; border: none; cursor: pointer; background: transparent; color: #000;">REVENUE ONLY</button>
+                                <button type="button" class="chart-toggle-btn" data-mode="orders" style="padding: 5px 12px; font-size: 0.75rem; font-weight: 800; border: none; cursor: pointer; background: transparent; color: #000;">ORDERS ONLY</button>
+                            </div>
+                            <button id="refresh-chart-btn" class="retro-btn" style="padding: 5px 10px; font-size: 0.75rem; font-weight: 800;" title="Refresh real-time chart data">↻ SYNC</button>
+                        </div>
+                    </div>
+
+                    <!-- Summary Metrics Strip -->
+                    <div id="chart-summary-bar" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; background: #fbfbfa; padding: 14px; border: 1.5px solid #e5e7eb; border-radius: 8px; margin-bottom: 16px;">
+                        <!-- Injected dynamically by admin.js from real database metrics -->
+                    </div>
+
+                    <!-- Chart Legend -->
+                    <div style="display: flex; gap: 16px; margin-bottom: 12px; justify-content: flex-end; align-items: center; font-size: 0.8rem; font-weight: 700;">
+                        <div style="display: flex; align-items: center; gap: 6px;">
+                            <span style="display: inline-block; width: 14px; height: 14px; background: #10b981; border: 1.5px solid #000; border-radius: 3px;"></span>
+                            <span>Revenue (₹)</span>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 6px;">
+                            <span style="display: inline-block; width: 14px; height: 3px; background: #3b82f6; border-radius: 2px;"></span>
+                            <span style="display: inline-block; width: 7px; height: 7px; background: #1d4ed8; border-radius: 50%; margin-left: -10px; margin-right: 2px;"></span>
+                            <span>Order Count</span>
+                        </div>
+                    </div>
+
+                    <!-- Chart Canvas Frame -->
+                    <div style="position: relative; width: 100%; height: 280px; background: #fafafa; border: 1.5px solid #e5e7eb; border-radius: 8px; padding: 12px; box-sizing: border-box; overflow: hidden;">
+                        <canvas id="sales-comparison-canvas" style="width: 100%; height: 100%; display: block;"></canvas>
+                    </div>
+                </div>
+
+                <!-- Dashboard Widgets Grid -->
+                <div class="admin-grid-2col">
+                    <div class="retro-panel" style="background: #fff;">
+                        <h3 style="font-weight: bold; margin-bottom: 12px; font-size: 0.95rem;">📦 RECENT ORDERS</h3>
+                        <div class="admin-table-container">
+                            <table class="admin-table" style="font-size: 0.8rem;">
+                                <thead>
+                                    <tr>
+                                        <th>Order ID</th><th>Customer</th><th>Total</th><th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="dash-recent-orders-tbody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="retro-panel" style="background: #fff;">
+                        <h3 style="font-weight: bold; margin-bottom: 12px; font-size: 0.95rem;">🔥 POPULAR CATALOG DROPS</h3>
+                        <div class="admin-table-container">
+                            <table class="admin-table" style="font-size: 0.8rem;">
+                                <thead>
+                                    <tr>
+                                        <th>Admin ID</th><th>Product Name</th><th>Price</th><th>Rating & Tier</th><th>Drop Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="dash-top-products-tbody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- TAB: PRODUCTS & DROPS -->
+            <section id="tab-products" class="tab-content" style="display: none;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; flex-wrap: wrap; gap: 10px;">
+                    <div>
+                        <h2 style="font-weight: 900; text-transform: uppercase; margin: 0;">Product & Drop Catalog</h2>
+                        <p style="font-size: 0.85rem; color: #555; font-weight: bold; margin: 4px 0 0 0;">Manage print-on-demand sticker designs, pricing, images, and release schedules</p>
+                    </div>
+                    <button class="retro-btn retro-btn-primary" id="new-prod-btn">+ CREATE NEW STICKER DROP</button>
+                </div>
+
+                <!-- Filters & Search Bar -->
+                <div style="display: flex; gap: 15px; margin-bottom: 20px; flex-wrap: wrap; background: #fff; padding: 12px; border: 2px solid var(--text-color, #000);">
+                    <input type="text" id="prod-search-input" class="retro-input" placeholder="Search by Admin ID or Product Name..." style="flex: 1; min-width: 200px;">
+                    <select id="prod-filter-category" class="retro-input" style="width: 160px;">
+                        <option value="">All Categories</option>
+                    </select>
+                    <select id="prod-filter-drop-status" class="retro-input" style="width: 160px;">
+                        <option value="">All Drop Statuses</option>
+                        <option value="Live Now">Live Now</option>
+                        <option value="Upcoming">Upcoming</option>
+                        <option value="Inactive">Inactive</option>
+                    </select>
+                    <button id="prod-reset-filter-btn" class="retro-btn" style="padding: 4px 10px; font-size: 0.8rem;">RESET</button>
+                </div>
+
+                <!-- Product Form Container -->
+                <div id="product-form-container" class="retro-panel" style="background-color: #fff; max-width: 1000px; width: 100%; margin-bottom: 30px; display: none;">
+                    <div style="font-size: 0.75rem; font-weight: 900; color: #2563eb; margin-bottom: 6px; letter-spacing: 0.5px;">🖨️ PRINT-ON-DEMAND PRODUCT CONFIGURATION</div>
+                    <h3 id="prod-form-title" style="margin-bottom: 20px; font-weight: bold;">[ADD NEW PRODUCT DROP]</h3>
+                    
+                    <div class="admin-grid-2col">
+                        <div>
+                            <div class="retro-field">
+                                <label for="prod-admin-id">Admin Product ID <span style="color:red;">* (Mandatory & Unique)</span></label>
+                                <input type="text" id="prod-admin-id" class="retro-input" placeholder="e.g. CK-001, STK-1001" required>
+                                <small style="font-size: 0.75rem; color: #555;">Code printed on order sheets & production queues.</small>
+                            </div>
+                            <div class="retro-field">
+                                <label for="prod-title">Product Name <span style="color:red;">*</span></label>
+                                <input type="text" id="prod-title" class="retro-input" placeholder="e.g. Cyberpunk Glitch Sticker" required>
+                            </div>
+                            <div class="retro-field">
+                                <label for="prod-price">Price (₹) <span style="color:red;">*</span></label>
+                                <input type="number" id="prod-price" class="retro-input" placeholder="199" required min="0">
+                            </div>
+                            <div class="retro-field">
+                                <label for="prod-category">Category <span style="color:red;">*</span></label>
+                                <select id="prod-category" class="retro-input"></select>
+                            </div>
+                            <div class="retro-field">
+                                <label for="prod-tags">Search Tags</label>
+                                <input type="text" id="prod-tags" class="retro-input" placeholder="comma, separated, tags">
+                            </div>
+                        </div>
+
+                        <div>
+                            <div class="retro-field">
+                                <label for="prod-release-date">Scheduled Drop Release Date/Time</label>
+                                <input type="datetime-local" id="prod-release-date" class="retro-input">
+                                <small style="font-size: 0.75rem; color: #555;">Leave blank to publish immediately as "Live Now". If set, stays "Upcoming" until release time.</small>
+                            </div>
+
+                            <div class="retro-field">
+                                <label for="prod-active">Active Status <span style="color:red;">*</span></label>
+                                <select id="prod-active" class="retro-input">
+                                    <option value="true">Active (Available to Order)</option>
+                                    <option value="false">Inactive (Disabled / Off)</option>
+                                </select>
+                            </div>
+
+                            <!-- Image Management Component -->
+                            <div class="retro-field">
+                                <label>Product Images <span style="color:red;">* (At least 1 image required)</span></label>
+                                <div style="display: flex; gap: 8px;">
+                                    <input type="text" id="prod-image-url" class="retro-input" placeholder="Paste image URL (HTTPS / Data URI)" style="font-size: 0.8rem;">
+                                    <button type="button" class="retro-btn" id="add-image-url-btn" style="padding: 4px 10px; font-size: 0.75rem; white-space: nowrap;">ADD IMAGE</button>
+                                </div>
+                                <div style="margin-top: 6px;">
+                                    <input type="file" id="prod-image-file-input" accept="image/*" style="font-size:0.75rem;">
+                                </div>
+
+                                <div id="prod-images-gallery" class="img-gallery-grid">
+                                    <!-- Injected dynamically -->
+                                </div>
+                            </div>
+
+                            <div style="display: flex; gap: 15px; margin-top: 25px;">
+                                <button class="retro-btn retro-btn-primary" id="save-prod-btn">SAVE PRODUCT DROP</button>
+                                <button class="retro-btn" id="cancel-prod-btn">CANCEL</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="admin-table-container">
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>Thumbnail</th>
+                                <th>Admin Product ID</th>
+                                <th>Product Name</th>
+                                <th>Category</th>
+                                <th>Price</th>
+                                <th>Rating & Tier</th>
+                                <th>Drop Status</th>
+                                <th>Scheduled Release</th>
+                                <th>Active</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="products-tbody"></tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- TAB: CATEGORIES -->
+            <section id="tab-categories" class="tab-content" style="display: none;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; flex-wrap: wrap; gap: 10px;">
+                    <div>
+                        <h2 style="font-weight: 900; text-transform: uppercase; margin: 0;">Categories Sectors</h2>
+                        <p style="font-size: 0.85rem; color: #555; font-weight: bold; margin: 4px 0 0 0;">Organize stickers into storefront navigation categories</p>
+                    </div>
+                    <button class="retro-btn retro-btn-primary" id="new-cat-btn">+ ADD CATEGORY</button>
+                </div>
+
+                <!-- Category Form Container -->
+                <div id="category-form-container" class="retro-panel" style="background-color: #fff; max-width: 800px; width: 100%; margin-bottom: 30px; display: none;">
+                    <h3 id="cat-form-title" style="margin-bottom: 15px; font-weight: bold;">[ADD NEW CATEGORY]</h3>
+                    <div class="admin-grid-2col" style="gap: 15px;">
+                        <div class="retro-field">
+                            <label for="cat-name">Category Name <span style="color:red;">*</span></label>
+                            <input type="text" id="cat-name" class="retro-input" placeholder="e.g. Gaming, Memes" required>
+                        </div>
+                        <div class="retro-field">
+                            <label for="cat-slug">URL Slug</label>
+                            <input type="text" id="cat-slug" class="retro-input" placeholder="e.g. gaming">
+                        </div>
+                    </div>
+                    <div class="retro-field">
+                        <label for="cat-desc">Description</label>
+                        <input type="text" id="cat-desc" class="retro-input" placeholder="Short sector description">
+                    </div>
+                    <div class="retro-field">
+                        <label for="cat-image">Category Banner / Thumbnail Image (URL or Upload)</label>
+                        <div style="display: flex; gap: 8px;">
+                            <input type="text" id="cat-image" class="retro-input" placeholder="e.g. /uploads/cat-gaming.png or https://...">
+                            <button type="button" class="retro-btn" id="upload-cat-img-btn" style="padding: 4px 10px; font-size: 0.75rem; white-space: nowrap;">UPLOAD</button>
+                            <input type="file" id="cat-image-file" accept="image/*" style="display: none;">
+                        </div>
+                        <div id="cat-image-preview-box" style="margin-top: 6px; display: none;">
+                            <img id="cat-image-preview-img" src="" style="height: 48px; border: 1px solid #000; border-radius: 4px; object-fit: cover;">
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 10px; margin-top: 15px;">
+                        <button class="retro-btn retro-btn-primary" id="save-cat-btn">SAVE CATEGORY</button>
+                        <button class="retro-btn" id="cancel-cat-btn">CANCEL</button>
+                    </div>
+                </div>
+
+                <div class="admin-table-container" style="max-width: 900px;">
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>Order</th><th>Category Name</th><th>Slug</th><th>Product Count</th><th>Status</th><th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="categories-tbody"></tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- TAB: PRODUCTION QUEUE -->
+            <section id="tab-production" class="tab-content" style="display: none;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 10px;">
+                    <div>
+                        <h2 style="font-weight: 900; text-transform: uppercase; margin: 0;">🖨️ Print-on-Demand Production Queue</h2>
+                        <p style="font-size: 0.85rem; color: #555; font-weight: bold; margin: 4px 0 0 0;">Monitor, print, cut, and pack sticker orders dynamically on demand</p>
+                    </div>
+                </div>
+
+                <!-- Production Queue Status Filter Tabs -->
+                <div class="order-filter-tabs" id="production-status-tabs"></div>
+
+                <!-- Search & Batch Actions Toolbar -->
+                <div style="display: flex; gap: 15px; margin-bottom: 20px; background: #fff; padding: 12px; border: 2px solid var(--text-color, #000); flex-wrap: wrap; align-items: center;">
+                    <input type="text" id="prod-queue-search" class="retro-input" placeholder="Search Production Queue by Order #, Admin Product ID, Name, or Customer..." style="flex: 1; min-width: 220px;">
+                    
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                        <button id="prod-queue-select-all-btn" class="retro-btn" style="padding: 4px 8px; font-size: 0.75rem;">SELECT ALL FILTERED</button>
+                        <select id="prod-queue-batch-status" class="retro-input" style="width: 150px; font-size: 0.75rem; padding: 4px;">
+                            <option value="Ready to Print">Ready to Print</option>
+                            <option value="Printing">Printing</option>
+                            <option value="Printed">Printed</option>
+                            <option value="Cutting">Cutting</option>
+                            <option value="Cut">Cut</option>
+                            <option value="Ready to Pack">Ready to Pack</option>
+                            <option value="Packed">Packed</option>
+                        </select>
+                        <button id="prod-queue-batch-apply-btn" class="retro-btn retro-btn-primary" style="padding: 4px 10px; font-size: 0.75rem; white-space: nowrap;">SET BATCH STATUS</button>
+                    </div>
+                </div>
+
+                <div class="admin-table-container">
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th style="width: 30px;"><input type="checkbox" id="prod-queue-chk-header"></th>
+                                <th>Order Number</th>
+                                <th>Customer</th>
+                                <th>Admin Product ID</th>
+                                <th>Product Name & Variant</th>
+                                <th>Qty</th>
+                                <th>Print Status</th>
+                                <th>Cut Status</th>
+                                <th>Production Status</th>
+                                <th>Order Status</th>
+                                <th>Order Date</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="production-tbody"></tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- TAB: REVIEWS -->
+            <section id="tab-reviews" class="tab-content" style="display: none;">
+                <h2 style="font-weight: 900; margin-bottom: 25px; text-transform: uppercase;">Customer Reviews Moderation</h2>
+                <div class="admin-table-container">
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>Admin Product ID</th>
+                                <th>Product Name</th>
+                                <th>Customer Name</th>
+                                <th>Rating</th>
+                                <th>Review Comment</th>
+                                <th>Date</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="reviews-tbody"></tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- TAB: ORDERS -->
+            <section id="tab-orders" class="tab-content" style="display: none;">
+                <h2 style="font-weight: 900; margin-bottom: 25px; text-transform: uppercase;">Orders & Fulfillment Terminal</h2>
+                <div class="order-filter-tabs" id="order-status-tabs"></div>
+                <div style="display: flex; gap: 15px; margin-bottom: 20px; background: #fff; padding: 12px; border: 2px solid var(--text-color, #000);">
+                    <input type="text" id="order-search-input" class="retro-input" placeholder="Search by Order #, Customer Name, Phone, Admin Product ID (e.g. CK-001), or Tracking #..." style="flex: 1;">
+                    <button id="order-reset-search-btn" class="retro-btn" style="padding: 4px 10px; font-size: 0.8rem;">RESET</button>
+                </div>
+                <div class="admin-table-container">
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>Order Number</th><th>Customer</th><th>Phone</th><th>Date</th><th>Amount</th><th>Payment Status</th><th>Order Status</th><th>Shipping Status</th><th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="orders-tbody"></tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- TAB: CUSTOMERS -->
+            <section id="tab-customers" class="tab-content" style="display: none;">
+                <h2 style="font-weight: 900; margin-bottom: 25px; text-transform: uppercase;">Customer Profiles & Accounts</h2>
+                <div style="display: flex; gap: 15px; margin-bottom: 20px; background: #fff; padding: 12px; border: 2px solid var(--text-color, #000);">
+                    <input type="text" id="cust-search-input" class="retro-input" placeholder="Search customer by Name, Email, or Phone..." style="flex: 1;">
+                    <select id="cust-filter-status" class="retro-input" style="width: 180px;">
+                        <option value="">All Loyalty Tiers</option>
+                        <option value="NEW">NEW (0 Completed)</option>
+                        <option value="CUSTOMER">CUSTOMER (1–2)</option>
+                        <option value="REGULAR">REGULAR (3–5)</option>
+                        <option value="VIP">VIP (6–9)</option>
+                        <option value="ELITE">ELITE (10+)</option>
+                    </select>
+                </div>
+                <div class="admin-table-container">
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>Customer</th><th>Phone</th><th>Total Orders</th><th>Completed</th><th>Total Spend</th><th>Last Order</th><th>Loyalty Tier</th><th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="customers-tbody"></tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- TAB: EVENTS & SALES -->
+            <section id="tab-events" class="tab-content" style="display: none;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; flex-wrap: wrap; gap: 10px;">
+                    <div>
+                        <h2 style="font-weight: 900; text-transform: uppercase; margin: 0;">Event Promotions & Sales Engine</h2>
+                        <p style="font-size: 0.85rem; color: #555; font-weight: bold; margin: 4px 0 0 0;">Schedule flash sales, promotional discounts & storefront banners</p>
+                    </div>
+                    <button class="retro-btn retro-btn-primary" id="new-event-btn">+ SCHEDULE NEW EVENT</button>
+                </div>
+
+                <!-- Event Form Container -->
+                <div id="event-form-container" class="retro-panel" style="background-color: #fff; max-width: 1000px; width: 100%; margin-bottom: 30px; display: none;">
+                    <h3 id="evt-form-title" style="margin-bottom: 20px; font-weight: bold;">[SCHEDULE EVENT PROMOTION]</h3>
+                    
+                    <div class="admin-grid-2col">
+                        <div>
+                            <div class="retro-field">
+                                <label for="evt-name">Event Name <span style="color:red;">*</span></label>
+                                <input type="text" id="evt-name" class="retro-input" required placeholder="e.g. Diwali Flash Sale">
+                            </div>
+                            <div class="retro-field">
+                                <label for="evt-title">Banner Subtitle / Title</label>
+                                <input type="text" id="evt-title" class="retro-input" placeholder="e.g. 20% OFF All Anime & Gaming Stickers">
+                            </div>
+                            <div class="retro-field">
+                                <label for="evt-discount-type">Discount Type <span style="color:red;">*</span></label>
+                                <select id="evt-discount-type" class="retro-input">
+                                    <option value="percent">Percentage Discount (%)</option>
+                                    <option value="fixed">Fixed Amount Discount (₹)</option>
+                                </select>
+                            </div>
+                            <div class="retro-field">
+                                <label for="evt-discount-value">Discount Value <span style="color:red;">*</span></label>
+                                <input type="number" id="evt-discount-value" class="retro-input" value="20" required min="1">
+                            </div>
+                            <div class="retro-field">
+                                <label for="evt-active">Event Active Switch <span style="color:red;">*</span></label>
+                                <select id="evt-active" class="retro-input">
+                                    <option value="true">ON (Follows Scheduled Time)</option>
+                                    <option value="false">OFF (Disabled / Suspended)</option>
+                                </select>
+                            </div>
+                            <div class="retro-field">
+                                <label for="evt-storefront-hero">Show Storefront Hero Promotion Banner</label>
+                                <select id="evt-storefront-hero" class="retro-input">
+                                    <option value="true">Yes (Promote on Storefront)</option>
+                                    <option value="false">No (Silent Discount)</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div>
+                            <div class="retro-field">
+                                <label for="evt-start">Start Time <span style="color:red;">*</span></label>
+                                <input type="datetime-local" id="evt-start" class="retro-input" required>
+                            </div>
+                            <div class="retro-field">
+                                <label for="evt-end">End Time <span style="color:red;">*</span></label>
+                                <input type="datetime-local" id="evt-end" class="retro-input" required>
+                            </div>
+
+                            <div class="retro-field">
+                                <label style="font-weight: bold;">Select Event Target Products <span style="color:red;">*</span></label>
+                                <div style="display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap;">
+                                    <select id="evt-filter-cat" class="retro-input" style="font-size:0.75rem; width:120px; padding:3px;">
+                                        <option value="">All Categories</option>
+                                    </select>
+                                    <input type="text" id="evt-filter-search" class="retro-input" placeholder="Search Admin ID / Name..." style="font-size:0.75rem; flex:1; padding:3px;">
+                                    <button type="button" id="evt-select-all-btn" class="retro-btn" style="padding:2px 6px; font-size:0.7rem;">SELECT ALL FILTERED</button>
+                                    <button type="button" id="evt-deselect-all-btn" class="retro-btn" style="padding:2px 6px; font-size:0.7rem;">CLEAR</button>
+                                </div>
+
+                                <div id="evt-product-checklist" class="product-select-grid"></div>
+
+                                <div style="margin-top: 10px;">
+                                    <span style="font-size: 0.75rem; font-weight: bold;">Selected Target Products (<span id="evt-selected-count">0</span>):</span>
+                                    <div id="evt-selected-chips" class="chip-container"></div>
+                                </div>
+                            </div>
+
+                            <div style="display: flex; gap: 15px; margin-top: 25px;">
+                                <button class="retro-btn retro-btn-primary" id="save-event-btn">SAVE EVENT PROMOTION</button>
+                                <button class="retro-btn" id="cancel-event-btn">CANCEL</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="admin-table-container">
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>Event Name</th><th>Discount</th><th>Start Window</th><th>End Window</th><th>Target Products</th><th>Active Switch</th><th>Status</th><th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="events-tbody"></tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- TAB: COUPONS -->
+            <section id="tab-coupons" class="tab-content" style="display: none;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px;">
+                    <h2 style="font-weight: 900; text-transform: uppercase;">Coupons Engine</h2>
+                    <button class="retro-btn retro-btn-primary" id="new-coupon-btn">+ CREATE COUPON</button>
+                </div>
+
+                <!-- Coupon Form Container -->
+                <div id="coupon-form-container" class="retro-panel" style="background-color: #fff; max-width: 850px; width: 100%; margin-bottom: 30px; display: none;">
+                    <h3 id="cpn-form-title" style="margin-bottom: 20px; font-weight: bold;">[CREATE COUPON CODE]</h3>
+                    <div class="admin-grid-2col">
+                        <div>
+                            <div class="retro-field">
+                                <label for="cpn-code">Coupon Code <span style="color:red;">*</span></label>
+                                <input type="text" id="cpn-code" class="retro-input" placeholder="e.g. EXTRA20" required>
+                            </div>
+                            <div class="retro-field">
+                                <label for="cpn-type">Discount Type</label>
+                                <select id="cpn-type" class="retro-input">
+                                    <option value="percent">Percentage (%)</option>
+                                    <option value="fixed">Fixed Amount (₹)</option>
+                                </select>
+                            </div>
+                            <div class="retro-field">
+                                <label for="cpn-amount">Discount Value <span style="color:red;">*</span></label>
+                                <input type="number" id="cpn-amount" class="retro-input" required min="1">
+                            </div>
+                        </div>
+                        <div>
+                            <div class="retro-field">
+                                <label for="cpn-min">Minimum Order Required (₹)</label>
+                                <input type="number" id="cpn-min" class="retro-input" value="0">
+                            </div>
+                            <div class="retro-field">
+                                <label for="cpn-active">Enable Coupon</label>
+                                <select id="cpn-active" class="retro-input">
+                                    <option value="true">Active (On)</option>
+                                    <option value="false">Inactive (Off)</option>
+                                </select>
+                            </div>
+                            <div style="display: flex; gap: 15px; margin-top: 45px;">
+                                <button class="retro-btn retro-btn-primary" id="save-coupon-btn">SAVE COUPON</button>
+                                <button class="retro-btn" id="cancel-coupon-btn">CANCEL</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="admin-table-container" style="max-width: 900px;">
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>Coupon Code</th><th>Type</th><th>Value</th><th>Min Order</th><th>Status</th><th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="coupons-tbody"></tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- TAB: STORE BUILDER -->
+            <section id="tab-homepage" class="tab-content" style="display: none;">
+                <h2 style="font-weight: 900; margin-bottom: 25px; text-transform: uppercase;">Storefront Visual Configurator & Builder</h2>
+                
+                <!-- Announcement Bar Configurator -->
+                <div class="retro-panel" style="background-color: #fff; margin-bottom: 30px;">
+                    <h3 style="margin-bottom: 15px; font-weight: bold;">[TOP ANNOUNCEMENT BAR TICKER]</h3>
+                    <div class="admin-grid-4col" style="gap: 15px;">
+                        <div class="retro-field">
+                            <label for="set-announcement">Announcement Display Text</label>
+                            <input type="text" id="set-announcement" class="retro-input" value="⚡ FREE SHIPPING ON ORDERS ABOVE ₹499 • CODE: START10 ⚡">
+                        </div>
+                        <div class="retro-field">
+                            <label for="set-announcement-active">Bar Status</label>
+                            <select id="set-announcement-active" class="retro-input">
+                                <option value="true">Active (ON)</option>
+                                <option value="false">Inactive (OFF)</option>
+                            </select>
+                        </div>
+                        <div class="retro-field">
+                            <label for="set-announcement-rolling">Display Mode</label>
+                            <select id="set-announcement-rolling" class="retro-input">
+                                <option value="true">Marquee (Horizontal Scroll)</option>
+                                <option value="false">Static Text</option>
+                            </select>
+                        </div>
+                        <div class="retro-field">
+                            <label for="set-announcement-speed">Ticker Speed</label>
+                            <select id="set-announcement-speed" class="retro-input">
+                                <option value="fast">Fast (12s)</option>
+                                <option value="normal" selected>Normal (25s)</option>
+                                <option value="slow">Slow (45s)</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Live Announcement Bar Preview Box -->
+                    <div style="margin-top: 15px; padding: 10px; border: 2px solid #000; background: #fef08a; overflow: hidden;">
+                        <div style="font-size: 0.7rem; font-weight: 900; color: #555; margin-bottom: 4px;">LIVE ANNOUNCEMENT TICKER PREVIEW:</div>
+                        <div id="announcement-preview-container" style="font-weight: 900; font-size: 0.85rem; white-space: nowrap; overflow: hidden;">
+                            <span id="announcement-preview-text">⚡ FREE SHIPPING ON ORDERS ABOVE ₹499 • CODE: START10 ⚡</span>
+                        </div>
+                    </div>
+
+                    <button class="retro-btn retro-btn-primary" id="save-announcement-btn" style="margin-top: 15px;">SAVE ANNOUNCEMENT TICKER</button>
+                </div>
+
+                <!-- Hero System Manager (Fixed Banner vs Carousel Mutually Exclusive) -->
+                <div class="retro-panel" style="background-color: #fff; margin-bottom: 30px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-wrap: wrap; gap: 10px;">
+                        <div>
+                            <h3 style="font-weight: 900; text-transform: uppercase; margin: 0;">🖼️ STORE HERO SYSTEM (MUTUALLY EXCLUSIVE MODES)</h3>
+                            <p style="font-size: 0.8rem; color: #666; margin: 4px 0 0 0;">Select either a single high-impact Fixed Hero Banner or a Multi-Slide Carousel. Only ONE mode is active at a time.</p>
+                        </div>
+                        <!-- Hero Mode Switcher -->
+                        <div style="display: inline-flex; border: 2px solid #000; border-radius: 6px; overflow: hidden; background: #f3f4f6;">
+                            <button type="button" id="hero-toggle-fixed" class="retro-btn is-active" style="padding: 6px 14px; font-size: 0.8rem; font-weight: 900; border: none; cursor: pointer; background: #000; color: #fff;">[✓] FIXED BANNER</button>
+                            <button type="button" id="hero-toggle-carousel" class="retro-btn" style="padding: 6px 14px; font-size: 0.8rem; font-weight: 900; border: none; cursor: pointer; background: transparent; color: #000;">[ ] CAROUSEL SLIDER</button>
+                        </div>
+                    </div>
+
+                    <!-- 1. FIXED BANNER CONFIGURATION PANEL -->
+                    <div id="hero-fixed-panel" style="background: #fafafa; border: 2px solid #000; padding: 18px; margin-bottom: 20px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; border-bottom: 2px dashed #ccc; padding-bottom: 8px;">
+                            <strong style="font-size: 0.95rem; text-transform: uppercase;">1. Fixed Hero Artwork & Optional Content Blocks</strong>
+                            <span class="status-badge status-live" id="hero-fixed-status-badge">ACTIVE MODE</span>
+                        </div>
+
+                        <div class="admin-grid-2col" style="gap: 20px;">
+                            <!-- Left: Content & Checkbox Toggles -->
+                            <div>
+                                <!-- Top Text / Eyebrow -->
+                                <div style="margin-bottom: 12px; background: #fff; padding: 10px; border: 1.5px solid #ddd;">
+                                    <label style="display: flex; align-items: center; gap: 8px; font-weight: bold; cursor: pointer;">
+                                        <input type="checkbox" id="hero-opt-eyebrow-enable" checked>
+                                        <span>Show Top Tag / Eyebrow</span>
+                                    </label>
+                                    <input type="text" id="hero-opt-eyebrow-text" class="retro-input" style="margin-top: 6px;" value="New designs every week" placeholder="e.g. New designs every week">
+                                </div>
+
+                                <!-- Headline Title -->
+                                <div style="margin-bottom: 12px; background: #fff; padding: 10px; border: 1.5px solid #ddd;">
+                                    <label style="display: flex; align-items: center; gap: 8px; font-weight: bold; cursor: pointer;">
+                                        <input type="checkbox" id="hero-opt-title-enable" checked>
+                                        <span>Show Main Title</span>
+                                    </label>
+                                    <input type="text" id="hero-opt-title-text" class="retro-input" style="margin-top: 6px;" value="STICK YOUR WORLD." placeholder="e.g. STICK YOUR WORLD.">
+                                </div>
+
+                                <!-- Description / Subtitle -->
+                                <div style="margin-bottom: 12px; background: #fff; padding: 10px; border: 1.5px solid #ddd;">
+                                    <label style="display: flex; align-items: center; gap: 8px; font-weight: bold; cursor: pointer;">
+                                        <input type="checkbox" id="hero-opt-desc-enable" checked>
+                                        <span>Show Description / Subtitle</span>
+                                    </label>
+                                    <textarea id="hero-opt-desc-text" class="retro-input" style="margin-top: 6px; height: 60px; font-family: inherit;" placeholder="Premium stickers for a bolder, brighter you.">Premium stickers for a bolder, brighter, more you. Waterproof, scratch-resistant vinyl made for laptops, phones, bottles, and every surface that deserves personality.</textarea>
+                                </div>
+
+                                <!-- Primary Button -->
+                                <div style="margin-bottom: 12px; background: #fff; padding: 10px; border: 1.5px solid #ddd;">
+                                    <label style="display: flex; align-items: center; gap: 8px; font-weight: bold; cursor: pointer;">
+                                        <input type="checkbox" id="hero-opt-btn1-enable" checked>
+                                        <span>Show Primary Button</span>
+                                    </label>
+                                    <div class="admin-grid-2col" style="gap: 8px; margin-top: 6px;">
+                                        <input type="text" id="hero-opt-btn1-text" class="retro-input" value="Shop Now →" placeholder="Button Label">
+                                        <input type="text" id="hero-opt-btn1-url" class="retro-input" value="shop.html" placeholder="URL Link">
+                                    </div>
+                                </div>
+
+                                <!-- Secondary Button -->
+                                <div style="margin-bottom: 12px; background: #fff; padding: 10px; border: 1.5px solid #ddd;">
+                                    <label style="display: flex; align-items: center; gap: 8px; font-weight: bold; cursor: pointer;">
+                                        <input type="checkbox" id="hero-opt-btn2-enable" checked>
+                                        <span>Show Secondary Button</span>
+                                    </label>
+                                    <div class="admin-grid-2col" style="gap: 8px; margin-top: 6px;">
+                                        <input type="text" id="hero-opt-btn2-text" class="retro-input" value="Custom Stickers" placeholder="Button Label">
+                                        <input type="text" id="hero-opt-btn2-url" class="retro-input" value="custom-stickers.html" placeholder="URL Link">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Right: Artwork Image Upload & Preview -->
+                            <div>
+                                <div style="background: #fff; padding: 12px; border: 1.5px solid #000; margin-bottom: 14px;">
+                                    <label style="font-weight: 900; display: block; margin-bottom: 6px;">BANNER ARTWORK IMAGE (1024×1024+)</label>
+                                    <input type="file" id="hero-fixed-image-file" accept="image/*" style="display: none;">
+                                    <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+                                        <button type="button" id="hero-fixed-upload-btn" class="retro-btn retro-btn-primary" style="padding: 6px 12px; font-size: 0.8rem;">📁 CHOOSE IMAGE & UPLOAD</button>
+                                        <span id="hero-fixed-upload-status" style="font-size: 0.75rem; color: #666; align-self: center;"></span>
+                                    </div>
+                                    <div class="retro-field">
+                                        <label for="hero-fixed-image-url"><small>Or enter direct Image URL:</small></label>
+                                        <input type="text" id="hero-fixed-image-url" class="retro-input" value="/uploads/hero-banner-1.png" placeholder="https://... or /uploads/...">
+                                    </div>
+                                    <div style="margin-top: 10px; border: 2px solid #000; height: 180px; background: #f3f4f6; display: flex; align-items: center; justify-content: center; overflow: hidden; position: relative;">
+                                        <img id="hero-fixed-preview-img" src="/uploads/hero-banner-1.png" alt="Hero Artwork Preview" style="max-width: 100%; max-height: 100%; object-fit: contain;">
+                                        <div id="hero-fixed-no-img" style="display: none; color: #888; font-weight: bold; font-size: 0.85rem;">[NO IMAGE UPLOADED]</div>
+                                    </div>
+                                </div>
+
+                                <button type="button" id="save-hero-fixed-btn" class="retro-btn retro-btn-primary" style="width: 100%; padding: 12px; font-size: 0.9rem; font-weight: 900;">💾 SAVE FIXED HERO BANNER</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 2. CAROUSEL SLIDES CONFIGURATION PANEL -->
+                    <div id="hero-carousel-panel" style="background: #fafafa; border: 2px solid #000; padding: 18px; margin-bottom: 20px; display: none;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; border-bottom: 2px dashed #ccc; padding-bottom: 8px;">
+                            <div>
+                                <strong style="font-size: 0.95rem; text-transform: uppercase;">2. Carousel Sliding Hero Manager</strong>
+                                <span class="status-badge status-inactive" id="hero-carousel-status-badge">INACTIVE MODE</span>
+                            </div>
+                            <button id="new-hero-slide-btn" class="retro-btn retro-btn-primary" style="padding: 6px 12px; font-size: 0.78rem;">+ ADD CAROUSEL SLIDE</button>
+                        </div>
+
+                        <!-- Carousel Slide Form Container -->
+                        <div id="hero-slide-form-container" class="retro-panel" style="background: #ffffff; border: 2px solid #000; margin-bottom: 20px; display: none;">
+                            <h4 id="hero-form-title" style="font-weight: 900; margin-bottom: 15px;">[ADD CAROUSEL SLIDE]</h4>
+                            <div class="admin-grid-2col" style="gap: 15px;">
+                                <div>
+                                    <div class="retro-field"><label for="hero-slide-title">Headline Title</label><input type="text" id="hero-slide-title" class="retro-input" placeholder="e.g. CYBERPUNK STICKER DROPS"></div>
+                                    <div class="retro-field"><label for="hero-slide-sub">Subtitle / Details</label><input type="text" id="hero-slide-sub" class="retro-input" placeholder="e.g. Ultra High Gloss Vinyl"></div>
+                                    <div class="retro-field"><label for="hero-slide-cta">CTA Button Text</label><input type="text" id="hero-slide-cta" class="retro-input" placeholder="e.g. EXPLORE DROPS"></div>
+                                    <div class="retro-field"><label for="hero-slide-link">CTA Button Link</label><input type="text" id="hero-slide-link" class="retro-input" placeholder="e.g. shop.html"></div>
+                                </div>
+                                <div>
+                                    <input type="file" id="hero-slide-file-input" accept="image/*" style="display: none;">
+                                    <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+                                        <button type="button" id="hero-slide-upload-btn" class="retro-btn retro-btn-primary" style="padding: 6px 12px; font-size: 0.8rem;">📁 UPLOAD SLIDE IMAGE</button>
+                                        <span id="hero-slide-upload-status" style="font-size: 0.75rem; color: #666; align-self: center;"></span>
+                                    </div>
+                                    <div class="retro-field"><label for="hero-slide-img">Image URL</label><input type="text" id="hero-slide-img" class="retro-input" placeholder="https://... or /uploads/..."></div>
+                                    <div style="margin-top: 8px; height: 110px; border: 2px solid #000; background: #eee; display: flex; align-items: center; justify-content: center; overflow: hidden;">
+                                        <img id="hero-slide-preview-img" src="" alt="Slide Preview" style="max-width: 100%; max-height: 100%; object-fit: contain;">
+                                    </div>
+                                    <div style="display: flex; gap: 10px; margin-top: 15px;">
+                                        <button id="save-hero-slide-btn" class="retro-btn retro-btn-primary">SAVE SLIDE</button>
+                                        <button id="cancel-hero-slide-btn" class="retro-btn">CANCEL</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div id="hero-slides-container"></div>
+                    </div>
+
+                    <!-- 3. REAL-TIME STOREFRONT HERO LIVE PREVIEW -->
+                    <div style="border: 2px solid #000; background: #fff; padding: 15px; margin-top: 20px;">
+                        <div style="font-size: 0.75rem; font-weight: 900; color: #555; margin-bottom: 8px; text-transform: uppercase;">
+                            👁️ STOREFRONT HERO LIVE PREVIEW:
+                        </div>
+                        <div id="hero-live-preview-box" style="border: 2px solid #000; background: #fdfaf0; padding: 20px; min-height: 200px; display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap;">
+                            <div style="max-width: 60%; flex: 1 1 280px;">
+                                <div id="preview-hero-eyebrow" style="display: inline-block; background: #ffd400; border: 1.5px solid #000; padding: 2px 8px; font-weight: 800; font-size: 0.75rem; margin-bottom: 8px;">NEW DESIGNS EVERY WEEK</div>
+                                <h2 id="preview-hero-title" style="font-size: 1.8rem; font-weight: 900; line-height: 1.1; margin: 0 0 10px 0; text-transform: uppercase;">STICK YOUR WORLD.</h2>
+                                <p id="preview-hero-desc" style="font-size: 0.85rem; color: #555; line-height: 1.4; margin: 0 0 14px 0;">Premium stickers for a bolder, brighter, more you.</p>
+                                <div id="preview-hero-buttons" style="display: flex; gap: 8px; flex-wrap: wrap;">
+                                    <a id="preview-hero-btn1" href="#" class="retro-btn retro-btn-primary" style="padding: 6px 14px; font-size: 0.8rem;">Shop Now →</a>
+                                    <a id="preview-hero-btn2" href="#" class="retro-btn" style="padding: 6px 14px; font-size: 0.8rem;">Custom Stickers</a>
+                                </div>
+                            </div>
+                            <div style="width: 180px; height: 180px; border: 2px solid #000; background: #fff; display: flex; align-items: center; justify-content: center; overflow: hidden;">
+                                <img id="preview-hero-img" src="/uploads/hero-banner-1.png" alt="Preview Artwork" style="max-width: 100%; max-height: 100%; object-fit: contain;">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Promotional Banners Manager -->
+                <div class="retro-panel" style="background-color: #fff; margin-bottom: 30px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-wrap: wrap; gap: 10px;">
+                        <div>
+                            <h3 style="font-weight: bold; text-transform: uppercase; margin: 0;">📢 PROMOTIONAL BANNERS MANAGER</h3>
+                            <p style="font-size: 0.8rem; color: #666; margin: 4px 0 0 0;">Manage marketing banners across Homepage, Top Header, Product Catalog & Event sections</p>
+                        </div>
+                        <button id="new-banner-btn" class="retro-btn retro-btn-primary" style="padding: 6px 12px; font-size: 0.78rem;">+ ADD PROMO BANNER</button>
+                    </div>
+
+                    <!-- Banner Form Container -->
+                    <div id="banner-form-container" class="retro-panel" style="background: #fafafa; margin-bottom: 20px; display: none;">
+                        <h4 id="banner-form-title" style="font-weight: 900; margin-bottom: 15px;">[ADD PROMOTIONAL BANNER]</h4>
+                        <div class="admin-grid-2col" style="gap: 15px;">
+                            <div>
+                                <div class="retro-field"><label for="banner-title">Banner Headline</label><input type="text" id="banner-title" class="retro-input" placeholder="e.g. GET 20% OFF FIRST ORDER"></div>
+                                <div class="retro-field"><label for="banner-sub">Subtitle / Details</label><input type="text" id="banner-sub" class="retro-input" placeholder="Use code START10 at checkout"></div>
+                                <div class="retro-field"><label for="banner-placement">Placement Sector</label>
+                                    <select id="banner-placement" class="retro-input">
+                                        <option value="Homepage Top">Homepage Top</option>
+                                        <option value="Product Section">Product Catalog Section</option>
+                                        <option value="Events Area">Events / Sales Area</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div>
+                                <div class="retro-field"><label for="banner-cta">CTA Button Text</label><input type="text" id="banner-cta" class="retro-input" placeholder="e.g. CLAIM DISCOUNT"></div>
+                                <div class="retro-field"><label for="banner-link">Target URL Link</label><input type="text" id="banner-link" class="retro-input" placeholder="e.g. #sales"></div>
+                                <div class="retro-field"><label for="banner-img">Banner Image URL</label><input type="text" id="banner-img" class="retro-input" placeholder="https://..."></div>
+                            </div>
+                        </div>
+                        <div style="display: flex; gap: 10px; margin-top: 15px;">
+                            <button id="save-banner-btn" class="retro-btn retro-btn-primary">SAVE BANNER</button>
+                            <button id="cancel-banner-btn" class="retro-btn">CANCEL</button>
+                        </div>
+                    </div>
+
+                    <div id="promo-banners-container"></div>
+                </div>
+
+                <!-- Store Content Sections -->
+                <div class="retro-panel" style="background-color: #fff; margin-bottom: 30px;">
+                    <h3 style="font-weight: bold; margin-bottom: 15px; text-transform: uppercase;">🧩 STOREFRONT CONTENT SECTIONS (MODULAR BLOCKS)</h3>
+                    <div id="store-blocks-container"></div>
+                </div>
+            </section>
+
+            <!-- TAB: SHIPPING RULES -->
+            <section id="tab-shipping" class="tab-content" style="display: none;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; flex-wrap: wrap; gap: 10px;">
+                    <div>
+                        <h2 style="font-weight: 900; text-transform: uppercase; margin: 0;">Shipping Rates & Logistics Policies</h2>
+                        <p style="font-size: 0.85rem; color: #555; font-weight: bold; margin: 4px 0 0 0;">Configure shipping thresholds, regional delivery fees, and test calculations</p>
+                    </div>
+                    <button class="retro-btn retro-btn-primary" id="new-shipping-btn">+ ADD SHIPPING RULE</button>
+                </div>
+
+                <!-- Shipping Form Container -->
+                <div id="shipping-form-container" class="retro-panel" style="background-color: #fff; max-width: 800px; width: 100%; margin-bottom: 30px; display: none;">
+                    <h3 id="ship-form-title" style="margin-bottom: 15px; font-weight: bold;">[ADD SHIPPING RULE]</h3>
+                    <div class="retro-field">
+                        <label for="ship-name">Rule Name <span style="color:red;">*</span></label>
+                        <input type="text" id="ship-name" class="retro-input" placeholder="e.g. Express Metro Shipping" required>
+                    </div>
+                    <div class="admin-grid-2col" style="gap: 15px;">
+                        <div class="retro-field">
+                            <label for="ship-min">Min Order Value (₹) <span style="color:red;">*</span></label>
+                            <input type="number" id="ship-min" class="retro-input" value="0" min="0" required>
+                        </div>
+                        <div class="retro-field">
+                            <label for="ship-max">Max Order Value (₹)</label>
+                            <input type="number" id="ship-max" class="retro-input" placeholder="Leave blank for No Limit">
+                        </div>
+                    </div>
+                    <div class="admin-grid-2col" style="gap: 15px;">
+                        <div class="retro-field">
+                            <label for="ship-region">Target Region</label>
+                            <input type="text" id="ship-region" class="retro-input" value="India (All States)">
+                        </div>
+                        <div class="retro-field">
+                            <label for="ship-fee">Shipping Fee (₹) <span style="color:red;">*</span></label>
+                            <input type="number" id="ship-fee" class="retro-input" value="50" min="0" required>
+                        </div>
+                    </div>
+                    <div class="retro-field">
+                        <label for="ship-active">Status</label>
+                        <select id="ship-active" class="retro-input">
+                            <option value="true">Active (ON)</option>
+                            <option value="false">Inactive (OFF)</option>
+                        </select>
+                    </div>
+                    <div style="display: flex; gap: 10px; margin-top: 15px;">
+                        <button class="retro-btn retro-btn-primary" id="save-ship-btn">SAVE SHIPPING RULE</button>
+                        <button class="retro-btn" id="cancel-ship-btn">CANCEL</button>
+                    </div>
+                </div>
+
+                <!-- Interactive Shipping Calculator Preview Widget -->
+                <div class="retro-panel" style="background: #fafafa; margin-bottom: 25px; max-width: 900px;">
+                    <h3 style="font-weight: 900; font-size: 0.95rem; margin-bottom: 10px; color: #2563eb;">🧮 INTERACTIVE SHIPPING FEE CALCULATOR PREVIEW</h3>
+                    <div style="display: flex; gap: 15px; align-items: flex-end; flex-wrap: wrap;">
+                        <div>
+                            <label style="font-size: 0.75rem; font-weight: bold;">TEST ORDER VALUE (₹):</label>
+                            <input type="number" id="calc-order-val" class="retro-input" value="250" style="width: 140px; padding: 6px;">
+                        </div>
+                        <div>
+                            <label style="font-size: 0.75rem; font-weight: bold;">REGION:</label>
+                            <input type="text" id="calc-region" class="retro-input" value="India (All States)" style="width: 180px; padding: 6px;">
+                        </div>
+                        <div id="calc-result" style="background: #fff; padding: 8px 14px; border: 2px solid #000; font-size: 0.85rem;">
+                            <!-- Injected -->
+                        </div>
+                    </div>
+                </div>
+
+                <div class="admin-table-container" style="max-width: 900px;">
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>Rule Name</th><th>Order Value Condition</th><th>Region</th><th>Shipping Fee</th><th>Status</th><th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="shipping-tbody"></tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- TAB: AUDIT LOGS -->
+            <section id="tab-logs" class="tab-content" style="display: none;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 10px;">
+                    <div>
+                        <h2 style="font-weight: 900; text-transform: uppercase; margin: 0;">Security &amp; Operations Audit Logs</h2>
+                        <p style="font-size: 0.85rem; color: #555; font-weight: bold; margin: 4px 0 0 0;">Cryptographic and operational audit trail of logins, logouts, session expirations, and administrative actions</p>
+                    </div>
+                    <div style="display: flex; gap: 10px;">
+                        <button type="button" id="refresh-audit-logs-btn" class="retro-btn" style="padding: 6px 12px; font-size: 0.78rem;">🔄 REFRESH LOGS</button>
+                    </div>
+                </div>
+
+                <!-- Live Sessions Quick Status Bar -->
+                <div id="audit-active-sessions-summary" class="retro-panel" style="background: #fff; margin-bottom: 20px; padding: 12px 18px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <span style="font-size: 1.2rem;">🛡️</span>
+                        <div>
+                            <strong style="font-size: 0.85rem; text-transform: uppercase;">Active Admin Sessions:</strong>
+                            <span id="audit-active-sessions-pills" style="margin-left: 6px; font-size: 0.82rem; color: #555;">Querying live database...</span>
+                        </div>
+                    </div>
+                    <button type="button" class="retro-btn" id="audit-goto-sessions-btn" style="padding: 4px 10px; font-size: 0.75rem;">VIEW LIVE SESSIONS →</button>
+                </div>
+
+                <div class="audit-log-console" id="audit-logs-container"></div>
+            </section>
+
+            <!-- TAB: TEAM MEMBERS -->
+            <section id="tab-team" class="tab-content" style="display: none;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px;">
+                    <div>
+                        <h2 style="font-weight: 900; text-transform: uppercase; margin: 0;">Team Members &amp; Role Access Control</h2>
+                        <p style="font-size: 0.85rem; color: #555; font-weight: bold; margin: 4px 0 0 0;">Manage authorized administrators and team member privileges</p>
+                    </div>
+                    <div style="display: flex; gap: 10px;">
+                        <button class="retro-btn" id="refresh-team-btn" style="padding: 6px 12px; font-size: 0.78rem;">🔄 REFRESH TEAM</button>
+                        <button class="retro-btn retro-btn-primary" id="new-team-btn">+ ADD TEAM MEMBER</button>
+                    </div>
+                </div>
+
+                <!-- Team Form Container -->
+                <div id="team-form-container" class="retro-panel" style="background-color: #fff; max-width: 500px; margin-bottom: 30px; display: none;">
+                    <h3 style="margin-bottom: 15px; font-weight: bold;">[INVITE TEAM MEMBER]</h3>
+                    <div class="retro-field"><label>Member Name</label><input type="text" id="team-name" class="retro-input" required></div>
+                    <div class="retro-field"><label>Email Address</label><input type="email" id="team-email" class="retro-input" required></div>
+                    <div class="retro-field">
+                        <label>Role</label>
+                        <select id="team-role" class="retro-input">
+                            <option value="ADMIN">ADMIN</option>
+                            <option value="CONTENT MANAGER">CONTENT MANAGER</option>
+                            <option value="STAFF">STAFF</option>
+                        </select>
+                    </div>
+                    <div style="display: flex; gap: 10px; margin-top: 15px;">
+                        <button class="retro-btn retro-btn-primary" id="save-team-btn">SAVE TEAM MEMBER</button>
+                        <button class="retro-btn" id="cancel-team-btn">CANCEL</button>
+                    </div>
+                </div>
+
+                <div class="admin-table-container">
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>Name</th><th>Email</th><th>Role</th><th>Permissions Preview</th><th>Status</th><th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="team-tbody"></tbody>
+                    </table>
+                </div>
+
+                <!-- ACTIVE LOGIN & LIVE SESSIONS SECTION -->
+                <div class="retro-panel" style="background-color: #fff; margin-top: 35px; margin-bottom: 30px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-wrap: wrap; gap: 10px;">
+                        <div>
+                            <h3 style="font-weight: 900; text-transform: uppercase; margin: 0; display: flex; align-items: center; gap: 8px;">
+                                🟢 ACTIVE LOGINS &amp; LIVE SESSIONS
+                                <span id="active-sessions-count-badge" class="status-badge status-live" style="font-size: 0.75rem;">0 ACTIVE</span>
+                            </h3>
+                            <p style="font-size: 0.8rem; color: #555; margin: 4px 0 0 0;">Real-time database-backed active sessions for authorized administrative and team personnel</p>
+                        </div>
+                        <button type="button" id="refresh-sessions-btn" class="retro-btn" style="padding: 6px 12px; font-size: 0.78rem;">🔄 REFRESH SESSIONS</button>
+                    </div>
+
+                    <div class="admin-table-container" style="margin-bottom: 0;">
+                        <table class="admin-table" style="font-size: 0.82rem;">
+                            <thead>
+                                <tr>
+                                    <th>Admin / Member</th>
+                                    <th>Email</th>
+                                    <th>Role</th>
+                                    <th>Login Time</th>
+                                    <th>Last Activity</th>
+                                    <th>Session Status</th>
+                                    <th>Expires At</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="active-sessions-tbody">
+                                <tr><td colspan="8" style="text-align: center; color: #888; padding: 15px;">Loading active sessions...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- TAB: SYSTEM SETTINGS -->
+            <section id="tab-settings" class="tab-content" style="display: none;">
+                <h2 style="font-weight: 900; margin-bottom: 25px; text-transform: uppercase;">Global System & Maintenance Settings</h2>
+                
+                <div class="admin-grid-2col" style="gap: 20px; max-width: 1400px; width: 100%;">
+                    <!-- Business & Tax Policies -->
+                    <div class="retro-panel" style="background-color: #fff; display: flex; flex-direction: column;">
+                        <h3 style="margin-bottom: 20px; font-weight: bold;">[BUSINESS & TAX POLICIES]</h3>
+                        <div class="retro-field"><label>Store Name</label><input type="text" id="set-store-name" class="retro-input" value="CHIPAKK Stickers"></div>
+                        <div class="retro-field"><label>Support Email</label><input type="email" id="set-support-email" class="retro-input" value="support@chipakk.shop"></div>
+                        <div class="retro-field"><label>Support Phone</label><input type="text" id="set-support-phone" class="retro-input" value="+91 98765 00000"></div>
+                        <div class="retro-field"><label>GSTIN Number <small style="color:#666;">(Internal Business Setting)</small></label><input type="text" id="set-gstin" class="retro-input" value="07AAAAA0000A1Z5"></div>
+                        <div class="retro-field"><label>GST Rate (%) <span style="color:red;">*</span></label><input type="number" id="set-gst-rate" class="retro-input" value="18" min="0" max="100"></div>
+                        <div class="retro-field"><label>Currency Symbol</label><input type="text" id="set-currency" class="retro-input" value="₹ (INR)"></div>
+                        <div class="retro-field"><label>Order ID Prefix</label><input type="text" id="set-order-prefix" class="retro-input" value="CHP-"></div>
+                        <div class="retro-field"><label>Default Rating Benchmark</label><input type="number" id="set-default-rating" class="retro-input" value="4.7" step="0.1"></div>
+                        <div style="margin-top: auto; padding-top: 15px;">
+                            <button class="retro-btn retro-btn-primary" id="save-business-settings-btn" style="width: 100%; padding: 10px; font-size: 0.85rem;">SAVE BUSINESS & TAX SETTINGS</button>
+                        </div>
+                    </div>
+
+                    <!-- Operations & Maintenance Panel -->
+                    <div class="retro-panel" style="background-color: #fff; display: flex; flex-direction: column;">
+                        <h3 style="margin-bottom: 20px; font-weight: bold; color: #7c3aed;">[STORE OPERATIONS & MAINTENANCE]</h3>
+                        
+                        <div class="retro-field">
+                            <label for="set-store-status">Storefront Operational Status</label>
+                            <select id="set-store-status" class="retro-input">
+                                <option value="OPEN">OPEN (Normal Store Operations)</option>
+                                <option value="MAINTENANCE">MAINTENANCE (Scheduled Maintenance)</option>
+                                <option value="TEMPORARILY CLOSED">TEMPORARILY CLOSED</option>
+                            </select>
+                        </div>
+
+                        <div class="retro-field">
+                            <label for="set-maintenance-active">Maintenance Mode Banner Switch</label>
+                            <select id="set-maintenance-active" class="retro-input">
+                                <option value="false">OFF (Standard Storefront)</option>
+                                <option value="true">ON (Display Maintenance Overlay)</option>
+                            </select>
+                        </div>
+
+                        <div class="retro-field">
+                            <label for="set-maintenance-msg">Maintenance Display Message</label>
+                            <input type="text" id="set-maintenance-msg" class="retro-input" value="CHIPAKK is currently undergoing scheduled maintenance. We will be back shortly.">
+                        </div>
+
+                        <div class="retro-field">
+                            <label for="set-maintenance-image">Maintenance / Closed Display Image (URL or Upload)</label>
+                            <div style="display: flex; gap: 8px;">
+                                <input type="text" id="set-maintenance-image" class="retro-input" placeholder="e.g. /uploads/maintenance.png or https://...">
+                                <button type="button" class="retro-btn" id="upload-maintenance-img-btn" style="padding: 4px 10px; font-size: 0.75rem; white-space: nowrap;">UPLOAD</button>
+                                <input type="file" id="set-maintenance-image-file" accept="image/*" style="display: none;">
+                            </div>
+                            <div id="set-maintenance-image-preview-box" style="margin-top: 6px; display: none;">
+                                <img id="set-maintenance-image-preview-img" src="" style="max-height: 80px; border: 1px solid #000; border-radius: 4px; object-fit: contain;">
+                            </div>
+                        </div>
+
+                        <div class="retro-field">
+                            <label for="set-orders-accepting">Order Acceptance Control</label>
+                            <select id="set-orders-accepting" class="retro-input">
+                                <option value="true">ACCEPTING NEW ORDERS</option>
+                                <option value="false">PAUSE NEW ORDERS</option>
+                            </select>
+                        </div>
+
+                        <div class="retro-field">
+                            <label for="set-orders-paused-msg">Paused Orders Store Message</label>
+                            <input type="text" id="set-orders-paused-msg" class="retro-input" value="Orders are temporarily paused. Please check back shortly.">
+                        </div>
+                        <div style="margin-top: auto; padding-top: 15px;">
+                            <button class="retro-btn retro-btn-primary" id="save-store-ops-settings-btn" style="width: 100%; padding: 10px; font-size: 0.85rem;">APPLY STORE OPERATIONS SETTINGS</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+        </main>
+    </div>
+
+    <!-- GLOBAL SEARCH MODAL -->
+    <div id="global-search-modal" class="modal-overlay" style="display: none;">
+        <div class="retro-panel modal-body-scroll" style="background: #fff; max-width: 700px; width: 90%;">
+            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid var(--text-color, #000); padding-bottom: 10px; margin-bottom: 15px;">
+                <h3 style="font-weight: 900; margin: 0;">[GLOBAL ADMIN SEARCH RESULTS]</h3>
+                <button class="icon-btn" onclick="document.getElementById('global-search-modal').style.display='none'" style="font-weight: 900;">×</button>
+            </div>
+            <div id="global-search-results-container"></div>
+        </div>
+    </div>
+
+    <!-- ORDER DETAIL MODAL -->
+    <div id="order-detail-modal" class="modal-overlay" style="display: none;">
+        <div class="retro-panel modal-body-scroll" style="background: #fff; max-width: 850px; width: 95%;">
+            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid var(--text-color, #000); padding-bottom: 12px; margin-bottom: 15px;">
+                <div>
+                    <h3 id="ord-detail-title" style="font-weight: 900; margin: 0;">[ORDER DETAILS]</h3>
+                    <small id="ord-detail-date" style="color: #666; font-weight: bold;"></small>
+                </div>
+                <button class="icon-btn" id="close-order-detail-btn" style="font-size: 1.2rem; font-weight: 900;">×</button>
+            </div>
+
+            <div class="retro-panel" style="background: #fafafa; padding: 15px; margin-bottom: 20px;">
+                <div style="font-size: 0.75rem; font-weight: 900; text-transform: uppercase; color: #555; margin-bottom: 8px;">ORDER WORKFLOW PIPELINE STATUS</div>
+                <div id="ord-timeline-container" class="status-timeline-stepper"></div>
+            </div>
+
+            <div class="admin-grid-2col" style="gap: 15px; margin-bottom: 20px;">
+                <div class="retro-panel" style="background: #fff; font-size: 0.85rem;">
+                    <h4 style="font-weight: 900; border-bottom: 1px solid #ddd; padding-bottom: 6px; margin-bottom: 10px;">📋 ORDER OVERVIEW</h4>
+                    <div><strong>Order Status:</strong> <select id="ord-detail-status-select" class="retro-input" style="padding: 2px 6px; font-size: 0.8rem; width: 140px;"></select></div>
+                    <div style="margin-top: 6px;"><strong>Payment Status:</strong> <span id="ord-detail-pay-status" class="status-badge"></span></div>
+                    <div style="margin-top: 6px;"><strong>Total Amount:</strong> <strong id="ord-detail-total" style="font-size: 1.1rem; color: #059669;"></strong></div>
+                </div>
+
+                <div class="retro-panel" style="background: #fff; font-size: 0.85rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #ddd; padding-bottom: 6px; margin-bottom: 10px;">
+                        <h4 style="font-weight: 900; margin: 0;">👤 CUSTOMER DETAILS</h4>
+                        <button id="ord-view-cust-btn" class="retro-btn" style="padding: 1px 6px; font-size: 0.7rem; background: #000; color: #fff;">VIEW PROFILE</button>
+                    </div>
+                    <div><strong>Name:</strong> <a href="#" id="ord-detail-cust-name-link" style="color: #000; font-weight: bold; text-decoration: underline;"><span id="ord-detail-cust-name"></span></a></div>
+                    <div><strong>Email:</strong> <span id="ord-detail-cust-email"></span></div>
+                    <div><strong>Phone:</strong> <span id="ord-detail-cust-phone"></span></div>
+                    <div><strong>Address:</strong> <div id="ord-detail-cust-address" style="background: #f9f8f3; padding: 6px; border: 1px solid #ddd; margin-top: 4px;"></div></div>
+                </div>
+            </div>
+
+            <!-- Print-on-Demand Items Production Pipeline & Packing Table -->
+            <div class="retro-panel" style="background: #fff; margin-bottom: 20px;">
+                <h4 style="font-weight: 900; margin-bottom: 12px; color: #2563eb;">🖨️ PRINT-ON-DEMAND PRODUCTION PIPELINE & PACKING LIST</h4>
+                <div class="admin-table-container">
+                    <table class="admin-table" style="font-size: 0.82rem;">
+                        <thead>
+                            <tr>
+                                <th>Thumbnail</th>
+                                <th>Admin Product ID</th>
+                                <th>Product Name & Variant</th>
+                                <th>Qty</th>
+                                <th>Unit Price</th>
+                                <th>Production Status</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="ord-detail-items-tbody"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Courier Shipping Tracking Form & Info -->
+            <div class="retro-panel" style="background: #fff; border-top: 3px solid #2563eb;">
+                <h4 style="font-weight: 900; margin-bottom: 12px; color: #2563eb;">🚚 SHIPPING & COURIER TRACKING MANAGEMENT</h4>
+                
+                <div class="admin-grid-2col" style="gap: 15px;">
+                    <div>
+                        <div class="retro-field">
+                            <label for="ord-ship-courier">Courier / Shipping Provider</label>
+                            <input type="text" id="ord-ship-courier" class="retro-input" placeholder="e.g. BlueDart, Delhivery, DTDC">
+                        </div>
+                        <div class="retro-field">
+                            <label for="ord-ship-tracking-no">Tracking / AWB Number</label>
+                            <input type="text" id="ord-ship-tracking-no" class="retro-input" placeholder="e.g. BLU987654321">
+                        </div>
+                    </div>
+                    <div>
+                        <div class="retro-field">
+                            <label for="ord-ship-date">Dispatch / Shipping Date</label>
+                            <input type="date" id="ord-ship-date" class="retro-input">
+                        </div>
+                        <div class="retro-field">
+                            <label for="ord-ship-notes">Shipping Notes / Instructions</label>
+                            <input type="text" id="ord-ship-notes" class="retro-input" placeholder="e.g. Packed in bubble mailer">
+                        </div>
+                    </div>
+                </div>
+
+                <div style="display: flex; gap: 12px; margin-top: 15px; align-items: center;">
+                    <button id="save-ord-shipment-btn" class="retro-btn retro-btn-primary">SAVE COURIER TRACKING</button>
+                    <a id="track-shipment-external-btn" href="#" target="_blank" class="retro-btn" style="display: none; background: #2563eb; color: #fff; text-decoration: none;">🔗 TRACK SHIPMENT</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- CUSTOMER PROFILE DETAIL MODAL -->
+    <div id="customer-detail-modal" class="modal-overlay" style="display: none;">
+        <div class="retro-panel modal-body-scroll" style="background: #fff; max-width: 750px; width: 95%;">
+            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid var(--text-color, #000); padding-bottom: 12px; margin-bottom: 15px;">
+                <h3 id="cust-modal-name" style="font-weight: 900; margin: 0;">[CUSTOMER PROFILE]</h3>
+                <button class="icon-btn" id="close-cust-detail-btn" style="font-size: 1.2rem; font-weight: 900;">×</button>
+            </div>
+            <div id="cust-modal-content"></div>
+        </div>
+    </div>
+
+    <!-- Reusable Confirmation Dialog Modal -->
+    <div id="confirm-modal" class="modal-overlay" style="display: none;">
+        <div class="retro-panel" style="background: #fff; max-width: 420px; width: 90%; text-align: center;">
+            <h3 id="confirm-modal-title" style="font-weight: 900; margin-bottom: 10px;">[CONFIRM ACTION]</h3>
+            <p id="confirm-modal-msg" style="font-size: 0.9rem; margin-bottom: 20px; color: #333;">Are you sure you want to proceed?</p>
+            <div style="display: flex; gap: 15px; justify-content: center;">
+                <button id="confirm-modal-yes-btn" class="retro-btn retro-btn-primary">CONFIRM</button>
+                <button id="confirm-modal-no-btn" class="retro-btn">CANCEL</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div class="retro-toast" id="admin-toast">
+        <div class="toast-header">
+            <span>CHIPAKK.SYS</span>
+            <button class="icon-btn" id="close-toast-btn" style="font-size: 0.9rem;" onclick="document.getElementById('admin-toast').classList.remove('show')">×</button>
+        </div>
+        <div style="font-size: 0.9rem;" id="admin-toast-text">System update complete.</div>
+    </div>
+
+    <script type="module" src="js/firebase-config.js?v=3.5.0"></script>
+    <script type="module" src="js/admin.js?v=3.5.0"></script>
+    <script type="module" src="js/migration.js?v=3.5.0"></script>
+</body>
+</html>
