@@ -160,7 +160,7 @@ const getCustomerById = async (idOrUid) => {
     SELECT 
       u.id,
       u.firebase_uid,
-      u.name,
+      u.full_name AS name,
       u.email,
       u.phone,
       u.created_at,

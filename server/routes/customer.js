@@ -36,7 +36,7 @@ router.get('/me', async (req, res, next) => {
     // Resolve customer profile
     let customer = null;
     const [userRows] = await pool.execute(
-      'SELECT id, firebase_uid, name, email, phone FROM users WHERE firebase_uid = ? LIMIT 1',
+      'SELECT id, firebase_uid, full_name AS name, email, phone FROM users WHERE firebase_uid = ? LIMIT 1',
       [firebaseUid]
     );
 

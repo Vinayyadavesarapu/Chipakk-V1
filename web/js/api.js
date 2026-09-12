@@ -33,12 +33,20 @@ function extractErrorMessage(data, status) {
   if (!data) return `HTTP ${status} Request Failed`;
   if (typeof data === 'string') {
     if (data.trim().startsWith('<')) {
-      return 'API ROUTING ERROR — The Admin Panel could not reach the CHIPAKK API.';
+      if (status === 403) return 'HTTP 403 Forbidden — Security or CDN challenge blocked the request.';
+      if (status === 401) return 'HTTP 401 Unauthorized — Session expired or authentication required.';
+      if (status === 404) return 'HTTP 404 Not Found — API endpoint resource does not exist.';
+      if (status === 500) return 'HTTP 500 Internal Server Error — Server failed to process request.';
+      return `HTTP ${status} — Server returned HTML response instead of JSON.`;
     }
     return data;
   }
   if (typeof data.message === 'string' && data.message.trim().startsWith('<')) {
-    return 'API ROUTING ERROR — The Admin Panel could not reach the CHIPAKK API.';
+    if (status === 403) return 'HTTP 403 Forbidden — Security or CDN challenge blocked the request.';
+    if (status === 401) return 'HTTP 401 Unauthorized — Session expired or authentication required.';
+    if (status === 404) return 'HTTP 404 Not Found — API endpoint resource does not exist.';
+    if (status === 500) return 'HTTP 500 Internal Server Error — Server failed to process request.';
+    return `HTTP ${status} — Server returned HTML response instead of JSON.`;
   }
 
   if (data.error) {
@@ -101,6 +109,14 @@ async function request(endpoint, options = {}) {
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }
+
+  // Attach persistent Client Session ID if available
+  try {
+    const sessionId = typeof localStorage !== 'undefined' ? localStorage.getItem('chipakk_admin_session_id') : null;
+    if (sessionId) {
+      headers['X-Session-ID'] = sessionId;
+    }
+  } catch (_) {}
 
   // Attach persistent Client Session ID if available
   try {
