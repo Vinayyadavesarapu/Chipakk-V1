@@ -1492,11 +1492,15 @@
     }
 
     const minTimer = setTimeout(hideOverlay, 750);
-    window.addEventListener("load", () => {
-      clearTimeout(minTimer);
-      setTimeout(hideOverlay, 250);
-    });
-    setTimeout(hideOverlay, 3500);
+    if (document.readyState === "complete") {
+      hideOverlay();
+    } else {
+      window.addEventListener("load", () => {
+        clearTimeout(minTimer);
+        setTimeout(hideOverlay, 250);
+      });
+      setTimeout(hideOverlay, 3000);
+    }
   }
 
   /* =========================================================

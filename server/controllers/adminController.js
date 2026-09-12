@@ -378,15 +378,19 @@ const recordAdminLoginHandler = async (req, res, next) => {
       .map(part => part.charAt(0).toUpperCase() + part.slice(1))
       .join(' ') || 'Admin';
 
-    const clientSessionId = req.body?.session_id || `sess_${actorId.slice(0, 10)}_${Date.now()}`;
+    const clientSessionId = req.body?.session_id || req.headers['x-session-id'] || `sess_${actorId.slice(0, 10)}_${Date.now()}`;
     const ipAddress = req.ip || req.headers['x-forwarded-for'] || null;
     const userAgent = req.headers['user-agent'] || null;
 
-    // Insert new active session record
+    // Upsert active session record (reuses existing session_id if supplied by persistent client)
     await pool.execute(`
       INSERT INTO admin_sessions (session_id, firebase_uid, email, admin_name, role, ip_address, user_agent, login_time, last_activity, status, expires_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), 'active', DATE_ADD(NOW(), INTERVAL 1 HOUR))
       ON DUPLICATE KEY UPDATE
+        firebase_uid = VALUES(firebase_uid),
+        email = VALUES(email),
+        admin_name = VALUES(admin_name),
+        role = VALUES(role),
         status = 'active',
         last_activity = NOW(),
         expires_at = DATE_ADD(NOW(), INTERVAL 1 HOUR),
@@ -434,11 +438,16 @@ const recordAdminLogoutHandler = async (req, res, next) => {
     const actorEmail = req.admin ? req.admin.email : (req.body?.email || (req.user ? req.user.email : null));
     const adminId = req.admin ? req.admin.id : null;
     const reason = req.body?.reason || 'user_action';
-    const sessionId = req.body?.session_id;
+    const sessionId = req.body?.session_id || req.headers['x-session-id'];
 
     const newStatus = reason === 'inactivity_timeout' ? 'expired' : 'logged_out';
 
-    if (sessionId) {
+    if (sessionId && actorId) {
+      await pool.execute(
+        'UPDATE admin_sessions SET status = ?, updated_at = NOW() WHERE session_id = ? AND firebase_uid = ?',
+        [newStatus, sessionId, actorId]
+      ).catch(() => {});
+    } else if (sessionId) {
       await pool.execute(
         'UPDATE admin_sessions SET status = ?, updated_at = NOW() WHERE session_id = ?',
         [newStatus, sessionId]
@@ -487,38 +496,62 @@ const getActiveSessionsHandler = async (req, res, next) => {
       WHERE status = 'active' AND expires_at <= NOW()
     `).catch(() => {});
 
-    // Ensure the currently calling authenticated admin has an active session
+    // Ensure the currently calling authenticated admin has an active session without duplicating
     if (req.user && req.user.uid) {
       const currentUid = req.user.uid;
       const currentEmail = req.user.email || 'admin@chipakk.shop';
       const currentRole = req.admin ? (req.admin.role === 'super_admin' ? 'SUPER ADMIN' : 'ADMIN') : 'ADMIN';
       const namePrefix = currentEmail.split('@')[0];
       const currentName = namePrefix.split(/[._-]/).map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ') || 'Admin';
+      const callerSessionId = req.headers['x-session-id'] || req.query?.session_id;
 
-      const [existingActive] = await pool.execute(
-        'SELECT id FROM admin_sessions WHERE firebase_uid = ? AND status = "active" AND expires_at > NOW() LIMIT 1',
-        [currentUid]
-      );
+      if (callerSessionId) {
+        const [updated] = await pool.execute(
+          'UPDATE admin_sessions SET last_activity = NOW(), expires_at = DATE_ADD(NOW(), INTERVAL 1 HOUR) WHERE session_id = ? AND firebase_uid = ? AND status = "active"',
+          [callerSessionId, currentUid]
+        ).catch(() => [{ affectedRows: 0 }]);
 
-      if (existingActive.length === 0) {
-        const autoSessId = `sess_${currentUid.slice(0, 10)}_${Date.now()}`;
-        await pool.execute(`
-          INSERT INTO admin_sessions (session_id, firebase_uid, email, admin_name, role, ip_address, user_agent, login_time, last_activity, status, expires_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), 'active', DATE_ADD(NOW(), INTERVAL 1 HOUR))
-        `, [
-          autoSessId,
-          currentUid,
-          currentEmail,
-          currentName,
-          currentRole,
-          req.ip || req.headers['x-forwarded-for'] || null,
-          req.headers['user-agent'] || null
-        ]).catch(() => {});
+        if (updated && updated.affectedRows === 0) {
+          await pool.execute(`
+            INSERT INTO admin_sessions (session_id, firebase_uid, email, admin_name, role, ip_address, user_agent, login_time, last_activity, status, expires_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), 'active', DATE_ADD(NOW(), INTERVAL 1 HOUR))
+            ON DUPLICATE KEY UPDATE status = 'active', last_activity = NOW(), expires_at = DATE_ADD(NOW(), INTERVAL 1 HOUR)
+          `, [
+            callerSessionId,
+            currentUid,
+            currentEmail,
+            currentName,
+            currentRole,
+            req.ip || req.headers['x-forwarded-for'] || null,
+            req.headers['user-agent'] || null
+          ]).catch(() => {});
+        }
       } else {
-        await pool.execute(
-          'UPDATE admin_sessions SET last_activity = NOW(), expires_at = DATE_ADD(NOW(), INTERVAL 1 HOUR) WHERE id = ?',
-          [existingActive[0].id]
-        ).catch(() => {});
+        const [existingActive] = await pool.execute(
+          'SELECT id FROM admin_sessions WHERE firebase_uid = ? AND status = "active" AND expires_at > NOW() ORDER BY last_activity DESC LIMIT 1',
+          [currentUid]
+        );
+
+        if (existingActive.length === 0) {
+          const autoSessId = `sess_${currentUid.slice(0, 10)}_${Date.now()}`;
+          await pool.execute(`
+            INSERT INTO admin_sessions (session_id, firebase_uid, email, admin_name, role, ip_address, user_agent, login_time, last_activity, status, expires_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), 'active', DATE_ADD(NOW(), INTERVAL 1 HOUR))
+          `, [
+            autoSessId,
+            currentUid,
+            currentEmail,
+            currentName,
+            currentRole,
+            req.ip || req.headers['x-forwarded-for'] || null,
+            req.headers['user-agent'] || null
+          ]).catch(() => {});
+        } else {
+          await pool.execute(
+            'UPDATE admin_sessions SET last_activity = NOW(), expires_at = DATE_ADD(NOW(), INTERVAL 1 HOUR) WHERE id = ?',
+            [existingActive[0].id]
+          ).catch(() => {});
+        }
       }
     }
 

@@ -2,7 +2,7 @@ import { db, auth, storage } from './firebase-config.js';
 import { signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { collection, query, orderBy, onSnapshot, doc, getDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { ref, uploadBytesResumable, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
-import { apiClient } from './api.js?v=3.3.0';
+import { apiClient } from './api.js?v=3.5.0';
 
 // DOM Elements
 const loginSection = document.getElementById('login-section');
@@ -757,6 +757,22 @@ function saveState() {
 }
 
 // =============================================================================
+/**
+ * Get or create persistent client-side admin session ID for multi-device/session management
+ */
+function getOrCreateAdminSessionId() {
+    try {
+        let sid = localStorage.getItem('chipakk_admin_session_id');
+        if (!sid) {
+            sid = `sess_${Math.random().toString(36).substring(2, 11)}_${Date.now()}`;
+            localStorage.setItem('chipakk_admin_session_id', sid);
+        }
+        return sid;
+    } catch (_) {
+        return `sess_${Date.now()}`;
+    }
+}
+
 // INACTIVITY AUTO-LOGOUT TRACKER (60 MINUTES PERSISTED)
 // =============================================================================
 const INACTIVITY_TIMEOUT_MS = 60 * 60 * 1000; // 60 minutes
@@ -775,9 +791,6 @@ function recordAdminActivity(force = false) {
         try {
             localStorage.setItem(STORAGE_ACTIVITY_KEY, String(now));
         } catch (e) {}
-        if (auth && auth.currentUser) {
-            apiClient.post('/admin/auth/activity').catch(() => {});
-        }
     }
 }
 
@@ -786,7 +799,8 @@ function handleUserActivity() {
 }
 
 function handleApiActivity() {
-    recordAdminActivity(true);
+    // API / background network activity is NOT genuine user interaction.
+    // Intentionally no-op to prevent background API polling from extending the 60-minute inactivity timer.
 }
 
 async function checkInactivityState() {
@@ -797,10 +811,11 @@ async function checkInactivityState() {
 
     if (elapsed >= INACTIVITY_TIMEOUT_MS) {
         console.warn(`[Inactivity Tracker] Session expired after ${Math.round(elapsed / 1000)}s of inactivity.`);
+        const sessionId = getOrCreateAdminSessionId();
         stopInactivityTracker();
         localStorage.removeItem(STORAGE_ACTIVITY_KEY);
         try {
-            await apiClient.post('/admin/auth/logout-event', { reason: 'inactivity_timeout' });
+            await apiClient.post('/admin/auth/logout-event', { session_id: sessionId, reason: 'inactivity_timeout' });
         } catch (e) {}
         try {
             await signOut(auth);
@@ -821,7 +836,6 @@ function startInactivityTracker() {
     const userEvents = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll', 'click'];
     userEvents.forEach(evt => window.addEventListener(evt, handleUserActivity, { passive: true }));
 
-    window.addEventListener('admin-api-activity', handleApiActivity);
     window.addEventListener('visibilitychange', () => {
         if (!document.hidden) checkInactivityState();
     });
@@ -858,7 +872,6 @@ function stopInactivityTracker() {
     const userEvents = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll', 'click'];
     userEvents.forEach(evt => window.removeEventListener(evt, handleUserActivity));
 
-    window.removeEventListener('admin-api-activity', handleApiActivity);
     window.removeEventListener('focus', checkInactivityState);
     console.log("[Inactivity Tracker] Stopped");
 }
@@ -909,13 +922,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }
 
-            console.log("[Auth State] User signed in:", user.email);
+            const sessionId = getOrCreateAdminSessionId();
+            console.log("[Auth State] User signed in:", user.email, "Session ID:", sessionId);
             if (loginSection) loginSection.style.display = 'none';
             if (adminWorkspace) adminWorkspace.style.display = 'flex';
             startInactivityTracker();
             initDashboard();
             try {
-                await apiClient.post('/admin/auth/login-event');
+                await apiClient.post('/admin/auth/login-event', { session_id: sessionId });
             } catch (_) {}
             await loadAllAdminData();
         } else {
@@ -955,9 +969,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if (logoutBtn) {
         logoutBtn.addEventListener('click', async () => {
             try {
+                const sessionId = localStorage.getItem('chipakk_admin_session_id');
                 stopInactivityTracker();
                 localStorage.removeItem(STORAGE_ACTIVITY_KEY);
-                await apiClient.post('/admin/auth/logout-event', { reason: 'user_action' }).catch(() => {});
+                localStorage.removeItem('chipakk_admin_session_id');
+                await apiClient.post('/admin/auth/logout-event', { session_id: sessionId, reason: 'user_action' }).catch(() => {});
                 await signOut(auth);
                 showToast("Signed out of Admin Workspace.");
                 if (loginSection) loginSection.style.display = 'flex';
@@ -4107,52 +4123,3 @@ function setupEventListeners() {
 window.updateState = updateState;
 window.saveState = saveState;
 window.showToast = showToast;
-
-// Admin 60-Minute Inactivity Auto-Logout Engine
-(function initAdminInactivityMonitor() {
-  const INACTIVITY_TIMEOUT_MS = 60 * 60 * 1000; // 60 minutes
-  const STORAGE_KEY = 'chipakk_admin_last_activity_v1';
-  let activityThrottleTimer = null;
-
-  function updateAdminLastActivity() {
-    if (activityThrottleTimer) return;
-    activityThrottleTimer = setTimeout(() => {
-      activityThrottleTimer = null;
-    }, 15000);
-
-    try {
-      sessionStorage.setItem(STORAGE_KEY, String(Date.now()));
-    } catch (_) {}
-  }
-
-  function getAdminLastActivity() {
-    try {
-      const stored = sessionStorage.getItem(STORAGE_KEY);
-      if (stored) return parseInt(stored, 10) || Date.now();
-    } catch (_) {}
-    return Date.now();
-  }
-
-  updateAdminLastActivity();
-  const events = ['click', 'pointerdown', 'keydown', 'touchstart', 'scroll'];
-  events.forEach(evt => window.addEventListener(evt, updateAdminLastActivity, { passive: true }));
-
-  setInterval(async () => {
-    if (typeof auth !== 'undefined' && auth.currentUser) {
-      const last = getAdminLastActivity();
-      const elapsed = Date.now() - last;
-      if (elapsed >= INACTIVITY_TIMEOUT_MS) {
-        console.warn('[Admin Security] 60-minute inactivity limit reached. Logging out admin.');
-        try {
-          apiClient.post('/admin/auth/logout-event', { reason: 'SESSION_EXPIRED' }).catch(() => {});
-          await signOut(auth);
-        } catch (_) {}
-        try {
-          sessionStorage.removeItem(STORAGE_KEY);
-        } catch (_) {}
-        alert('Your Admin session has expired due to 60 minutes of inactivity. Please sign in again.');
-        window.location.reload();
-      }
-    }
-  }, 30000);
-})();

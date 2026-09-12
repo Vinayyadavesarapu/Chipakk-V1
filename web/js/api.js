@@ -102,6 +102,14 @@ async function request(endpoint, options = {}) {
     headers['Authorization'] = `Bearer ${token}`;
   }
 
+  // Attach persistent Client Session ID if available
+  try {
+    const sessionId = typeof localStorage !== 'undefined' ? localStorage.getItem('chipakk_admin_session_id') : null;
+    if (sessionId) {
+      headers['X-Session-ID'] = sessionId;
+    }
+  } catch (_) {}
+
   // Set default JSON header if not uploading FormData
   if (!(options.body instanceof FormData) && !headers['Content-Type']) {
     headers['Content-Type'] = 'application/json';
