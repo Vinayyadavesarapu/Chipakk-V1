@@ -1,12 +1,11 @@
 # =========================================================
-# CHIPAKK — Production Server Configuration (.htaccess)
-# Authoritative Static Asset & Server Routing (Zero Referer Hacks)
+# CHIPAKK — Production Server Configuration
 # =========================================================
 
 RewriteEngine On
 
 # ---------------------------------------------------------
-# 1. API & SERVER UPLOADS PASS-THROUGH (DO NOT INTERCEPT)
+# 1. API & SERVER UPLOADS — PASS THROUGH
 # ---------------------------------------------------------
 RewriteRule ^api/ - [L]
 RewriteRule ^uploads/ - [L]
@@ -14,33 +13,95 @@ RewriteRule ^uploads/ - [L]
 # ---------------------------------------------------------
 # 2. ADMIN STYLESHEET & SCRIPT ISOLATION
 # ---------------------------------------------------------
-# Admin stylesheet: /css/admin.css -> web/css/style.css
+
+# Admin stylesheet
+# /css/admin.css -> /web/css/style.css
 RewriteRule ^css/admin\.css$ web/css/style.css [L]
 
-# Admin scripts: /js/admin.js, /js/api.js, /js/firebase-config.js, /js/migration.js
+# Admin scripts
+# /js/admin.js -> /web/js/admin.js
+# /js/api.js -> /web/js/api.js
+# /js/firebase-config.js -> /web/js/firebase-config.js
+# /js/migration.js -> /web/js/migration.js
 RewriteRule ^js/(admin|api|firebase-config|migration)\.js$ web/js/$1.js [L]
 
 # ---------------------------------------------------------
-# 3. CUSTOMER STOREFRONT STYLESHEET & ASSETS
+# 3. CUSTOMER STOREFRONT STYLESHEET & SCRIPTS
 # ---------------------------------------------------------
-# Customer stylesheet: /css/style.css -> customer-workspace/css/style.css
+
+# Customer stylesheet
+# /css/style.css -> /customer-workspace/css/style.css
 RewriteRule ^css/style\.css$ customer-workspace/css/style.css [L]
 
-# Customer scripts: /js/app.js, /js/auth.js, /js/home.js, /js/shop.js, etc.
+# Customer scripts
 RewriteRule ^js/(app|auth|home|shop|categories|custom-stickers|product|checkout|account|reset-password)\.js$ customer-workspace/js/$1.js [L]
 
-# Customer media assets: /assets/* -> customer-workspace/assets/*
+# ---------------------------------------------------------
+# 4. CUSTOMER MEDIA ASSETS
+# ---------------------------------------------------------
+
+# /assets/* -> /customer-workspace/assets/*
 RewriteRule ^assets/(.*)$ customer-workspace/assets/$1 [L]
 
 # ---------------------------------------------------------
-# 4. PAGE ROUTING (ADMIN & CUSTOMER)
+# 5. ADMIN PAGE ROUTING
 # ---------------------------------------------------------
-# Admin Workspace Route: /admin or /admin.html -> web/admin.html
-RewriteRule ^(admin|admin\.html)$ web/admin.html [L]
 
-# Customer Page Routes: /shop, /categories, /custom-stickers, etc.
-RewriteRule ^(shop|categories|custom-stickers|product|checkout|account|reset-password)(\.html)?$ customer-workspace/$1.html [L]
+# /admin
+# /admin.html
+#        ↓
+# /web/admin.html
+RewriteRule ^admin/?$ web/admin.html [L]
+RewriteRule ^admin\.html$ web/admin.html [L]
 
-# Root Customer Homepage Route: / or /index.html -> customer-workspace/index.html
+# ---------------------------------------------------------
+# 6. CUSTOMER PAGE ROUTING
+# ---------------------------------------------------------
+
+# /shop
+# /shop.html
+#        ↓
+# /customer-workspace/shop.html
+RewriteRule ^shop/?$ customer-workspace/shop.html [L]
+RewriteRule ^shop\.html$ customer-workspace/shop.html [L]
+
+# /categories
+# /categories.html
+RewriteRule ^categories/?$ customer-workspace/categories.html [L]
+RewriteRule ^categories\.html$ customer-workspace/categories.html [L]
+
+# /custom-stickers
+# /custom-stickers.html
+RewriteRule ^custom-stickers/?$ customer-workspace/custom-stickers.html [L]
+RewriteRule ^custom-stickers\.html$ customer-workspace/custom-stickers.html [L]
+
+# /product
+# /product.html
+RewriteRule ^product/?$ customer-workspace/product.html [L]
+RewriteRule ^product\.html$ customer-workspace/product.html [L]
+
+# /checkout
+# /checkout.html
+RewriteRule ^checkout/?$ customer-workspace/checkout.html [L]
+RewriteRule ^checkout\.html$ customer-workspace/checkout.html [L]
+
+# /account
+# /account.html
+RewriteRule ^account/?$ customer-workspace/account.html [L]
+RewriteRule ^account\.html$ customer-workspace/account.html [L]
+
+# /reset-password
+# /reset-password.html
+RewriteRule ^reset-password/?$ customer-workspace/reset-password.html [L]
+RewriteRule ^reset-password\.html$ customer-workspace/reset-password.html [L]
+
+# ---------------------------------------------------------
+# 7. ROOT CUSTOMER HOMEPAGE
+# ---------------------------------------------------------
+
+# / 
+# /index.html
+#        ↓
+# /customer-workspace/index.html
 RewriteRule ^$ customer-workspace/index.html [L]
 RewriteRule ^index\.html$ customer-workspace/index.html [L]
