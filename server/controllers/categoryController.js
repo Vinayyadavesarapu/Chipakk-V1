@@ -47,10 +47,6 @@ const getCategoryBySlugHandler = async (req, res, next) => {
     const effectiveService = getEffectiveCategoryService(req);
 
     let data = await effectiveService.getCategoryBySlug(slug, storeId);
-    if (!data && effectiveService !== categoryService) {
-      data = await categoryService.getCategoryBySlug(slug, storeId);
-    }
-
     if (!data) {
       return sendError(res, `Category '${slug}' not found`, 404);
     }
@@ -72,10 +68,6 @@ const getCategoryExperienceHandler = async (req, res, next) => {
     const effectiveService = getEffectiveCategoryService(req);
 
     let data = await effectiveService.getCategoryExperience(identifier, storeId);
-    if (!data && effectiveService !== categoryService) {
-      data = await categoryService.getCategoryExperience(identifier, storeId);
-    }
-
     if (!data) {
       return sendError(res, `Category '${identifier}' not found`, 404);
     }

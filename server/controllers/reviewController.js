@@ -41,7 +41,7 @@ const getReviewByIdHandler = async (req, res, next) => {
       return sendError(res, 'Invalid review ID format. Expected numeric BIGINT ID.', 400);
     }
 
-    const review = await reviewService.getReviewById(numId);
+    const review = await reviewService.getReviewById(numId, req.storeId);
 
     if (!review) {
       return sendError(res, `Review '${id}' not found`, 404);
@@ -85,7 +85,7 @@ const updateReviewHandler = async (req, res, next) => {
       }
     }
 
-    const existingReview = await reviewService.getReviewById(numId);
+    const existingReview = await reviewService.getReviewById(numId, req.storeId);
     if (!existingReview) {
       return sendError(res, `Review with ID ${id} not found`, 404);
     }

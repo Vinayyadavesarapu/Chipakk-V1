@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS `cart_items` (
   KEY `idx_cart_items_cart` (`cart_id`),
   KEY `idx_cart_items_product` (`product_id`),
   KEY `idx_cart_items_marshans_product` (`marshans_product_id`),
+  CONSTRAINT `chk_cart_items_one_catalog_product` CHECK ((`product_id` IS NULL) <> (`marshans_product_id` IS NULL)),
   CONSTRAINT `fk_cart_items_cart` FOREIGN KEY (`cart_id`) REFERENCES `carts` (`id`) ON DELETE CASCADE,
   CONSTRAINT `fk_cart_items_product` FOREIGN KEY (`product_id`) REFERENCES `products` (`id`) ON DELETE CASCADE,
   CONSTRAINT `fk_cart_items_marshans_product` FOREIGN KEY (`marshans_product_id`) REFERENCES `marshans_products` (`id`) ON DELETE CASCADE

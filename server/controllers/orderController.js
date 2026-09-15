@@ -178,7 +178,7 @@ const createCustomerOrderHandler = async (req, res, next) => {
 
     const payload = {
       ...(req.body || {}),
-      store_id: req.storeId || (req.body && req.body.store_id) || 1
+      store_id: req.storeId || 1
     };
 
     const order = await orderService.createCustomerOrder(payload, req.user);

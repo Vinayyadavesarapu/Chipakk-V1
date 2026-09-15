@@ -116,7 +116,7 @@ const getCategories = async ({ activeOnly = false } = {}) => {
         ce.settings AS experience_settings
       FROM marshans_categories c
       LEFT JOIN category_experiences ce ON c.experience_id = ce.id
-      ${whereClause}
+      WHERE c.store_id = 2${whereClause ? ` AND ${whereClause.slice(6)}` : ''}
       ORDER BY c.id ASC
     `;
 
@@ -206,7 +206,7 @@ const getCategoryBySlug = async (slug) => {
         ce.settings AS experience_settings
       FROM marshans_categories c
       LEFT JOIN category_experiences ce ON c.experience_id = ce.id
-      WHERE LOWER(c.slug) = ?
+      WHERE c.store_id = 2 AND LOWER(c.slug) = ?
       LIMIT 1
     `;
     const [rows] = await pool.execute(query, [cleanSlug]);
@@ -340,7 +340,7 @@ const setCategoryExperience = async (id, { experience_id, experience_code, setti
   }
 
   await pool.execute(
-    'UPDATE marshans_categories SET experience_id = ? WHERE id = ?',
+    'UPDATE marshans_categories SET experience_id = ? WHERE id = ? AND store_id = 2',
     [targetExperienceId, numId]
   );
 
@@ -356,6 +356,12 @@ const setCategoryMedia = async (id, mediaType, imageUrl, metadata = null) => {
 
   const cleanType = String(mediaType).trim().toLowerCase();
   const metaJson = metadata ? (typeof metadata === 'string' ? metadata : JSON.stringify(metadata)) : null;
+
+  const [categoryRows] = await pool.execute(
+    'SELECT id FROM marshans_categories WHERE id = ? AND store_id = 2 LIMIT 1',
+    [numId]
+  );
+  if (!categoryRows.length) throw new Error('Marshans category not found.');
 
   const query = `
     INSERT INTO marshans_category_media (category_id, media_type, image_url, metadata)
@@ -472,7 +478,7 @@ const updateCategory = async (id, updateData) => {
 
     if (updates.length > 0) {
       params.push(numId);
-      await connection.execute(`UPDATE marshans_categories SET ${updates.join(', ')} WHERE id = ?`, params);
+      await connection.execute(`UPDATE marshans_categories SET ${updates.join(', ')} WHERE id = ? AND store_id = 2`, params);
     }
 
     if (hero_light !== undefined) {
@@ -500,7 +506,7 @@ const updateCategory = async (id, updateData) => {
     await connection.commit();
     connection.release();
 
-    const [rows] = await pool.execute('SELECT slug FROM marshans_categories WHERE id = ? LIMIT 1', [numId]);
+    const [rows] = await pool.execute('SELECT slug FROM marshans_categories WHERE id = ? AND store_id = 2 LIMIT 1', [numId]);
     if (rows.length > 0) {
       return getCategoryBySlug(rows[0].slug);
     }
@@ -519,7 +525,7 @@ const deleteCategory = async (id) => {
   const numId = parseInt(id, 10);
   if (isNaN(numId)) throw new Error('Invalid category ID');
 
-  const [result] = await pool.execute('DELETE FROM marshans_categories WHERE id = ?', [numId]);
+  const [result] = await pool.execute('DELETE FROM marshans_categories WHERE id = ? AND store_id = 2', [numId]);
   return result.affectedRows > 0;
 };
 

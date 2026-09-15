@@ -259,14 +259,11 @@ const createCoupon = async (couponData) => {
     throw new Error('End date cannot be earlier than start date.');
   }
 
-  // Check code uniqueness case-insensitively
-  // When MARSHANS_HYBRID_CATALOG_ENABLED is true, scope uniqueness check to store_id.
-  // Otherwise (default), maintain existing global code uniqueness check.
-  const isHybrid = isMarshansHybridCatalogEnabled();
-  const dupQuery = (isHybrid && hasStoreId)
+  // Coupon codes are unique within each store when the bridge column exists.
+  const dupQuery = hasStoreId
     ? 'SELECT id FROM coupons WHERE UPPER(code) = ? AND store_id = ? LIMIT 1'
     : 'SELECT id FROM coupons WHERE UPPER(code) = ? LIMIT 1';
-  const dupParams = (isHybrid && hasStoreId)
+  const dupParams = hasStoreId
     ? [normalizedCode, activeStoreId]
     : [normalizedCode];
 
@@ -348,12 +345,11 @@ const updateCoupon = async (id, couponData, store_id = null) => {
       throw new Error('Coupon code cannot be empty');
     }
     const normalizedCode = code.trim().toUpperCase();
-    const isHybrid = isMarshansHybridCatalogEnabled();
     const effectiveStoreId = store_id || existing.store_id || 1;
-    const dupQuery = (isHybrid && hasStoreId)
+    const dupQuery = hasStoreId
       ? 'SELECT id FROM coupons WHERE UPPER(code) = ? AND store_id = ? AND id != ? LIMIT 1'
       : 'SELECT id FROM coupons WHERE UPPER(code) = ? AND id != ? LIMIT 1';
-    const dupParams = (isHybrid && hasStoreId)
+    const dupParams = hasStoreId
       ? [normalizedCode, effectiveStoreId, numId]
       : [normalizedCode, numId];
 

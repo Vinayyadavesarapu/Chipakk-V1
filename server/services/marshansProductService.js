@@ -19,11 +19,17 @@ const calculateRatingTier = (rating) => {
 const resolveMarshansCategoryId = async (connection, categoryIdOrName) => {
   if (!categoryIdOrName) return null;
   const numId = parseInt(categoryIdOrName, 10);
-  if (!isNaN(numId)) return numId;
+  if (!isNaN(numId)) {
+    const [rows] = await connection.execute(
+      'SELECT id FROM marshans_categories WHERE id = ? AND store_id = 2 LIMIT 1',
+      [numId]
+    );
+    return rows.length > 0 ? rows[0].id : null;
+  }
 
   const trimmedName = String(categoryIdOrName).trim();
   const [rows] = await connection.execute(
-    'SELECT id FROM marshans_categories WHERE name = ? LIMIT 1',
+    'SELECT id FROM marshans_categories WHERE name = ? AND store_id = 2 LIMIT 1',
     [trimmedName]
   );
   if (rows.length > 0) return rows[0].id;
@@ -52,6 +58,8 @@ const getProducts = async ({
 } = {}) => {
   const conditions = [];
   const params = [];
+
+  conditions.push('p.store_id = 2');
 
   // 1. Search filter
   if (search && typeof search === 'string' && search.trim()) {
@@ -151,7 +159,7 @@ const getProducts = async ({
   const query = `
     SELECT ${selectCols}
     FROM marshans_products p
-    LEFT JOIN marshans_categories c ON p.category_id = c.id
+    LEFT JOIN marshans_categories c ON p.category_id = c.id AND c.store_id = 2
     LEFT JOIN marshans_product_images pi ON p.id = pi.product_id AND pi.is_primary = 1
     ${whereClause}
     ORDER BY p.created_at DESC, p.id DESC
@@ -255,8 +263,8 @@ const getProductById = async (productIdOrAdminId) => {
   const productQuery = `
     SELECT ${selectCols}
     FROM marshans_products p
-    LEFT JOIN marshans_categories c ON p.category_id = c.id
-    WHERE ${isNumeric ? 'p.id = ?' : 'p.admin_product_id = ?'}
+    LEFT JOIN marshans_categories c ON p.category_id = c.id AND c.store_id = 2
+    WHERE p.store_id = 2 AND ${isNumeric ? 'p.id = ?' : 'p.admin_product_id = ?'}
     LIMIT 1
   `;
 
@@ -338,7 +346,7 @@ const getProductById = async (productIdOrAdminId) => {
         COALESCE(AVG(rating), 0) AS average_rating,
         COUNT(id) AS review_count
       FROM reviews
-      WHERE marshans_product_id = ? AND status = 'approved'
+      WHERE marshans_product_id = ? AND store_id = 2 AND status = 'approved'
     `;
     const [ratingRows] = await pool.execute(ratingQuery, [numProductId]);
     const avgRating = parseFloat(ratingRows[0]?.average_rating) || 0.0;
@@ -668,7 +676,7 @@ const updateProduct = async (id, updateData) => {
     }
 
     if (updates.length > 0) {
-      const updateQuery = `UPDATE marshans_products SET ${updates.join(', ')} WHERE id = ?`;
+      const updateQuery = `UPDATE marshans_products SET ${updates.join(', ')} WHERE id = ? AND store_id = 2`;
       params.push(numId);
       await connection.execute(updateQuery, params);
     }
@@ -734,7 +742,7 @@ const deleteProduct = async (id) => {
   const numId = parseInt(id, 10);
   if (isNaN(numId)) throw new Error('Invalid product ID');
 
-  const [result] = await pool.execute('UPDATE marshans_products SET active = 0 WHERE id = ?', [numId]);
+  const [result] = await pool.execute('UPDATE marshans_products SET active = 0 WHERE id = ? AND store_id = 2', [numId]);
   return result.affectedRows > 0;
 };
 

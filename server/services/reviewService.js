@@ -45,9 +45,9 @@ const getReviews = async ({
   if (store_id) {
     const sId = parseInt(store_id, 10);
     if (isHybrid && sId === 2) {
-      conditions.push('(r.store_id = 2 OR mp.store_id = 2 OR p.store_id = 2)');
+      conditions.push('r.store_id = 2 AND r.marshans_product_id IS NOT NULL AND mp.store_id = 2');
     } else if (sId === 1) {
-      conditions.push('(p.store_id = 1 OR p.store_id IS NULL)');
+      conditions.push('(COALESCE(r.store_id, 1) = 1 AND r.product_id IS NOT NULL AND (p.store_id = 1 OR p.store_id IS NULL))');
     } else {
       conditions.push('p.store_id = ?');
       params.push(sId);
@@ -63,7 +63,7 @@ const getReviews = async ({
     const numProdId = parseInt(product_id, 10);
     if (!isNaN(numProdId)) {
       if (isHybrid) {
-        conditions.push('(r.product_id = ? OR r.marshans_product_id = ?)');
+        conditions.push('((r.store_id = 2 AND r.marshans_product_id = ?) OR (COALESCE(r.store_id, 1) = 1 AND r.product_id = ?))');
         params.push(numProdId, numProdId);
       } else {
         conditions.push('r.product_id = ?');
@@ -158,11 +158,20 @@ const getReviews = async ({
 /**
  * Fetch single review by BIGINT ID
  */
-const getReviewById = async (reviewId) => {
+const getReviewById = async (reviewId, store_id = null) => {
   if (!reviewId) return null;
 
   const numId = parseInt(reviewId, 10);
   if (isNaN(numId)) return null;
+
+  const params = [numId];
+  let storeCondition = '';
+  if (store_id !== null && store_id !== undefined) {
+    const activeStoreId = parseInt(store_id, 10) === 2 ? 2 : 1;
+    storeCondition = activeStoreId === 2
+      ? ' AND r.store_id = 2 AND r.marshans_product_id IS NOT NULL AND mp.store_id = 2'
+      : ' AND COALESCE(r.store_id, 1) = 1 AND r.product_id IS NOT NULL AND (p.store_id = 1 OR p.store_id IS NULL)';
+  }
 
   const query = `
     SELECT 
@@ -184,11 +193,11 @@ const getReviewById = async (reviewId) => {
     LEFT JOIN products p ON r.product_id = p.id
     LEFT JOIN marshans_products mp ON r.marshans_product_id = mp.id
     LEFT JOIN users u ON r.customer_id = u.id
-    WHERE r.id = ?
+    WHERE r.id = ?${storeCondition}
     LIMIT 1
   `;
 
-  const [rows] = await pool.execute(query, [numId]);
+  const [rows] = await pool.execute(query, params);
   if (!rows || rows.length === 0) {
     return null;
   }
@@ -243,7 +252,7 @@ const createReview = async ({
   if (isHybrid && activeStoreId === 2) {
     // Validate in marshans_products
     const [rows] = await pool.execute(
-      'SELECT id, name FROM marshans_products WHERE id = ? LIMIT 1',
+      'SELECT id, name FROM marshans_products WHERE id = ? AND store_id = 2 AND active = 1 LIMIT 1',
       [numProdId]
     );
     if (!rows || rows.length === 0) {
@@ -253,7 +262,7 @@ const createReview = async ({
   } else {
     // Validate in products
     const [rows] = await pool.execute(
-      'SELECT id, name FROM products WHERE id = ? LIMIT 1',
+      'SELECT id, name, store_id FROM products WHERE id = ? AND (store_id = 1 OR store_id IS NULL) AND active = 1 LIMIT 1',
       [numProdId]
     );
     if (!rows || rows.length === 0) {

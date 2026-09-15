@@ -22,7 +22,7 @@ router.post('/validate', async (req, res, next) => {
       subtotalPaise = Math.round(Number(subtotal_in_rupees) * 100);
     }
 
-    const result = await couponService.validateCoupon(code, subtotalPaise);
+    const result = await couponService.validateCoupon(code, subtotalPaise, req.storeId || 1);
 
     if (!result.valid) {
       return sendError(res, result.message, 400);

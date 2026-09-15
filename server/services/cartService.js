@@ -77,6 +77,16 @@ const getCart = async ({ userId = null, storeId = 1, sessionId = null, connectio
     [cart.id]
   );
 
+  for (const item of itemRows || []) {
+    const hasChipakkProduct = item.product_id !== null && item.product_id !== undefined;
+    const hasMarshansProduct = item.marshans_product_id !== null && item.marshans_product_id !== undefined;
+    if (hasChipakkProduct === hasMarshansProduct) {
+      const err = new Error('Corrupt cart item: Exactly one catalog product ID must be populated.');
+      err.statusCode = 500;
+      throw err;
+    }
+  }
+
   let subtotalPaise = 0;
   let totalItems = 0;
 
@@ -159,7 +169,7 @@ const addItem = async ({
   if (isHybridMarshans) {
     // Look up in isolated marshans_products
     const [mpRows] = await conn.execute(
-      'SELECT id, name, sku, price, active, lumo_light_image FROM marshans_products WHERE id = ? LIMIT 1',
+      'SELECT id, name, sku, price, active, lumo_light_image FROM marshans_products WHERE id = ? AND store_id = 2 LIMIT 1',
       [numProductId]
     );
 
@@ -188,7 +198,7 @@ const addItem = async ({
   } else {
     // Look up in Store 1 products catalog
     const [pRows] = await conn.execute(
-      'SELECT id, name, sku, price, active, image_url, store_id FROM products WHERE id = ? LIMIT 1',
+      'SELECT id, name, sku, price, active, image_url, store_id FROM products WHERE id = ? AND (store_id = 1 OR store_id IS NULL) LIMIT 1',
       [numProductId]
     );
 

@@ -595,7 +595,7 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
         throw err;
       }
 
-      if (cartRec.user_id && parseInt(cartRec.user_id, 10) !== parseInt(customerId, 10)) {
+      if (!cartRec.user_id || parseInt(cartRec.user_id, 10) !== parseInt(customerId, 10)) {
         const err = new Error("Access denied: Cannot checkout another customer's cart.");
         err.statusCode = 403;
         throw err;
@@ -675,7 +675,7 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
       if (isHybridMarshans) {
         // Fetch active Store 2 product from marshans_products
         const [prodRows] = await connection.execute(
-          'SELECT id, name, sku, price, active, admin_product_id FROM marshans_products WHERE id = ? LIMIT 1',
+          'SELECT id, name, sku, price, active, admin_product_id FROM marshans_products WHERE id = ? AND store_id = 2 LIMIT 1',
           [productId]
         );
 
@@ -691,7 +691,7 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
       } else {
         // Fetch active Store 1 product from products
         const [prodRows] = await connection.execute(
-          'SELECT id, name, sku, price, active, admin_product_id, store_id FROM products WHERE id = ? LIMIT 1',
+          'SELECT id, name, sku, price, active, admin_product_id, store_id FROM products WHERE id = ? AND (store_id = 1 OR store_id IS NULL) LIMIT 1',
           [productId]
         );
 
@@ -983,7 +983,15 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
 
     // 14. Convert & clear persistent cart atomically if order originated from a cart
     if (orderPayload?.cart_id) {
-      await connection.execute('UPDATE carts SET status = "converted" WHERE id = ?', [orderPayload.cart_id]);
+      const [convertedCart] = await connection.execute(
+        'UPDATE carts SET status = "converted" WHERE id = ? AND user_id = ? AND store_id = ? AND status = "active"',
+        [orderPayload.cart_id, customerId, activeStoreId]
+      );
+      if (!convertedCart.affectedRows) {
+        const err = new Error('Cart could not be converted for this customer and store.');
+        err.statusCode = 409;
+        throw err;
+      }
       await connection.execute('DELETE FROM cart_items WHERE cart_id = ?', [orderPayload.cart_id]);
     }
 

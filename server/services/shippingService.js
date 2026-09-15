@@ -270,8 +270,14 @@ const updateShippingRule = async (id, ruleData, storeId = null) => {
   }
 
   if (updates.length > 0) {
-    const query = `UPDATE shipping_rules SET ${updates.join(', ')} WHERE id = ?`;
+    const query = hasStoreId && storeId !== null && storeId !== undefined
+      ? `UPDATE shipping_rules SET ${updates.join(', ')} WHERE id = ? AND (store_id = ? OR (store_id IS NULL AND ? = 1))`
+      : `UPDATE shipping_rules SET ${updates.join(', ')} WHERE id = ?`;
     params.push(numId);
+    if (hasStoreId && storeId !== null && storeId !== undefined) {
+      const activeStoreId = parseInt(storeId, 10) === 2 ? 2 : 1;
+      params.push(activeStoreId, activeStoreId);
+    }
     await pool.execute(query, params);
   }
 
@@ -292,7 +298,15 @@ const deleteShippingRule = async (id, storeId = null) => {
     return false;
   }
 
-  const [result] = await pool.execute('UPDATE shipping_rules SET is_enabled = 0 WHERE id = ?', [numId]);
+  const hasStoreId = await checkHasStoreId();
+  const activeStoreId = parseInt(storeId, 10) === 2 ? 2 : 1;
+  const deleteQuery = hasStoreId && storeId !== null && storeId !== undefined
+    ? 'UPDATE shipping_rules SET is_enabled = 0 WHERE id = ? AND (store_id = ? OR (store_id IS NULL AND ? = 1))'
+    : 'UPDATE shipping_rules SET is_enabled = 0 WHERE id = ?';
+  const deleteParams = hasStoreId && storeId !== null && storeId !== undefined
+    ? [numId, activeStoreId, activeStoreId]
+    : [numId];
+  const [result] = await pool.execute(deleteQuery, deleteParams);
   return result.affectedRows > 0;
 };
 

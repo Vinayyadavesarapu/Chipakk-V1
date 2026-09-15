@@ -62,11 +62,6 @@ const getProductByIdHandler = async (req, res, next) => {
     const effectiveService = getEffectiveProductService(req);
     let product = await effectiveService.getProductById(String(id).trim());
 
-    // Fallback check on legacy service if hybrid service returned null
-    if (!product && effectiveService !== productService) {
-      product = await productService.getProductById(String(id).trim());
-    }
-
     if (!product) {
       return sendError(res, `Product '${id}' not found`, 404);
     }
