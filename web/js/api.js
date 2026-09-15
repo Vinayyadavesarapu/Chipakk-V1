@@ -118,12 +118,10 @@ async function request(endpoint, options = {}) {
     }
   } catch (_) {}
 
-  // Attach persistent Client Session ID if available
+  // Attach active Store ID (1 for CHIPAKK, 2 for THE MARSHANS)
   try {
-    const sessionId = typeof localStorage !== 'undefined' ? localStorage.getItem('chipakk_admin_session_id') : null;
-    if (sessionId) {
-      headers['X-Session-ID'] = sessionId;
-    }
+    const activeStoreId = typeof localStorage !== 'undefined' ? (localStorage.getItem('admin_active_store_id') || '1') : '1';
+    headers['X-Store-ID'] = activeStoreId;
   } catch (_) {}
 
   // Set default JSON header if not uploading FormData
@@ -220,6 +218,18 @@ export const apiClient = {
     });
   },
 
+  getActiveStoreId: () => {
+    try {
+      return parseInt(localStorage.getItem('admin_active_store_id') || '1', 10);
+    } catch (_) {
+      return 1;
+    }
+  },
+  setActiveStoreId: (storeId) => {
+    try {
+      localStorage.setItem('admin_active_store_id', String(storeId));
+    } catch (_) {}
+  },
   getBaseUrl: () => API_BASE_URL,
   baseUrl: API_BASE_URL
 };

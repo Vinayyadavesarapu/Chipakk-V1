@@ -12,7 +12,15 @@ const {
   recordAdminActivityHandler,
   terminateSessionHandler
 } = require('../controllers/adminController');
-const { createCategoryHandler, updateCategoryHandler, deleteCategoryHandler } = require('../controllers/categoryController');
+const {
+  getCategoriesHandler,
+  createCategoryHandler,
+  updateCategoryHandler,
+  deleteCategoryHandler,
+  getAdminExperiencesHandler,
+  setCategoryExperienceHandler,
+  setCategoryMediaHandler
+} = require('../controllers/categoryController');
 const {
   getProductsHandler,
   getProductByIdHandler,
@@ -66,12 +74,40 @@ const {
   createShippingRuleHandler,
   updateShippingRuleHandler,
   deleteShippingRuleHandler,
-  calculateShippingFeeHandler
+  calculateShippingFeeHandler,
+  getStoreShippingConfigHandler,
+  updateStoreShippingConfigHandler
 } = require('../controllers/shippingController');
 const {
-  getStoreBuilderAdminHandler,
-  updateStoreBuilderAdminHandler
-} = require('../controllers/storeBuilderController');
+  getMaterialsHandler,
+  getMaterialByIdHandler,
+  createMaterialHandler,
+  updateMaterialHandler,
+  adjustStockHandler,
+  deleteMaterialHandler
+} = require('../controllers/materialsController');
+const {
+  getFinishingOptionsHandler,
+  getFinishingOptionByIdHandler,
+  createFinishingOptionHandler,
+  updateFinishingOptionHandler,
+  deleteFinishingOptionHandler
+} = require('../controllers/finishingController');
+const {
+  getProductionJobsHandler,
+  getProductionJobByIdHandler,
+  createProductionJobHandler,
+  updateProductionJobStageHandler,
+  advanceProductionJobStageHandler
+} = require('../controllers/productionJobController');
+const {
+  getCustomRequestsHandler,
+  getCustomRequestByIdHandler,
+  createCustomRequestHandler,
+  updateCustomRequestStatusHandler,
+  setCustomRequestQuoteHandler,
+  convertCustomRequestToOrderHandler
+} = require('../controllers/customRequestController');
 const {
   getReviewsHandler,
   getReviewByIdHandler,
@@ -111,7 +147,9 @@ router.get('/reviews/:id', getReviewByIdHandler);
 router.put('/reviews/:id', updateReviewHandler);
 router.patch('/reviews/:id/status', updateReviewHandler);
 
-// Shipping Rules & Rates Management
+// Consolidated Store Shipping Management
+router.get('/shipping/config', getStoreShippingConfigHandler);
+router.put('/shipping/config', updateStoreShippingConfigHandler);
 router.get('/shipping-rules', getShippingRulesHandler);
 router.get('/shipping-rules/:id', getShippingRuleByIdHandler);
 router.post('/shipping-rules', createShippingRuleHandler);
@@ -119,9 +157,37 @@ router.put('/shipping-rules/:id', updateShippingRuleHandler);
 router.delete('/shipping-rules/:id', deleteShippingRuleHandler);
 router.post('/shipping-rules/calculate', calculateShippingFeeHandler);
 
-// Store Builder Management (Admin)
-router.get('/store-builder', getStoreBuilderAdminHandler);
-router.put('/store-builder', updateStoreBuilderAdminHandler);
+// Flexible Materials Management (THE MARSHANS)
+router.get('/materials', getMaterialsHandler);
+router.get('/materials/:id', getMaterialByIdHandler);
+router.post('/materials', createMaterialHandler);
+router.put('/materials/:id', updateMaterialHandler);
+router.patch('/materials/:id/stock', adjustStockHandler);
+router.delete('/materials/:id', deleteMaterialHandler);
+
+// Finishing Options Management (THE MARSHANS)
+router.get('/finishing-options', getFinishingOptionsHandler);
+router.get('/finishing-options/:id', getFinishingOptionByIdHandler);
+router.post('/finishing-options', createFinishingOptionHandler);
+router.put('/finishing-options/:id', updateFinishingOptionHandler);
+router.delete('/finishing-options/:id', deleteFinishingOptionHandler);
+
+// Production Jobs V1 7-Stage Workflow (THE MARSHANS)
+router.get('/production-jobs', getProductionJobsHandler);
+router.get('/production-jobs/:id', getProductionJobByIdHandler);
+router.post('/production-jobs', createProductionJobHandler);
+router.put('/production-jobs/:id/stage', updateProductionJobStageHandler);
+router.patch('/production-jobs/:id/stage', updateProductionJobStageHandler);
+router.post('/production-jobs/:id/advance', advanceProductionJobStageHandler);
+
+// Custom 3D Requests 5-Stage Workflow (THE MARSHANS)
+router.get('/custom-requests', getCustomRequestsHandler);
+router.get('/custom-requests/:id', getCustomRequestByIdHandler);
+router.post('/custom-requests', createCustomRequestHandler);
+router.put('/custom-requests/:id/status', updateCustomRequestStatusHandler);
+router.patch('/custom-requests/:id/status', updateCustomRequestStatusHandler);
+router.put('/custom-requests/:id/quote', setCustomRequestQuoteHandler);
+router.post('/custom-requests/:id/convert-to-order', convertCustomRequestToOrderHandler);
 
 // Promotional Events & Sales Management
 router.get('/events', getEventsHandler);
@@ -192,9 +258,14 @@ router.put('/team/:id/status', updateTeamMemberStatusHandler);
 router.patch('/team/:id/status', updateTeamMemberStatusHandler);
 
 // Category Management CRUD
+router.get('/categories', getCategoriesHandler);
+router.get('/experiences', getAdminExperiencesHandler);
 router.post('/categories', uploadProductImage.single('image'), createCategoryHandler);
 router.put('/categories/:id', uploadProductImage.single('image'), updateCategoryHandler);
 router.delete('/categories/:id', deleteCategoryHandler);
+router.post('/categories/:id/experience', setCategoryExperienceHandler);
+router.put('/categories/:id/experience', setCategoryExperienceHandler);
+router.post('/categories/:id/media', uploadProductImage.single('image'), setCategoryMediaHandler);
 
 // Product Management CRUD
 router.get('/products', getProductsHandler);

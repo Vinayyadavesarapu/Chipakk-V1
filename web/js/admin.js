@@ -130,6 +130,14 @@ let heroGroups = [];
 let promoBanners = [];
 let storeSections = [];
 let auditLogs = [];
+let materials = [];
+let editingMaterialId = null;
+let finishingOptions = [];
+let editingFinishingId = null;
+let productionJobs = [];
+let activeProdJobStage = '';
+let customRequests = [];
+let activeCustomReqStatus = '';
 let dashboardMetrics = null;
 let monthlyStats = [];
 let heroConfig = null;
@@ -192,6 +200,8 @@ function normalizeProduct(p) {
         title: p.name || p.title || '',
         name: p.name || p.title || '',
         sku: p.sku || '',
+        description: p.description || '',
+        short_description: p.short_description || '',
         variant: 'Standard 3x3"',
         price: priceRupees,
         price_paise: pricePaise,
@@ -205,7 +215,13 @@ function normalizeProduct(p) {
         images: imagesList.length > 0 ? imagesList : ["https://img.icons8.com/color/150/000000/sticker.png"],
         tags: Array.isArray(p.tags) ? p.tags : [],
         scheduled_drop_time: p.scheduled_drop_time ? new Date(p.scheduled_drop_time).toISOString().slice(0, 16) : '',
-        is_active: p.active === 1 || p.active === true || p.is_active === true
+        is_active: p.active === 1 || p.active === true || p.is_active === true,
+        is_best_seller: p.is_best_seller === 1 || p.is_best_seller === true,
+        view_360_url: p.view_360_url || null,
+        lumo_light_image: p.lumo_light_image || null,
+        lumo_dark_image: p.lumo_dark_image || null,
+        lumo_light_360_url: p.lumo_light_360_url || null,
+        lumo_dark_360_url: p.lumo_dark_360_url || null
     };
 }
 
@@ -394,7 +410,7 @@ async function loadAllAdminData() {
         }
         if (catRes.status === 'fulfilled' && catRes.value) {
             const rawCats = catRes.value.data?.categories || catRes.value.categories || (Array.isArray(catRes.value.data) ? catRes.value.data : []) || (Array.isArray(catRes.value) ? catRes.value : []);
-            if (Array.isArray(rawCats)) categories = rawCats.map(normalizeCategory);
+            if (Array.isArray(rawCats)) categories = rawCats.map(normalizeCategory).filter(c => c && (c.name || '').toLowerCase().trim() !== 'best seller' && (c.slug || '').toLowerCase().trim() !== 'best-seller');
         }
         if (ordRes.status === 'fulfilled' && ordRes.value) {
             const rawOrds = ordRes.value.data?.orders || ordRes.value.orders || (Array.isArray(ordRes.value.data) ? ordRes.value.data : []);
@@ -519,6 +535,15 @@ async function loadAllAdminData() {
             }
         }
 
+        try {
+            await Promise.allSettled([
+                refreshMaterialsFromAPI(),
+                refreshFinishingFromAPI(),
+                refreshProductionJobsFromAPI(),
+                refreshCustomRequestsFromAPI()
+            ]);
+        } catch (_) {}
+
         updateState();
     } catch (err) {
         console.error('[loadAllAdminData Error]', err);
@@ -546,7 +571,7 @@ async function refreshCategoriesFromAPI() {
         const res = await apiClient.get('/categories');
         const raw = res?.data?.categories || res?.categories || (Array.isArray(res?.data) ? res.data : []) || (Array.isArray(res) ? res : []);
         if (Array.isArray(raw)) {
-            categories = raw.map(normalizeCategory);
+            categories = raw.map(normalizeCategory).filter(c => c && (c.name || '').toLowerCase().trim() !== 'best seller' && (c.slug || '').toLowerCase().trim() !== 'best-seller');
             renderCategoriesTable();
             populateCategoryDropdowns();
         }
@@ -719,6 +744,54 @@ async function refreshSettingsFromAPI() {
     }
 }
 
+async function refreshMaterialsFromAPI() {
+    try {
+        const res = await apiClient.get('/admin/materials');
+        const raw = res?.data?.materials || res?.materials || (Array.isArray(res?.data) ? res.data : []) || (Array.isArray(res) ? res : []);
+        materials = Array.isArray(raw) ? raw : [];
+        renderMaterialsTable();
+        renderInventoryTable();
+        populateInventoryMaterialSelect();
+    } catch (err) {
+        console.error('[refreshMaterialsFromAPI]', err.message);
+    }
+}
+
+async function refreshFinishingFromAPI() {
+    try {
+        const res = await apiClient.get('/admin/finishing-options');
+        const raw = res?.data?.finishing_options || res?.finishing_options || (Array.isArray(res?.data) ? res.data : []) || (Array.isArray(res) ? res : []);
+        finishingOptions = Array.isArray(raw) ? raw : [];
+        renderFinishingTable();
+    } catch (err) {
+        console.error('[refreshFinishingFromAPI]', err.message);
+    }
+}
+
+async function refreshProductionJobsFromAPI(stageFilter = '') {
+    try {
+        const endpoint = stageFilter ? `/admin/production-jobs?stage=${encodeURIComponent(stageFilter)}` : '/admin/production-jobs';
+        const res = await apiClient.get(endpoint);
+        const raw = res?.data?.jobs || res?.jobs || (Array.isArray(res?.data) ? res.data : []) || (Array.isArray(res) ? res : []);
+        productionJobs = Array.isArray(raw) ? raw : [];
+        renderProductionJobsTable();
+    } catch (err) {
+        console.error('[refreshProductionJobsFromAPI]', err.message);
+    }
+}
+
+async function refreshCustomRequestsFromAPI(statusFilter = '') {
+    try {
+        const endpoint = statusFilter ? `/admin/custom-requests?status=${encodeURIComponent(statusFilter)}` : '/admin/custom-requests';
+        const res = await apiClient.get(endpoint);
+        const raw = res?.data?.requests || res?.requests || (Array.isArray(res?.data) ? res.data : []) || (Array.isArray(res) ? res : []);
+        customRequests = Array.isArray(raw) ? raw : [];
+        renderCustomRequestsTable();
+    } catch (err) {
+        console.error('[refreshCustomRequestsFromAPI]', err.message);
+    }
+}
+
 function updateState() {
     updateCustomerStatsAndTiers();
     saveState();
@@ -726,6 +799,11 @@ function updateState() {
     renderSalesChart();
     renderProductsTable();
     renderCategoriesTable();
+    renderMaterialsTable();
+    renderInventoryTable();
+    renderFinishingTable();
+    renderProductionJobsTable();
+    renderCustomRequestsTable();
     renderProductionQueueTabs();
     renderProductionQueueTable();
     renderReviewsTable();
@@ -1439,7 +1517,7 @@ function renderProductsTable() {
             <tr>
                 <td><img src="${(p.images && p.images[0]) || 'https://img.icons8.com/color/150/000000/sticker.png'}" style="width:45px; height:45px; object-fit:cover; border:1px solid #000;"></td>
                 <td><span class="admin-id-highlight">${p.admin_id || p.sku}</span></td>
-                <td><strong>${p.title}</strong><br><small style="color:#666;">${p.variant || 'Standard 3x3"'}</small></td>
+                <td><strong>${p.title}</strong>${p.is_best_seller ? ' <span class="status-badge" style="background:#fef08a; color:#854d0e; font-size:0.65rem; font-weight:900; border:1px solid #eab308; vertical-align:middle;">★ BEST SELLER</span>' : ''}<br><small style="color:#666;">${p.variant || 'Standard'}</small></td>
                 <td><span class="status-badge" style="background:#eee; color:#333;">${p.category}</span></td>
                 <td><strong>₹${p.price}</strong></td>
                 <td>${formatRatingDisplay(p.rating)} <small>(${p.review_count || 0})</small></td>
@@ -1465,22 +1543,125 @@ function renderProductsTable() {
     });
 }
 
+function updateLumoProductPreview(mode, url) {
+    const apiHost = apiClient.baseUrl ? apiClient.baseUrl.replace(/\/api$/, '') : 'https://api.chipakk.shop';
+    const prevWrap = document.getElementById(`prod-lumo-${mode}-preview-wrap`);
+    const prevImg = document.getElementById(`prod-lumo-${mode}-preview`);
+    if (prevWrap && prevImg) {
+        if (url && String(url).trim()) {
+            const cleanUrl = String(url).trim();
+            prevImg.src = cleanUrl.startsWith('http') ? cleanUrl : (apiHost + cleanUrl);
+            prevWrap.style.display = 'block';
+        } else {
+            prevWrap.style.display = 'none';
+            prevImg.src = '';
+        }
+    }
+}
+
+function updateLumoProductSectionVisibility() {
+    const activeStoreId = apiClient.getActiveStoreId ? apiClient.getActiveStoreId() : 1;
+    const catVal = document.getElementById('prod-category')?.value || '';
+    const isLumo = activeStoreId === 2 && (catVal || '').trim().toUpperCase() === 'LUMO';
+
+    const lumoSection = document.getElementById('lumo-product-assets-section');
+    const generic360 = document.getElementById('prod-generic-360-container');
+
+    if (lumoSection) {
+        lumoSection.style.display = isLumo ? 'block' : 'none';
+    }
+    if (generic360) {
+        generic360.style.display = isLumo ? 'none' : 'block';
+    }
+}
+
 function openProductForm(product = null) {
     const container = document.getElementById('product-form-container');
     if (!container) return;
 
-    editingProductId = product ? product.id : null;
-    document.getElementById('prod-form-title').textContent = product ? `[EDIT PRODUCT DROP: ${product.admin_id}]` : '[ADD NEW PRODUCT DROP]';
+    const activeStoreId = apiClient.getActiveStoreId ? apiClient.getActiveStoreId() : 1;
+    const defaultPrefix = activeStoreId === 2 ? 'MRSH' : 'CK';
 
-    document.getElementById('prod-admin-id').value = product ? product.admin_id : `CK-${String(products.length + 1).padStart(3, '0')}`;
+    editingProductId = product ? product.id : null;
+    document.getElementById('prod-form-title').textContent = product ? `[EDIT ${activeStoreId === 2 ? '3D PRODUCT' : 'PRODUCT DROP'}: ${product.admin_id}]` : `[ADD NEW ${activeStoreId === 2 ? '3D PRODUCT' : 'PRODUCT DROP'}]`;
+
+    document.getElementById('prod-admin-id').value = product ? product.admin_id : `${defaultPrefix}-${String(products.length + 1).padStart(3, '0')}`;
+    if (document.getElementById('prod-sku')) document.getElementById('prod-sku').value = product ? (product.sku || '') : '';
     document.getElementById('prod-title').value = product ? product.title : '';
+    if (document.getElementById('prod-desc')) document.getElementById('prod-desc').value = product ? (product.description || '') : '';
     document.getElementById('prod-price').value = product ? product.price : '';
     document.getElementById('prod-category').value = product ? product.category : (categories[0]?.name || '');
     document.getElementById('prod-tags').value = product ? (product.tags || []).join(', ') : '';
+    if (document.getElementById('prod-is-best-seller')) {
+        document.getElementById('prod-is-best-seller').checked = Boolean(product && (product.is_best_seller === 1 || product.is_best_seller === true));
+    }
     document.getElementById('prod-release-date').value = product ? (product.scheduled_drop_time || '') : '';
     document.getElementById('prod-active').value = product ? String(product.is_active) : 'true';
 
-    tempProdImages = product && product.images ? [...product.images] : ["https://img.icons8.com/color/150/000000/sticker.png"];
+    // 3D Print Product Specifications & Mapping (THE MARSHANS)
+    if (activeStoreId === 2) {
+        if (document.getElementById('prod-short-desc')) document.getElementById('prod-short-desc').value = product?.short_description || '';
+        if (document.getElementById('prod-weight-grams')) document.getElementById('prod-weight-grams').value = product?.weight_grams || '';
+        if (document.getElementById('prod-dimensions-mm')) document.getElementById('prod-dimensions-mm').value = product?.dimensions_mm || '';
+        if (document.getElementById('prod-production-notes')) document.getElementById('prod-production-notes').value = product?.production_notes || '';
+        if (document.getElementById('prod-360-url')) document.getElementById('prod-360-url').value = product?.view_360_url || '';
+
+        // LUMO Experience Assets (Light + Dark Mode)
+        const lightImg = product?.lumo_light_image || '';
+        const darkImg = product?.lumo_dark_image || '';
+        const light360 = product?.lumo_light_360_url || '';
+        const dark360 = product?.lumo_dark_360_url || '';
+
+        if (document.getElementById('prod-lumo-light-image')) document.getElementById('prod-lumo-light-image').value = lightImg;
+        if (document.getElementById('prod-lumo-dark-image')) document.getElementById('prod-lumo-dark-image').value = darkImg;
+        if (document.getElementById('prod-lumo-light-360')) document.getElementById('prod-lumo-light-360').value = light360;
+        if (document.getElementById('prod-lumo-dark-360')) document.getElementById('prod-lumo-dark-360').value = dark360;
+
+        updateLumoProductPreview('light', lightImg);
+        updateLumoProductPreview('dark', darkImg);
+
+        // Populate materials checkboxes
+        const matBox = document.getElementById('prod-materials-checkboxes');
+        if (matBox) {
+            const mappedMatIds = (product?.material_ids || (product?.materials && product.materials.map(m => m.id)) || []).map(Number);
+            matBox.innerHTML = materials.length > 0 ? materials.map(m => `
+                <label style="display:flex; align-items:center; gap:6px; font-size:0.8rem; cursor:pointer;">
+                    <input type="checkbox" value="${m.id}" ${mappedMatIds.includes(Number(m.id)) ? 'checked' : ''}>
+                    <span>${m.name} (${m.material_type} - ${m.color_name || 'Standard'})</span>
+                </label>
+            `).join('') : '<span style="color:#888; font-size:0.75rem;">No materials defined yet. Add materials in Materials tab.</span>';
+        }
+
+        // Populate finishing checkboxes
+        const finishBox = document.getElementById('prod-finishing-checkboxes');
+        if (finishBox) {
+            const mappedFinishIds = (product?.finishing_option_ids || (product?.finishing_options && product.finishing_options.map(f => f.id)) || []).map(Number);
+            finishBox.innerHTML = finishingOptions.length > 0 ? finishingOptions.map(f => `
+                <label style="display:flex; align-items:center; gap:6px; font-size:0.8rem; cursor:pointer;">
+                    <input type="checkbox" value="${f.id}" ${mappedFinishIds.includes(Number(f.id)) ? 'checked' : ''}>
+                    <span>${f.name} (+₹${f.extra_price || 0})</span>
+                </label>
+            `).join('') : '<span style="color:#888; font-size:0.75rem;">No finishing options defined yet. Add options in Finishing tab.</span>';
+        }
+    } else {
+        updateLumoProductPreview('light', '');
+        updateLumoProductPreview('dark', '');
+    }
+
+    updateLumoProductSectionVisibility();
+
+    if (product && Array.isArray(product.images) && product.images.length > 0) {
+        tempProdImages = product.images.map(img => {
+            if (typeof img === 'object' && img !== null) {
+                return img.image_url || img.external_url || img.url || '';
+            }
+            return String(img || '');
+        }).filter(Boolean);
+    } else if (product && product.primary_image_url) {
+        tempProdImages = [product.primary_image_url];
+    } else {
+        tempProdImages = ["https://img.icons8.com/color/150/000000/sticker.png"];
+    }
     renderProdImageGallery();
 
     container.style.display = 'block';
@@ -1520,7 +1701,17 @@ function renderProdImageGallery() {
     });
 }
 
-function editProduct(productId) {
+async function editProduct(productId) {
+    try {
+        const res = await apiClient.get(`/admin/products/${productId}`);
+        const freshProduct = res?.data || res;
+        if (freshProduct && freshProduct.id) {
+            openProductForm(freshProduct);
+            return;
+        }
+    } catch (err) {
+        console.warn('Could not load fresh product details, using cached list:', err.message);
+    }
     const p = products.find(prod => String(prod.id) === String(productId));
     if (p) openProductForm(p);
 }
@@ -1560,32 +1751,95 @@ async function saveProductForm() {
     if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = "SAVING..."; }
 
     const priceInPaise = Math.round(price * 100);
+    const activeStoreId = apiClient.getActiveStoreId ? apiClient.getActiveStoreId() : 1;
+    const isLumo = activeStoreId === 2 && (category || '').trim().toUpperCase() === 'LUMO';
+
+    if (isLumo) {
+        const lumoLightImg = document.getElementById('prod-lumo-light-image')?.value.trim();
+        const lumoDarkImg = document.getElementById('prod-lumo-dark-image')?.value.trim();
+
+        if (!lumoLightImg) {
+            showToast("LUMO Light Mode Product Image is required for LUMO products!", "error");
+            if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = originalText || (activeStoreId === 2 ? "SAVE 3D PRODUCT" : "SAVE PRODUCT DROP"); }
+            return;
+        }
+        if (!lumoDarkImg) {
+            showToast("LUMO Dark Mode Product Image is required for LUMO products!", "error");
+            if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = originalText || (activeStoreId === 2 ? "SAVE 3D PRODUCT" : "SAVE PRODUCT DROP"); }
+            return;
+        }
+    }
+
+    const skuVal = document.getElementById('prod-sku')?.value.trim() || `SKU-${adminId}`;
+    const descVal = document.getElementById('prod-desc')?.value.trim() || null;
+    const isBestSeller = document.getElementById('prod-is-best-seller')?.checked ? 1 : 0;
+
     const payload = {
         name: title,
         admin_product_id: adminId,
-        sku: `SKU-${adminId}`,
+        sku: skuVal,
+        description: descVal,
         price: priceInPaise,
         category_name: category,
         tags: document.getElementById('prod-tags').value.split(',').map(t => t.trim()).filter(Boolean),
         images: [...tempProdImages],
         scheduled_drop_time: document.getElementById('prod-release-date').value || null,
-        active: document.getElementById('prod-active').value === 'true' ? 1 : 0
+        active: document.getElementById('prod-active').value === 'true' ? 1 : 0,
+        is_best_seller: isBestSeller
     };
+
+    if (activeStoreId === 2) {
+        payload.short_description = document.getElementById('prod-short-desc')?.value.trim() || null;
+        payload.weight_grams = Number(document.getElementById('prod-weight-grams')?.value) || 0;
+        payload.dimensions_mm = document.getElementById('prod-dimensions-mm')?.value.trim() || null;
+        payload.production_notes = document.getElementById('prod-production-notes')?.value.trim() || null;
+
+        const lumoLightImg = document.getElementById('prod-lumo-light-image')?.value.trim() || null;
+        const lumoDarkImg = document.getElementById('prod-lumo-dark-image')?.value.trim() || null;
+        const lumoLight360 = document.getElementById('prod-lumo-light-360')?.value.trim() || null;
+        const lumoDark360 = document.getElementById('prod-lumo-dark-360')?.value.trim() || null;
+
+        if (isLumo) {
+            payload.lumo_light_image = lumoLightImg;
+            payload.lumo_dark_image = lumoDarkImg;
+            payload.lumo_light_360_url = lumoLight360;
+            payload.lumo_dark_360_url = lumoDark360;
+            payload.view_360_url = lumoLight360 || lumoDark360 || null;
+        } else {
+            payload.view_360_url = document.getElementById('prod-360-url')?.value.trim() || null;
+            payload.lumo_light_image = null;
+            payload.lumo_dark_image = null;
+            payload.lumo_light_360_url = null;
+            payload.lumo_dark_360_url = null;
+        }
+
+        const selMatIds = [];
+        document.querySelectorAll('#prod-materials-checkboxes input[type="checkbox"]:checked').forEach(cb => {
+            selMatIds.push(Number(cb.value));
+        });
+        payload.material_ids = selMatIds;
+
+        const selFinishIds = [];
+        document.querySelectorAll('#prod-finishing-checkboxes input[type="checkbox"]:checked').forEach(cb => {
+            selFinishIds.push(Number(cb.value));
+        });
+        payload.finishing_option_ids = selFinishIds;
+    }
 
     try {
         if (editingProductId) {
             await apiClient.put(`/admin/products/${editingProductId}`, payload);
-            showToast(`Print-on-demand product '${adminId}' updated.`);
+            showToast(`Product '${adminId}' updated.`);
         } else {
             await apiClient.post('/admin/products', payload);
-            showToast(`Print-on-demand product '${adminId}' created.`);
+            showToast(`Product '${adminId}' created.`);
         }
         document.getElementById('product-form-container').style.display = 'none';
         await refreshProductsFromAPI();
     } catch (err) {
         showToast(`Error saving product: ${err.message}`, 'error');
     } finally {
-        if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = originalText || "SAVE STICKER DROP"; }
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = originalText || (activeStoreId === 2 ? "SAVE 3D PRODUCT" : "SAVE PRODUCT DROP"); }
     }
 }
 
@@ -1597,9 +1851,22 @@ function renderCategoriesTable() {
     const tbody = document.getElementById('categories-tbody');
     if (!tbody) return;
 
-    tbody.innerHTML = categories.map(c => {
+    const visibleCategories = categories.filter(c => c && (c.name || '').toLowerCase().trim() !== 'best seller' && (c.slug || '').toLowerCase().trim() !== 'best-seller');
+
+    tbody.innerHTML = visibleCategories.map(c => {
         const apiHost = apiClient.baseUrl ? apiClient.baseUrl.replace(/\/api$/, '') : 'https://api.chipakk.shop';
         const imgThumb = c.image_url ? `<img src="${c.image_url.startsWith('http') ? c.image_url : (apiHost + c.image_url)}" style="width:28px; height:28px; object-fit:cover; border:1px solid #000; border-radius:3px; vertical-align:middle; margin-right:6px;">` : '';
+
+        const expCode = (c.experience?.experience_code || 'normal').toLowerCase();
+        let expBadge = `<span class="status-badge" style="background:#f1f5f9; color:#475569;">NORMAL</span>`;
+        if (expCode === 'glow') {
+            expBadge = `<span class="status-badge" style="background:#020617; color:#00ffcc; border:1px solid #00ffcc; font-weight:bold;">✨ GLOW</span>`;
+        } else if (expCode === 'luxury') {
+            expBadge = `<span class="status-badge" style="background:#1e1b4b; color:#fbbf24; border:1px solid #fbbf24; font-weight:bold;">👑 LUXURY</span>`;
+        } else if (expCode === 'seasonal') {
+            expBadge = `<span class="status-badge" style="background:#831843; color:#f472b6; border:1px solid #f472b6; font-weight:bold;">🎄 SEASONAL</span>`;
+        }
+
         return `
             <tr>
                 <td><span class="status-badge status-live">${c.display_order || c.id}</span></td>
@@ -1613,6 +1880,7 @@ function renderCategoriesTable() {
                     </div>
                 </td>
                 <td><code style="background:#eee; padding:2px 6px;">${c.slug}</code></td>
+                <td>${expBadge}</td>
                 <td><strong style="color:#059669;">${c.product_count}</strong> <small style="color:#666;">products</small></td>
                 <td><span class="status-badge ${c.active ? 'status-live' : 'status-inactive'}">${c.active ? 'ACTIVE' : 'INACTIVE'}</span></td>
                 <td>
@@ -1623,7 +1891,7 @@ function renderCategoriesTable() {
                 </td>
             </tr>
         `;
-    }).join('') || '<tr><td colspan="6">No categories found.</td></tr>';
+    }).join('') || '<tr><td colspan="7">No categories found.</td></tr>';
 
     tbody.querySelectorAll('.edit-cat-btn').forEach(btn => {
         btn.addEventListener('click', () => {
@@ -1635,6 +1903,36 @@ function renderCategoriesTable() {
     tbody.querySelectorAll('.del-cat-btn').forEach(btn => {
         btn.addEventListener('click', () => deleteCategory(btn.getAttribute('data-id')));
     });
+}
+
+function updateCategoryMediaLabels(isLumo) {
+    const lightLabel = document.getElementById('cat-hero-light-label');
+    const darkLabel = document.getElementById('cat-hero-dark-label');
+    const lightDesc = document.getElementById('cat-hero-light-desc');
+    const darkDesc = document.getElementById('cat-hero-dark-desc');
+    const badge = document.getElementById('lumo-media-badge');
+
+    if (isLumo) {
+        if (lightLabel) lightLabel.innerHTML = 'LUMO LIGHT MODE IMAGE <span style="color: #e53e3e; font-weight: 900;">* REQUIRED</span>';
+        if (darkLabel) darkLabel.innerHTML = 'LUMO DARK MODE IMAGE <span style="color: #e53e3e; font-weight: 900;">* REQUIRED</span>';
+        if (lightDesc) lightDesc.textContent = 'Light Mode = daytime/light-theme visual';
+        if (darkDesc) darkDesc.textContent = 'Dark Mode = nighttime/dark-theme glowing visual';
+        if (badge) badge.style.display = 'inline-block';
+    } else {
+        if (lightLabel) lightLabel.textContent = 'Hero Light Image (Optional)';
+        if (darkLabel) darkLabel.textContent = 'Hero Dark Image (Optional)';
+        if (lightDesc) lightDesc.textContent = 'Daytime / light-theme visual';
+        if (darkDesc) darkDesc.textContent = 'Nighttime / dark-theme visual';
+        if (badge) badge.style.display = 'none';
+    }
+}
+
+function checkCategoryLumoMode() {
+    const nameVal = (document.getElementById('cat-name')?.value || '').toLowerCase().trim();
+    const slugVal = (document.getElementById('cat-slug')?.value || '').toLowerCase().trim();
+    const expVal = (document.getElementById('cat-experience-type')?.value || '').toLowerCase().trim();
+    const isLumo = nameVal === 'lumo' || slugVal === 'lumo' || expVal === 'glow';
+    updateCategoryMediaLabels(isLumo);
 }
 
 function openCategoryForm(category = null) {
@@ -1660,6 +1958,53 @@ function openCategoryForm(category = null) {
         prevBox.style.display = 'none';
     }
 
+    // Category Experience Selection
+    const expCode = (category?.experience?.experience_code || 'normal').toLowerCase();
+    const expSelect = document.getElementById('cat-experience-type');
+    if (expSelect) expSelect.value = expCode;
+
+    // Toggle Glow Settings container
+    const glowBox = document.getElementById('cat-glow-settings-container');
+    if (glowBox) glowBox.style.display = expCode === 'glow' ? 'block' : 'none';
+
+    // Populate Glow Settings
+    const glowSettings = category?.experience?.settings || {};
+    const glowColor = glowSettings.glow_color || '#00ffcc';
+    if (document.getElementById('cat-glow-color')) document.getElementById('cat-glow-color').value = glowColor;
+    if (document.getElementById('cat-glow-color-picker')) document.getElementById('cat-glow-color-picker').value = glowColor;
+    if (document.getElementById('cat-glow-animation')) document.getElementById('cat-glow-animation').value = glowSettings.animation || 'pulse';
+    if (document.getElementById('cat-glow-intensity')) document.getElementById('cat-glow-intensity').value = glowSettings.intensity !== undefined ? glowSettings.intensity : 0.8;
+    if (document.getElementById('cat-dark-mode')) document.getElementById('cat-dark-mode').checked = glowSettings.dark_mode_enabled !== false;
+
+    // Populate Category Media (Hero Light / Hero Dark)
+    const heroLight = category?.media?.hero_light || '';
+    const heroDark = category?.media?.hero_dark || '';
+    if (document.getElementById('cat-hero-light')) document.getElementById('cat-hero-light').value = heroLight;
+    if (document.getElementById('cat-hero-dark')) document.getElementById('cat-hero-dark').value = heroDark;
+
+    const apiHost = apiClient.baseUrl ? apiClient.baseUrl.replace(/\/api$/, '') : 'https://api.chipakk.shop';
+    const lightPrevBox = document.getElementById('hero-light-prev-box');
+    const lightPrevImg = document.getElementById('hero-light-prev-img');
+    if (heroLight && lightPrevBox && lightPrevImg) {
+        lightPrevImg.src = heroLight.startsWith('http') ? heroLight : (apiHost + heroLight);
+        lightPrevBox.style.display = 'block';
+    } else if (lightPrevBox) {
+        lightPrevBox.style.display = 'none';
+    }
+
+    const darkPrevBox = document.getElementById('hero-dark-prev-box');
+    const darkPrevImg = document.getElementById('hero-dark-prev-img');
+    if (heroDark && darkPrevBox && darkPrevImg) {
+        darkPrevImg.src = heroDark.startsWith('http') ? heroDark : (apiHost + heroDark);
+        darkPrevBox.style.display = 'block';
+    } else if (darkPrevBox) {
+        darkPrevBox.style.display = 'none';
+    }
+
+    // Explicitly update labels and required status for LUMO vs other categories
+    const isLumo = (category?.name || '').toLowerCase() === 'lumo' || (category?.slug || '').toLowerCase() === 'lumo' || expCode === 'glow';
+    updateCategoryMediaLabels(isLumo);
+
     container.style.display = 'block';
 }
 
@@ -1674,11 +2019,45 @@ async function saveCategoryForm() {
         return;
     }
 
+    const experienceCode = document.getElementById('cat-experience-type')?.value || 'normal';
+    let experienceSettings = null;
+    if (experienceCode === 'glow') {
+        experienceSettings = {
+            glow_color: document.getElementById('cat-glow-color')?.value.trim() || '#00ffcc',
+            animation: document.getElementById('cat-glow-animation')?.value || 'pulse',
+            intensity: parseFloat(document.getElementById('cat-glow-intensity')?.value) || 0.8,
+            dark_mode_enabled: document.getElementById('cat-dark-mode')?.checked ?? true
+        };
+    }
+
+    const heroLight = document.getElementById('cat-hero-light')?.value.trim() || null;
+    const heroDark = document.getElementById('cat-hero-dark')?.value.trim() || null;
+
+    const isLumo = name.toLowerCase() === 'lumo' || slug.toLowerCase() === 'lumo' || experienceCode === 'glow';
+    if (isLumo && (!heroLight || !heroDark)) {
+        showToast("LUMO category requires both Light Mode (Daytime) and Dark Mode (Night) images!", "error");
+        return;
+    }
+
     const saveBtn = document.getElementById('save-cat-btn');
     const originalText = saveBtn ? saveBtn.textContent : '';
     if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = "SAVING..."; }
 
-    const payload = { name, slug, description: desc, image_url: imageUrl, active: 1 };
+    const payload = {
+        name,
+        slug,
+        description: desc,
+        image_url: imageUrl,
+        active: 1,
+        experience_code: experienceCode,
+        experience_settings: experienceSettings,
+        hero_light: heroLight,
+        hero_dark: heroDark,
+        media: {
+            hero_light: heroLight,
+            hero_dark: heroDark
+        }
+    };
 
     try {
         if (editingCategoryId) {
@@ -2145,13 +2524,21 @@ function renderOrderTimeline(order) {
     const container = document.getElementById('ord-timeline-container');
     if (!container) return;
 
-    const history = order.status_history || [{ status: order.status, timestamp: order.created_at, actor: "System" }];
-    container.innerHTML = history.map(h => `
-        <div class="timeline-item">
-            <span class="timeline-dot"></span>
-            <strong>${h.status}</strong> — <small>${new Date(h.timestamp).toLocaleString()} (${h.actor || 'System'})</small>
-        </div>
-    `).join('');
+    const history = (order.status_history && order.status_history.length > 0)
+        ? order.status_history
+        : [{ status: order.status || 'ORDER PLACED', timestamp: order.created_at, actor: "System", note: "Order placed" }];
+
+    container.innerHTML = history.map(h => {
+        const timeStr = h.timestamp || h.created_at ? new Date(h.timestamp || h.created_at).toLocaleString() : 'Just now';
+        const actorStr = h.actor || h.changed_by || 'System';
+        return `
+            <div class="timeline-item">
+                <span class="timeline-dot"></span>
+                <strong>${h.status}</strong> — <small>${timeStr} (${actorStr})</small>
+                ${h.note ? `<div style="font-size:0.75rem; color:#666; margin-top:2px;">${h.note}</div>` : ''}
+            </div>
+        `;
+    }).join('');
 }
 
 // =============================================================================
@@ -2730,7 +3117,654 @@ function renderShippingCalculatorPreview() {
 }
 
 // =============================================================================
-// 10. VISUAL STORE BUILDER MANAGEMENT
+// 10. THE MARSHANS: MATERIALS, INVENTORY, FINISHING, PRODUCTION, CUSTOM REQUESTS
+// =============================================================================
+
+// --- MATERIALS ---
+function renderMaterialsTable() {
+    const tbody = document.getElementById('materials-tbody');
+    if (!tbody) return;
+
+    const query = (document.getElementById('material-search-input')?.value || '').toLowerCase().trim();
+    const filterType = document.getElementById('material-filter-type')?.value || '';
+
+    // Populate type dropdown if needed
+    const typeSelect = document.getElementById('material-filter-type');
+    if (typeSelect && materials.length > 0) {
+        const uniqueTypes = [...new Set(materials.map(m => m.material_type).filter(Boolean))];
+        const currentVal = typeSelect.value;
+        typeSelect.innerHTML = '<option value="">All Material Types</option>' + uniqueTypes.map(t => `<option value="${t}">${t}</option>`).join('');
+        typeSelect.value = currentVal;
+    }
+
+    const filtered = materials.filter(m => {
+        const matchQ = !query || (m.name || '').toLowerCase().includes(query) || (m.material_type || '').toLowerCase().includes(query) || (m.color_name || '').toLowerCase().includes(query);
+        const matchT = !filterType || m.material_type === filterType;
+        return matchQ && matchT;
+    });
+
+    if (filtered.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:15px; color:#666;">No materials found. Click "+ ADD MATERIAL" to create one.</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = filtered.map(m => {
+        const stockQty = Number(m.stock_quantity) || 0;
+        const minThreshold = Number(m.min_stock_threshold) || 0;
+        const isLow = stockQty <= minThreshold;
+        const colorBadge = m.color_hex ? `<span style="display:inline-block; width:12px; height:12px; border:1px solid #000; background:${m.color_hex}; vertical-align:middle; margin-right:4px;"></span>` : '';
+        const costVal = (Number(m.cost_per_unit) || 0).toFixed(2);
+
+        return `
+            <tr>
+                <td><strong>${m.name}</strong></td>
+                <td><span class="status-badge" style="background:#7c3aed; color:#fff;">${m.material_type}</span></td>
+                <td>${colorBadge} ${m.color_name || 'Standard'}</td>
+                <td><code style="background:#eee; padding:2px 6px;">${m.unit || 'grams'}</code></td>
+                <td>₹${costVal}</td>
+                <td><span style="font-weight:bold; color:${isLow ? '#dc2626' : '#059669'};">${stockQty.toLocaleString()} ${m.unit || 'g'}</span></td>
+                <td><span class="status-badge ${isLow ? 'status-inactive' : 'status-live'}">${isLow ? 'LOW STOCK' : 'IN STOCK'}</span></td>
+                <td>
+                    <div style="display:flex; gap:4px;">
+                        <button class="retro-btn edit-mat-btn" data-id="${m.id}" style="padding:2px 6px; font-size:0.75rem;">EDIT</button>
+                        <button class="retro-btn del-mat-btn" data-id="${m.id}" style="padding:2px 6px; font-size:0.75rem; background:#ef4444; color:#fff;">DEL</button>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }).join('');
+
+    tbody.querySelectorAll('.edit-mat-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const m = materials.find(item => String(item.id) === btn.getAttribute('data-id'));
+            if (m) openMaterialForm(m);
+        });
+    });
+
+    tbody.querySelectorAll('.del-mat-btn').forEach(btn => {
+        btn.addEventListener('click', () => deleteMaterial(btn.getAttribute('data-id')));
+    });
+}
+
+function openMaterialForm(material = null) {
+    const container = document.getElementById('material-form-container');
+    if (!container) return;
+
+    editingMaterialId = material ? material.id : null;
+    const titleEl = document.getElementById('mat-form-title');
+    if (titleEl) titleEl.textContent = material ? `[EDIT MATERIAL: ${material.name}]` : '[ADD NEW MATERIAL]';
+
+    document.getElementById('mat-edit-id').value = material ? material.id : '';
+    document.getElementById('mat-name').value = material ? material.name : '';
+    document.getElementById('mat-type').value = material ? material.material_type : 'PLA';
+    document.getElementById('mat-color-name').value = material ? material.color_name : '';
+    document.getElementById('mat-color-hex').value = material ? (material.color_hex || '#000000') : '#000000';
+    document.getElementById('mat-color-picker').value = material ? (material.color_hex || '#000000') : '#000000';
+    document.getElementById('mat-stock-quantity').value = material ? material.stock_quantity : 1000;
+    document.getElementById('mat-unit').value = material ? (material.unit || 'grams') : 'grams';
+    document.getElementById('mat-cost-per-unit').value = material ? material.cost_per_unit : 2.5;
+    document.getElementById('mat-density').value = material ? (material.density_g_cm3 || 1.24) : 1.24;
+    document.getElementById('mat-min-threshold').value = material ? (material.min_stock_threshold || 500) : 500;
+    document.getElementById('mat-active').value = material ? String(material.is_active !== 0 && material.is_active !== false) : 'true';
+
+    container.style.display = 'block';
+    container.scrollIntoView({ behavior: 'smooth' });
+}
+
+async function saveMaterialForm() {
+    const name = document.getElementById('mat-name')?.value.trim();
+    const type = document.getElementById('mat-type')?.value.trim();
+    const colorName = document.getElementById('mat-color-name')?.value.trim();
+    const colorHex = document.getElementById('mat-color-hex')?.value.trim();
+    const stockQty = Number(document.getElementById('mat-stock-quantity')?.value) || 0;
+    const unit = document.getElementById('mat-unit')?.value || 'grams';
+    const costPerUnit = Number(document.getElementById('mat-cost-per-unit')?.value) || 0;
+    const density = Number(document.getElementById('mat-density')?.value) || 1.24;
+    const minThreshold = Number(document.getElementById('mat-min-threshold')?.value) || 0;
+    const isActive = document.getElementById('mat-active')?.value === 'true' ? 1 : 0;
+
+    if (!name || !type) {
+        showToast("Material name and category/type are required!", "error");
+        return;
+    }
+
+    const saveBtn = document.getElementById('save-material-btn');
+    const origText = saveBtn ? saveBtn.textContent : '';
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = "SAVING..."; }
+
+    const payload = {
+        name,
+        material_type: type,
+        color_name: colorName,
+        color_hex: colorHex,
+        stock_quantity: stockQty,
+        unit,
+        cost_per_unit: costPerUnit,
+        density_g_cm3: density,
+        min_stock_threshold: minThreshold,
+        is_active: isActive
+    };
+
+    try {
+        if (editingMaterialId) {
+            await apiClient.put(`/admin/materials/${editingMaterialId}`, payload);
+            showToast(`Material '${name}' updated.`);
+        } else {
+            await apiClient.post('/admin/materials', payload);
+            showToast(`Material '${name}' created.`);
+        }
+        document.getElementById('material-form-container').style.display = 'none';
+        await refreshMaterialsFromAPI();
+    } catch (err) {
+        showToast(`Error saving material: ${err.message}`, 'error');
+    } finally {
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = origText || "SAVE MATERIAL"; }
+    }
+}
+
+async function deleteMaterial(materialId) {
+    const m = materials.find(item => String(item.id) === String(materialId));
+    if (!m) return;
+
+    showConfirmModal("DELETE MATERIAL", `Delete material '${m.name}'?`, async () => {
+        try {
+            await apiClient.delete(`/admin/materials/${materialId}`);
+            showToast(`Material '${m.name}' deleted.`);
+            await refreshMaterialsFromAPI();
+        } catch (err) {
+            showToast(`Error deleting material: ${err.message}`, 'error');
+        }
+    });
+}
+
+// --- INVENTORY & STOCK CONTROL ---
+function renderInventoryTable() {
+    const tbody = document.getElementById('inventory-tbody');
+    if (!tbody) return;
+
+    if (materials.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; padding:15px; color:#666;">No inventory items recorded. Materials added in the Materials tab will appear here.</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = materials.map(m => {
+        const stockQty = Number(m.stock_quantity) || 0;
+        const minThreshold = Number(m.min_stock_threshold) || 0;
+        const isLow = stockQty <= minThreshold;
+        const colorBadge = m.color_hex ? `<span style="display:inline-block; width:12px; height:12px; border:1px solid #000; background:${m.color_hex}; vertical-align:middle; margin-right:4px;"></span>` : '';
+        const costVal = (Number(m.cost_per_unit) || 0).toFixed(2);
+
+        return `
+            <tr>
+                <td><code>MAT-${String(m.id).padStart(3, '0')}</code></td>
+                <td><strong>${m.name}</strong></td>
+                <td><span class="status-badge" style="background:#7c3aed; color:#fff;">${m.material_type}</span></td>
+                <td>${colorBadge} ${m.color_name || 'Standard'}</td>
+                <td><strong style="font-size:1rem; color:${isLow ? '#dc2626' : '#059669'};">${stockQty.toLocaleString()} ${m.unit || 'g'}</strong></td>
+                <td>${minThreshold.toLocaleString()} ${m.unit || 'g'}</td>
+                <td>₹${costVal} / ${m.unit || 'unit'}</td>
+                <td><span class="status-badge ${isLow ? 'status-inactive' : 'status-live'}">${isLow ? 'CRITICAL LOW' : 'HEALTHY'}</span></td>
+                <td>
+                    <button class="retro-btn quick-adjust-btn" data-id="${m.id}" style="padding:2px 8px; font-size:0.75rem; background:#0ea5e9; color:#fff;">ADJUST STOCK</button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+
+    tbody.querySelectorAll('.quick-adjust-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const matId = btn.getAttribute('data-id');
+            const selectEl = document.getElementById('inv-material-select');
+            if (selectEl) selectEl.value = matId;
+            const formContainer = document.getElementById('inventory-form-container');
+            if (formContainer) {
+                formContainer.style.display = 'block';
+                formContainer.scrollIntoView({ behavior: 'smooth' });
+            }
+        });
+    });
+}
+
+function populateInventoryMaterialSelect() {
+    const select = document.getElementById('inv-material-select');
+    if (!select) return;
+
+    select.innerHTML = materials.map(m => `
+        <option value="${m.id}">${m.name} (${m.material_type} - ${m.color_name || 'Standard'}) [Current: ${m.stock_quantity} ${m.unit || 'g'}]</option>
+    `).join('') || '<option value="">No materials available</option>';
+
+    select.addEventListener('change', () => {
+        const m = materials.find(item => String(item.id) === select.value);
+        const unitLabel = document.getElementById('inv-unit-label');
+        if (unitLabel && m) unitLabel.textContent = m.unit || 'grams / ml';
+    });
+}
+
+async function saveInventoryAdjust() {
+    const select = document.getElementById('inv-material-select');
+    const materialId = select ? select.value : null;
+    const adjustType = document.getElementById('inv-adjust-type')?.value;
+    const amount = Number(document.getElementById('inv-adjust-amount')?.value);
+    const reason = document.getElementById('inv-adjust-reason')?.value.trim() || 'Manual Admin Stock Adjustment';
+
+    if (!materialId) {
+        showToast("Please select a material to adjust!", "error");
+        return;
+    }
+    if (isNaN(amount) || amount < 0) {
+        showToast("Please enter a valid non-negative adjustment amount!", "error");
+        return;
+    }
+
+    const saveBtn = document.getElementById('save-inventory-adjust-btn');
+    const origText = saveBtn ? saveBtn.textContent : '';
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = "RECORDING..."; }
+
+    try {
+        await apiClient.patch(`/admin/materials/${materialId}/stock`, {
+            adjustment_type: adjustType,
+            amount,
+            reason
+        });
+        showToast("Stock adjustment successfully recorded in inventory.");
+        document.getElementById('inventory-form-container').style.display = 'none';
+        document.getElementById('inv-adjust-amount').value = '';
+        document.getElementById('inv-adjust-reason').value = '';
+        await refreshMaterialsFromAPI();
+    } catch (err) {
+        showToast(`Error recording adjustment: ${err.message}`, 'error');
+    } finally {
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = origText || "CONFIRM ADJUSTMENT"; }
+    }
+}
+
+// --- FINISHING OPTIONS ---
+function renderFinishingTable() {
+    const tbody = document.getElementById('finishing-tbody');
+    if (!tbody) return;
+
+    if (finishingOptions.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:15px; color:#666;">No finishing options configured. Click "+ ADD FINISHING OPTION" to create one.</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = finishingOptions.map(f => {
+        const extraPrice = Number(f.extra_price) || 0;
+        const leadDays = Number(f.lead_time_days) || 0;
+        const isActive = f.is_active !== 0 && f.is_active !== false;
+
+        return `
+            <tr>
+                <td><strong>${f.name}</strong></td>
+                <td><small style="color:#555;">${f.description || 'Standard post-processing'}</small></td>
+                <td><strong style="color:${extraPrice > 0 ? '#059669' : '#555'};">${extraPrice > 0 ? '+₹' + extraPrice : 'FREE / INCLUDED'}</strong></td>
+                <td>${leadDays > 0 ? `+${leadDays} days` : 'Same day'}</td>
+                <td><span class="status-badge ${isActive ? 'status-live' : 'status-inactive'}">${isActive ? 'ACTIVE' : 'INACTIVE'}</span></td>
+                <td>
+                    <div style="display:flex; gap:4px;">
+                        <button class="retro-btn edit-finish-btn" data-id="${f.id}" style="padding:2px 6px; font-size:0.75rem;">EDIT</button>
+                        <button class="retro-btn del-finish-btn" data-id="${f.id}" style="padding:2px 6px; font-size:0.75rem; background:#ef4444; color:#fff;">DEL</button>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }).join('');
+
+    tbody.querySelectorAll('.edit-finish-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const f = finishingOptions.find(item => String(item.id) === btn.getAttribute('data-id'));
+            if (f) openFinishingForm(f);
+        });
+    });
+
+    tbody.querySelectorAll('.del-finish-btn').forEach(btn => {
+        btn.addEventListener('click', () => deleteFinishingOption(btn.getAttribute('data-id')));
+    });
+}
+
+function openFinishingForm(opt = null) {
+    const container = document.getElementById('finishing-form-container');
+    if (!container) return;
+
+    editingFinishingId = opt ? opt.id : null;
+    const titleEl = document.getElementById('finish-form-title');
+    if (titleEl) titleEl.textContent = opt ? `[EDIT FINISHING OPTION: ${opt.name}]` : '[ADD FINISHING OPTION]';
+
+    document.getElementById('finish-edit-id').value = opt ? opt.id : '';
+    document.getElementById('finish-name').value = opt ? opt.name : '';
+    document.getElementById('finish-extra-price').value = opt ? opt.extra_price : 0;
+    document.getElementById('finish-description').value = opt ? (opt.description || '') : '';
+    document.getElementById('finish-lead-time').value = opt ? (opt.lead_time_days || 0) : 2;
+    document.getElementById('finish-active').value = opt ? String(opt.is_active !== 0 && opt.is_active !== false) : 'true';
+
+    container.style.display = 'block';
+    container.scrollIntoView({ behavior: 'smooth' });
+}
+
+async function saveFinishingForm() {
+    const name = document.getElementById('finish-name')?.value.trim();
+    const extraPrice = Number(document.getElementById('finish-extra-price')?.value) || 0;
+    const description = document.getElementById('finish-description')?.value.trim();
+    const leadTimeDays = Number(document.getElementById('finish-lead-time')?.value) || 0;
+    const isActive = document.getElementById('finish-active')?.value === 'true' ? 1 : 0;
+
+    if (!name) {
+        showToast("Finishing option name is required!", "error");
+        return;
+    }
+
+    const saveBtn = document.getElementById('save-finishing-btn');
+    const origText = saveBtn ? saveBtn.textContent : '';
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = "SAVING..."; }
+
+    const payload = {
+        name,
+        extra_price: extraPrice,
+        description,
+        lead_time_days: leadTimeDays,
+        is_active: isActive
+    };
+
+    try {
+        if (editingFinishingId) {
+            await apiClient.put(`/admin/finishing-options/${editingFinishingId}`, payload);
+            showToast(`Finishing option '${name}' updated.`);
+        } else {
+            await apiClient.post('/admin/finishing-options', payload);
+            showToast(`Finishing option '${name}' created.`);
+        }
+        document.getElementById('finishing-form-container').style.display = 'none';
+        await refreshFinishingFromAPI();
+    } catch (err) {
+        showToast(`Error saving finishing option: ${err.message}`, 'error');
+    } finally {
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = origText || "SAVE FINISHING OPTION"; }
+    }
+}
+
+async function deleteFinishingOption(id) {
+    const f = finishingOptions.find(item => String(item.id) === String(id));
+    if (!f) return;
+
+    showConfirmModal("DELETE FINISHING OPTION", `Delete finishing option '${f.name}'?`, async () => {
+        try {
+            await apiClient.delete(`/admin/finishing-options/${id}`);
+            showToast(`Finishing option '${f.name}' deleted.`);
+            await refreshFinishingFromAPI();
+        } catch (err) {
+            showToast(`Error deleting finishing option: ${err.message}`, 'error');
+        }
+    });
+}
+
+// --- 3D PRODUCTION JOBS (7-STAGE WORKFLOW) ---
+function renderProductionJobsTable() {
+    const tbody = document.getElementById('production-jobs-tbody');
+    if (!tbody) return;
+
+    if (productionJobs.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; padding:15px; color:#666;">No 3D production jobs in queue. When customer orders with 3D parts are placed, jobs will appear here automatically.</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = productionJobs.map(job => {
+        const stageColors = {
+            'Order Received': '#6b7280',
+            'Preparing': '#3b82f6',
+            'Printing': '#059669',
+            'Finishing': '#8b5cf6',
+            'Quality Check': '#f59e0b',
+            'Ready': '#10b981',
+            'Completed': '#111827',
+            'Failed': '#ef4444',
+            'Cancelled': '#991b1b'
+        };
+        const color = stageColors[job.stage] || '#000';
+        const updatedDate = job.updated_at ? new Date(job.updated_at).toLocaleDateString('en-IN', { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' }) : '-';
+
+        return `
+            <tr>
+                <td><strong>#3DJ-${job.id}</strong></td>
+                <td><code>#${job.order_number || job.order_id || 'N/A'}</code></td>
+                <td><strong>${job.item_name || '3D Printed Part'}</strong></td>
+                <td><span class="status-badge" style="background:#7c3aed; color:#fff;">${job.material_name || 'PLA'}</span></td>
+                <td>${job.finishing_name || 'Raw Print'}</td>
+                <td>${job.assigned_printer ? `🖨️ ${job.assigned_printer}` : '<em style="color:#888;">Unassigned</em>'}</td>
+                <td><span class="status-badge" style="background:${color}; color:#fff;">${job.stage}</span></td>
+                <td><small style="color:#666;">${updatedDate}</small></td>
+                <td>
+                    <div style="display:flex; gap:4px;">
+                        ${job.stage !== 'Completed' && job.stage !== 'Failed' && job.stage !== 'Cancelled' ? `<button class="retro-btn advance-job-btn" data-id="${job.id}" style="padding:2px 6px; font-size:0.75rem; background:#059669; color:#fff;">NEXT ⏩</button>` : ''}
+                        <button class="retro-btn update-job-btn" data-id="${job.id}" style="padding:2px 6px; font-size:0.75rem;">UPDATE</button>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }).join('');
+
+    tbody.querySelectorAll('.advance-job-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const jobId = btn.getAttribute('data-id');
+            try {
+                const res = await apiClient.post(`/admin/production-jobs/${jobId}/advance`);
+                showToast(`Job #3DJ-${jobId} advanced to stage: ${res.data?.stage || 'Next Stage'}`);
+                await refreshProductionJobsFromAPI(activeProdJobStage);
+            } catch (err) {
+                showToast(`Failed to advance job: ${err.message}`, 'error');
+            }
+        });
+    });
+
+    tbody.querySelectorAll('.update-job-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const jobId = btn.getAttribute('data-id');
+            openProductionJobModal(jobId);
+        });
+    });
+}
+
+function openProductionJobModal(jobId) {
+    const job = productionJobs.find(j => String(j.id) === String(jobId));
+    if (!job) return;
+
+    const modal = document.getElementById('production-job-modal');
+    if (!modal) return;
+
+    document.getElementById('job-modal-id').value = job.id;
+    document.getElementById('job-modal-title').textContent = `[UPDATE 3D JOB #3DJ-${job.id}: ${job.item_name || ''}]`;
+    document.getElementById('job-modal-stage').value = job.stage || 'Order Received';
+    document.getElementById('job-modal-machine').value = job.assigned_printer || '';
+    document.getElementById('job-modal-time').value = job.print_time_minutes || '';
+    document.getElementById('job-modal-weight').value = job.weight_grams || '';
+    document.getElementById('job-modal-notes').value = job.notes || '';
+
+    modal.style.display = 'block';
+    modal.scrollIntoView({ behavior: 'smooth' });
+}
+
+async function saveProductionJobModal() {
+    const jobId = document.getElementById('job-modal-id')?.value;
+    const stage = document.getElementById('job-modal-stage')?.value;
+    const machine = document.getElementById('job-modal-machine')?.value.trim();
+    const timeMins = Number(document.getElementById('job-modal-time')?.value) || null;
+    const weightGrams = Number(document.getElementById('job-modal-weight')?.value) || null;
+    const notes = document.getElementById('job-modal-notes')?.value.trim();
+
+    if (!jobId || !stage) return;
+
+    const saveBtn = document.getElementById('save-job-modal-btn');
+    const origText = saveBtn ? saveBtn.textContent : '';
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = "UPDATING..."; }
+
+    try {
+        await apiClient.put(`/admin/production-jobs/${jobId}/stage`, {
+            stage,
+            assigned_printer: machine,
+            print_time_minutes: timeMins,
+            weight_grams: weightGrams,
+            notes
+        });
+        showToast(`Job #3DJ-${jobId} updated to ${stage}.`);
+        document.getElementById('production-job-modal').style.display = 'none';
+        await refreshProductionJobsFromAPI(activeProdJobStage);
+    } catch (err) {
+        showToast(`Error updating job: ${err.message}`, 'error');
+    } finally {
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = origText || "UPDATE JOB"; }
+    }
+}
+
+// --- CUSTOM 3D REQUESTS (5-STAGE WORKFLOW) ---
+function renderCustomRequestsTable() {
+    const tbody = document.getElementById('custom-requests-tbody');
+    if (!tbody) return;
+
+    if (customRequests.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; padding:15px; color:#666;">No custom 3D printing requests in queue.</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = customRequests.map(req => {
+        const statusColors = {
+            'Pending Review': '#f59e0b',
+            'In Review': '#3b82f6',
+            'Quoted': '#8b5cf6',
+            'Approved': '#059669',
+            'Order Created': '#111827',
+            'Rejected': '#ef4444'
+        };
+        const badgeColor = statusColors[req.status] || '#555';
+        const fileLink = req.model_file_url ? `<a href="${req.model_file_url}" target="_blank" style="color:#2563eb; text-decoration:underline;"><code>${req.model_file_name || 'Download Model'}</code></a>` : (req.model_file_name || 'N/A');
+        const quoteText = req.quoted_price ? `<strong>₹${(Number(req.quoted_price) / 100).toFixed(0)}</strong>` : '<em style="color:#888;">Pending</em>';
+        const createdDate = req.created_at ? new Date(req.created_at).toISOString().slice(0, 10) : '-';
+
+        return `
+            <tr>
+                <td><strong>#CR-${req.id}</strong></td>
+                <td>${req.customer_name || 'Customer'}<br><small style="color:#666;">${req.customer_email || ''}</small></td>
+                <td>${fileLink}</td>
+                <td>${req.requested_material || 'PLA'} / ${req.requested_finishing || 'Raw'}</td>
+                <td>${req.dimensions_mm || '-'}<br><small style="color:#666;">${req.volume_cm3 ? req.volume_cm3 + ' cm³' : ''}</small></td>
+                <td>${quoteText}</td>
+                <td><span class="status-badge" style="background:${badgeColor}; color:#fff;">${req.status}</span></td>
+                <td><small style="color:#666;">${createdDate}</small></td>
+                <td>
+                    <button class="retro-btn retro-btn-primary review-req-btn" data-id="${req.id}" style="padding:2px 8px; font-size:0.75rem;">REVIEW & QUOTE</button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+
+    tbody.querySelectorAll('.review-req-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const reqId = btn.getAttribute('data-id');
+            openCustomRequestModal(reqId);
+        });
+    });
+}
+
+function openCustomRequestModal(reqId) {
+    const req = customRequests.find(r => String(r.id) === String(reqId));
+    if (!req) return;
+
+    const modal = document.getElementById('custom-request-modal');
+    if (!modal) return;
+
+    document.getElementById('quote-modal-id').value = req.id;
+    document.getElementById('quote-modal-title').textContent = `[CUSTOM REQUEST #CR-${req.id}: ${req.customer_name || 'Customer'}]`;
+
+    const infoBox = document.getElementById('quote-modal-info');
+    if (infoBox) {
+        infoBox.innerHTML = `
+            <div><strong>Customer:</strong> ${req.customer_name || ''} (${req.customer_email || ''} | ${req.customer_phone || 'N/A'})</div>
+            <div><strong>Requested Specs:</strong> Material: <b>${req.requested_material || 'Any'}</b> | Color: <b>${req.requested_color || 'Standard'}</b> | Infill: <b>${req.infill_pct ? req.infill_pct + '%' : 'Default'}</b> | Finishing: <b>${req.requested_finishing || 'Raw'}</b></div>
+            <div><strong>File:</strong> <code>${req.model_file_name || 'No file'}</code> ${req.model_file_url ? `[<a href="${req.model_file_url}" target="_blank">Download Asset</a>]` : ''}</div>
+            ${req.notes ? `<div><strong>Customer Notes:</strong> <em>"${req.notes}"</em></div>` : ''}
+            <div><strong>Current Workflow Stage:</strong> <span class="status-badge status-live">${req.status}</span></div>
+        `;
+    }
+
+    document.getElementById('quote-price').value = req.quoted_price ? Math.round(Number(req.quoted_price) / 100) : '';
+    document.getElementById('quote-time-hours').value = req.print_time_hours || '';
+    document.getElementById('quote-weight').value = req.material_weight_grams || '';
+    document.getElementById('quote-lead-days').value = req.lead_time_days || 3;
+    document.getElementById('quote-admin-notes').value = req.admin_notes || '';
+
+    modal.style.display = 'block';
+    modal.scrollIntoView({ behavior: 'smooth' });
+}
+
+async function submitCustomQuotation() {
+    const reqId = document.getElementById('quote-modal-id')?.value;
+    const priceRupees = Number(document.getElementById('quote-price')?.value);
+    const printTimeHours = Number(document.getElementById('quote-time-hours')?.value) || null;
+    const materialWeight = Number(document.getElementById('quote-weight')?.value) || null;
+    const leadTimeDays = Number(document.getElementById('quote-lead-days')?.value) || 3;
+    const adminNotes = document.getElementById('quote-admin-notes')?.value.trim();
+
+    if (!reqId || !priceRupees || priceRupees <= 0) {
+        showToast("Please enter a valid quoted price in ₹!", "error");
+        return;
+    }
+
+    const saveBtn = document.getElementById('submit-quote-btn');
+    const origText = saveBtn ? saveBtn.textContent : '';
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = "SENDING..."; }
+
+    try {
+        await apiClient.put(`/admin/custom-requests/${reqId}/quote`, {
+            quoted_price: priceRupees * 100, // paise
+            print_time_hours: printTimeHours,
+            material_weight_grams: materialWeight,
+            lead_time_days: leadTimeDays,
+            admin_notes: adminNotes
+        });
+        showToast(`Quotation of ₹${priceRupees} sent for Request #CR-${reqId}.`);
+        document.getElementById('custom-request-modal').style.display = 'none';
+        await refreshCustomRequestsFromAPI(activeCustomReqStatus);
+    } catch (err) {
+        showToast(`Error saving quotation: ${err.message}`, 'error');
+    } finally {
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = origText || "SUBMIT QUOTATION"; }
+    }
+}
+
+async function convertCustomRequestToOrder() {
+    const reqId = document.getElementById('quote-modal-id')?.value;
+    if (!reqId) return;
+
+    showConfirmModal("CONVERT TO LIVE ORDER", `Convert Custom Request #CR-${reqId} into an official paid production order?`, async () => {
+        try {
+            const res = await apiClient.post(`/admin/custom-requests/${reqId}/convert-to-order`);
+            showToast(`Custom request converted to Order #${res.data?.order_number || res.data?.order_id || 'OK'}!`);
+            document.getElementById('custom-request-modal').style.display = 'none';
+            await refreshCustomRequestsFromAPI(activeCustomReqStatus);
+            await refreshProductionJobsFromAPI();
+            await refreshOrdersFromAPI();
+        } catch (err) {
+            showToast(`Conversion failed: ${err.message}`, 'error');
+        }
+    });
+}
+
+async function rejectCustomRequest() {
+    const reqId = document.getElementById('quote-modal-id')?.value;
+    if (!reqId) return;
+
+    showConfirmModal("REJECT REQUEST", `Reject Custom Request #CR-${reqId}?`, async () => {
+        try {
+            await apiClient.patch(`/admin/custom-requests/${reqId}/status`, { status: 'Rejected' });
+            showToast(`Request #CR-${reqId} rejected.`);
+            document.getElementById('custom-request-modal').style.display = 'none';
+            await refreshCustomRequestsFromAPI(activeCustomReqStatus);
+        } catch (err) {
+            showToast(`Error rejecting request: ${err.message}`, 'error');
+        }
+    });
+}
+
+// =============================================================================
+// 11. VISUAL STORE BUILDER MANAGEMENT (LEGACY)
 // =============================================================================
 
 function renderStoreBuilder() {
@@ -3330,6 +4364,73 @@ function loadSystemSettings() {
         document.getElementById('set-orders-accepting').value = String(accepting);
     }
     if (document.getElementById('set-orders-paused-msg')) document.getElementById('set-orders-paused-msg').value = siteSettings.orders_paused_msg || '';
+
+    // Store-Specific Shipping Policies
+    const activeStoreId = apiClient.getActiveStoreId ? apiClient.getActiveStoreId() : 1;
+    const isMarshans = activeStoreId === 2;
+
+    const shippingFeeInput = document.getElementById('set-shipping-fee');
+    if (shippingFeeInput) {
+        shippingFeeInput.value = siteSettings.shipping_fee !== undefined
+            ? Math.round(Number(siteSettings.shipping_fee) / 100)
+            : (isMarshans ? 100 : 50);
+    }
+
+    const freeShippingSelect = document.getElementById('set-free-shipping-enabled');
+    const freeShippingThresholdField = document.getElementById('set-free-shipping-threshold-field');
+    const freeShippingThresholdInput = document.getElementById('set-free-shipping-threshold');
+    const freeShippingNote = document.getElementById('set-free-shipping-note');
+
+    if (freeShippingSelect) {
+        if (isMarshans) {
+            freeShippingSelect.value = 'false';
+            freeShippingSelect.disabled = true;
+            if (freeShippingThresholdField) freeShippingThresholdField.style.display = 'none';
+            if (freeShippingNote) freeShippingNote.style.display = 'block';
+        } else {
+            freeShippingSelect.disabled = false;
+            freeShippingSelect.value = String(siteSettings.free_shipping_enabled !== undefined ? siteSettings.free_shipping_enabled : true);
+            if (freeShippingThresholdField) freeShippingThresholdField.style.display = 'block';
+            if (freeShippingNote) freeShippingNote.style.display = 'none';
+            if (freeShippingThresholdInput) {
+                freeShippingThresholdInput.value = siteSettings.free_shipping_threshold !== undefined
+                    ? Math.round(Number(siteSettings.free_shipping_threshold) / 100)
+                    : 499;
+            }
+        }
+    }
+
+    // Announcement Ticker
+    if (document.getElementById('set-announcement')) {
+        document.getElementById('set-announcement').value = siteSettings.announcement_text || '';
+    }
+    if (document.getElementById('set-announcement-active')) {
+        document.getElementById('set-announcement-active').value = String(siteSettings.announcement_active === true || siteSettings.announcement_active === 'true');
+    }
+
+    // 3D Manufacturing Controls (THE MARSHANS)
+    const panel3D = document.getElementById('panel-3d-settings');
+    if (panel3D) {
+        panel3D.style.display = isMarshans ? 'flex' : 'none';
+        if (isMarshans) {
+            const matSettings = siteSettings.material_settings || {};
+            const prodSettings = siteSettings.production_settings || {};
+            const quoteSettings = siteSettings.quotation_settings || {};
+
+            if (document.getElementById('set-3d-default-infill')) {
+                document.getElementById('set-3d-default-infill').value = matSettings.default_infill || 20;
+            }
+            if (document.getElementById('set-3d-auto-assign')) {
+                document.getElementById('set-3d-auto-assign').value = String(prodSettings.auto_assign_printers === true);
+            }
+            if (document.getElementById('set-3d-quote-multiplier')) {
+                document.getElementById('set-3d-quote-multiplier').value = quoteSettings.auto_quote_multiplier || 2.5;
+            }
+            if (document.getElementById('set-3d-quote-validity')) {
+                document.getElementById('set-3d-quote-validity').value = quoteSettings.quote_validity_days || 14;
+            }
+        }
+    }
 }
 
 function setupEventListeners() {
@@ -3792,6 +4893,75 @@ function setupEventListeners() {
         }
     });
 
+    // LUMO Product Form Dynamic Listeners
+    document.getElementById('prod-category')?.addEventListener('change', updateLumoProductSectionVisibility);
+
+    document.getElementById('prod-lumo-light-image')?.addEventListener('input', (e) => {
+        updateLumoProductPreview('light', e.target.value);
+    });
+
+    document.getElementById('prod-lumo-dark-image')?.addEventListener('input', (e) => {
+        updateLumoProductPreview('dark', e.target.value);
+    });
+
+    document.getElementById('prod-lumo-light-upload-btn')?.addEventListener('click', () => {
+        document.getElementById('prod-lumo-light-file')?.click();
+    });
+
+    document.getElementById('prod-lumo-light-file')?.addEventListener('change', async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const uploadBtn = document.getElementById('prod-lumo-light-upload-btn');
+        const origText = uploadBtn ? uploadBtn.textContent : '';
+        if (uploadBtn) { uploadBtn.disabled = true; uploadBtn.textContent = '...'; }
+        try {
+            const formData = new FormData();
+            formData.append('image', file);
+            const res = await apiClient.upload('/admin/upload', formData);
+            const uploadedUrl = res?.data?.url || res?.url;
+            if (uploadedUrl) {
+                const input = document.getElementById('prod-lumo-light-image');
+                if (input) input.value = uploadedUrl;
+                updateLumoProductPreview('light', uploadedUrl);
+                showToast('LUMO light mode image uploaded successfully');
+            }
+        } catch (err) {
+            showToast(`Upload failed: ${err.message}`, 'error');
+        } finally {
+            if (uploadBtn) { uploadBtn.disabled = false; uploadBtn.textContent = origText || 'UPLOAD'; }
+            e.target.value = '';
+        }
+    });
+
+    document.getElementById('prod-lumo-dark-upload-btn')?.addEventListener('click', () => {
+        document.getElementById('prod-lumo-dark-file')?.click();
+    });
+
+    document.getElementById('prod-lumo-dark-file')?.addEventListener('change', async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const uploadBtn = document.getElementById('prod-lumo-dark-upload-btn');
+        const origText = uploadBtn ? uploadBtn.textContent : '';
+        if (uploadBtn) { uploadBtn.disabled = true; uploadBtn.textContent = '...'; }
+        try {
+            const formData = new FormData();
+            formData.append('image', file);
+            const res = await apiClient.upload('/admin/upload', formData);
+            const uploadedUrl = res?.data?.url || res?.url;
+            if (uploadedUrl) {
+                const input = document.getElementById('prod-lumo-dark-image');
+                if (input) input.value = uploadedUrl;
+                updateLumoProductPreview('dark', uploadedUrl);
+                showToast('LUMO dark mode image uploaded successfully');
+            }
+        } catch (err) {
+            showToast(`Upload failed: ${err.message}`, 'error');
+        } finally {
+            if (uploadBtn) { uploadBtn.disabled = false; uploadBtn.textContent = origText || 'UPLOAD'; }
+            e.target.value = '';
+        }
+    });
+
     document.getElementById('new-cat-btn')?.addEventListener('click', () => openCategoryForm());
     document.getElementById('cancel-cat-btn')?.addEventListener('click', () => {
         document.getElementById('category-form-container').style.display = 'none';
@@ -3967,6 +5137,245 @@ function setupEventListeners() {
         }
     });
 
+    // Save Store-Specific Shipping Policies
+    document.getElementById('save-shipping-settings-btn')?.addEventListener('click', async () => {
+        const btn = document.getElementById('save-shipping-settings-btn');
+        const originalText = btn ? btn.textContent : '';
+        if (btn) { btn.disabled = true; btn.textContent = "SAVING..."; }
+
+        const activeStoreId = apiClient.getActiveStoreId ? apiClient.getActiveStoreId() : 1;
+        const isMarshans = activeStoreId === 2;
+
+        const feeRupees = Math.max(Number(document.getElementById('set-shipping-fee')?.value) || 0, 0);
+        const freeEnabled = isMarshans ? false : (document.getElementById('set-free-shipping-enabled')?.value === 'true');
+        const thresholdRupees = Math.max(Number(document.getElementById('set-free-shipping-threshold')?.value) || 0, 0);
+
+        const payload = {
+            shipping_fee: feeRupees * 100, // paise
+            free_shipping_enabled: freeEnabled,
+            free_shipping_threshold: freeEnabled ? (thresholdRupees * 100) : 0
+        };
+
+        try {
+            await apiClient.put('/admin/settings', payload);
+            showToast(`${isMarshans ? 'THE MARSHANS' : 'CHIPAKK'} shipping policies saved successfully.`);
+            await refreshSettingsFromAPI();
+        } catch (err) {
+            showToast(`Error saving shipping settings: ${err.message}`, 'error');
+        } finally {
+            if (btn) { btn.disabled = false; btn.textContent = originalText || "SAVE STORE SHIPPING SETTINGS"; }
+        }
+    });
+
+    // Save THE MARSHANS 3D Manufacturing & Quotation Policies
+    document.getElementById('save-3d-settings-btn')?.addEventListener('click', async () => {
+        const btn = document.getElementById('save-3d-settings-btn');
+        const originalText = btn ? btn.textContent : '';
+        if (btn) { btn.disabled = true; btn.textContent = "SAVING..."; }
+
+        const payload = {
+            material_settings: {
+                default_infill: Number(document.getElementById('set-3d-default-infill')?.value) || 20,
+                allow_custom_filaments: true,
+                min_wall_thickness_mm: 1.2
+            },
+            production_settings: {
+                auto_assign_printers: document.getElementById('set-3d-auto-assign')?.value === 'true',
+                qa_inspection_required: true
+            },
+            quotation_settings: {
+                auto_quote_multiplier: Number(document.getElementById('set-3d-quote-multiplier')?.value) || 2.5,
+                quote_validity_days: Number(document.getElementById('set-3d-quote-validity')?.value) || 14,
+                rush_fee_pct: 30
+            }
+        };
+
+        try {
+            await apiClient.put('/admin/settings', payload);
+            showToast("THE MARSHANS 3D manufacturing policies saved successfully.");
+            await refreshSettingsFromAPI();
+        } catch (err) {
+            showToast(`Error saving 3D settings: ${err.message}`, 'error');
+        } finally {
+            if (btn) { btn.disabled = false; btn.textContent = originalText || "SAVE 3D MANUFACTURING POLICIES"; }
+        }
+    });
+
+    // =========================================================================
+    // MULTI-STORE CONTEXT SWITCHER HANDLERS
+    // =========================================================================
+
+    function updateStoreSwitcherUI(storeId) {
+        const btnChipakk = document.getElementById('switch-store-chipakk');
+        const btnMarshans = document.getElementById('switch-store-marshans');
+        const badge = document.getElementById('active-store-badge');
+        const domain = document.getElementById('active-store-domain');
+        const shipStoreLabel = document.getElementById('shipping-store-label');
+
+        // Dynamic element labels & headings
+        const navProdLabel = document.getElementById('nav-products-label');
+        const prodTabHeading = document.getElementById('products-tab-heading');
+        const prodTabSubheading = document.getElementById('products-tab-subheading');
+        const newProdBtn = document.getElementById('new-prod-btn');
+        const prodFormBadge = document.getElementById('prod-form-header-badge');
+        const prodFormTitle = document.getElementById('prod-form-title');
+        const saveProdBtn = document.getElementById('save-prod-btn');
+
+        if (storeId === 2) {
+            // --- THE MARSHANS MODE ---
+            if (btnChipakk) {
+                btnChipakk.style.background = '#fff';
+                btnChipakk.style.color = '#000';
+            }
+            if (btnMarshans) {
+                btnMarshans.style.background = '#ff0055';
+                btnMarshans.style.color = '#fff';
+            }
+            if (badge) {
+                badge.textContent = 'THE MARSHANS ACTIVE';
+                badge.style.background = '#0ea5e9';
+            }
+            if (domain) domain.textContent = 'themarshans.shop';
+            if (shipStoreLabel) shipStoreLabel.textContent = 'THE MARSHANS (themarshans.shop)';
+
+            // Update product labels to 3D Products
+            if (navProdLabel) navProdLabel.textContent = '🏷️ 3D Products';
+            if (prodTabHeading) prodTabHeading.textContent = '3D Products Catalog';
+            if (prodTabSubheading) prodTabSubheading.textContent = 'Manage 3D printed models, filament specifications, pricing, and manufacturing assets';
+            if (newProdBtn) newProdBtn.textContent = '+ CREATE NEW 3D PRODUCT';
+            if (prodFormBadge) prodFormBadge.textContent = '⚙️ 3D PRINT PRODUCT CONFIGURATION';
+            if (prodFormTitle) prodFormTitle.textContent = '[ADD NEW 3D PRODUCT]';
+            if (saveProdBtn) saveProdBtn.textContent = 'SAVE 3D PRODUCT';
+
+            // Scoped navigation labels for Marshans V1
+            const navReviewsLabel = document.getElementById('nav-reviews-label');
+            if (navReviewsLabel) navReviewsLabel.textContent = '⭐ Ratings';
+            const navShippingLabel = document.getElementById('nav-shipping-label');
+            if (navShippingLabel) navShippingLabel.textContent = '🚚 Shipping Rules';
+
+            // Hide CHIPAKK-only modules (POD Queue, Events, Audit Logs, Team, Settings)
+            document.querySelectorAll('.store-module-chipakk').forEach(el => {
+                el.style.display = 'none';
+            });
+
+            // Hide future Marshans modules (Inventory, Finishing Options, Custom Requests, Production Jobs)
+            document.querySelectorAll('.store-module-marshans-future').forEach(el => {
+                el.style.display = 'none';
+            });
+
+            // Show THE MARSHANS active V1 modules (Materials)
+            document.querySelectorAll('.store-module-marshans').forEach(el => {
+                if (el.classList.contains('tab-content')) {
+                    const activeNav = document.querySelector('.admin-nav-item.active');
+                    const activeTabId = activeNav ? (activeNav.getAttribute('data-tab') || activeNav.getAttribute('data-section')) : null;
+                    el.style.display = (el.id === activeTabId) ? 'block' : 'none';
+                } else if (el.tagName === 'LI') {
+                    el.style.display = 'list-item';
+                } else {
+                    el.style.display = '';
+                }
+            });
+
+            // If user was viewing a tab that is now hidden, auto-switch to tab-dashboard
+            const currentTabSec = document.querySelector('.tab-content:not([style*="display: none"])');
+            if (currentTabSec && (currentTabSec.classList.contains('store-module-chipakk') || currentTabSec.classList.contains('store-module-marshans-future'))) {
+                const navDashboard = document.querySelector('.admin-nav-item[data-tab="tab-dashboard"]');
+                if (navDashboard) navDashboard.click();
+            }
+
+        } else {
+            // --- CHIPAKK MODE ---
+            if (btnChipakk) {
+                btnChipakk.style.background = '#ff0055';
+                btnChipakk.style.color = '#fff';
+            }
+            if (btnMarshans) {
+                btnMarshans.style.background = '#fff';
+                btnMarshans.style.color = '#000';
+            }
+            if (badge) {
+                badge.textContent = 'CHIPAKK ACTIVE';
+                badge.style.background = '#ff0055';
+            }
+            if (domain) domain.textContent = 'chipakk.shop';
+            if (shipStoreLabel) shipStoreLabel.textContent = 'CHIPAKK (chipakk.shop)';
+
+            // Restore product labels to Sticker Drops
+            if (navProdLabel) navProdLabel.textContent = '🏷️ Products & Drops';
+            if (prodTabHeading) prodTabHeading.textContent = 'Product & Drop Catalog';
+            if (prodTabSubheading) prodTabSubheading.textContent = 'Manage print-on-demand sticker designs, pricing, images, and release schedules';
+            if (newProdBtn) newProdBtn.textContent = '+ CREATE NEW STICKER DROP';
+            if (prodFormBadge) prodFormBadge.textContent = '🖨️ PRINT-ON-DEMAND PRODUCT CONFIGURATION';
+            if (prodFormTitle) prodFormTitle.textContent = '[ADD NEW PRODUCT DROP]';
+            if (saveProdBtn) saveProdBtn.textContent = 'SAVE PRODUCT DROP';
+
+            // Restore standard labels for CHIPAKK
+            const navReviewsLabel = document.getElementById('nav-reviews-label');
+            if (navReviewsLabel) navReviewsLabel.textContent = '⭐ Reviews';
+            const navShippingLabel = document.getElementById('nav-shipping-label');
+            if (navShippingLabel) navShippingLabel.textContent = '🚚 Shipping Management';
+
+            // Show CHIPAKK modules
+            document.querySelectorAll('.store-module-chipakk').forEach(el => {
+                if (el.classList.contains('tab-content')) {
+                    const activeNav = document.querySelector('.admin-nav-item.active');
+                    const activeTabId = activeNav ? (activeNav.getAttribute('data-tab') || activeNav.getAttribute('data-section')) : null;
+                    el.style.display = (el.id === activeTabId) ? 'block' : 'none';
+                } else if (el.tagName === 'LI') {
+                    el.style.display = 'list-item';
+                } else {
+                    el.style.display = '';
+                }
+            });
+
+            // Hide MARSHANS modules
+            document.querySelectorAll('.store-module-marshans').forEach(el => {
+                el.style.display = 'none';
+            });
+            document.querySelectorAll('.store-module-marshans-future').forEach(el => {
+                el.style.display = 'none';
+            });
+
+            // If user was viewing a MARSHANS-only tab, auto-switch to tab-dashboard
+            const currentTabSec = document.querySelector('.tab-content:not([style*="display: none"])');
+            if (currentTabSec && (currentTabSec.classList.contains('store-module-marshans') || currentTabSec.classList.contains('store-module-marshans-future'))) {
+                const navDashboard = document.querySelector('.admin-nav-item[data-tab="tab-dashboard"]');
+                if (navDashboard) navDashboard.click();
+            }
+        }
+        updateLumoProductSectionVisibility();
+    }
+
+    async function switchActiveStore(targetStoreId) {
+        const numericId = parseInt(targetStoreId, 10) === 2 ? 2 : 1;
+        apiClient.setActiveStoreId(numericId);
+        updateStoreSwitcherUI(numericId);
+
+        showToast(`Switched active store context to ${numericId === 2 ? 'THE MARSHANS (3D Printing)' : 'CHIPAKK (Stickers & Merch)'}`);
+
+        // Re-load settings and data for the newly active store
+        await refreshSettingsFromAPI();
+
+        try {
+            await Promise.allSettled([
+                refreshOrdersFromAPI(),
+                refreshProductsFromAPI(),
+                refreshCategoriesFromAPI(),
+                refreshMaterialsFromAPI(),
+                refreshFinishingFromAPI(),
+                refreshReviewsFromAPI(),
+                refreshShippingRulesFromAPI()
+            ]);
+        } catch (_) {}
+    }
+
+    document.getElementById('switch-store-chipakk')?.addEventListener('click', () => switchActiveStore(1));
+    document.getElementById('switch-store-marshans')?.addEventListener('click', () => switchActiveStore(2));
+
+    // Initialize switcher UI on startup
+    const initialStoreId = apiClient.getActiveStoreId ? apiClient.getActiveStoreId() : 1;
+    updateStoreSwitcherUI(initialStoreId);
+
     // Category Image Live Preview and Upload Listener
     document.getElementById('cat-image')?.addEventListener('input', (e) => {
         const val = e.target.value.trim();
@@ -4009,6 +5418,129 @@ function setupEventListeners() {
                     prevBox.style.display = 'block';
                 }
                 showToast('Category image uploaded successfully');
+            }
+        } catch (err) {
+            showToast(`Upload failed: ${err.message}`, 'error');
+        } finally {
+            if (uploadBtn) { uploadBtn.disabled = false; uploadBtn.textContent = origText || 'UPLOAD'; }
+            e.target.value = '';
+        }
+    });
+
+    // Category Experience Switcher Listener
+    document.getElementById('cat-experience-type')?.addEventListener('change', (e) => {
+        const val = (e.target.value || '').toLowerCase();
+        const glowBox = document.getElementById('cat-glow-settings-container');
+        if (glowBox) {
+            glowBox.style.display = val === 'glow' ? 'block' : 'none';
+        }
+        checkCategoryLumoMode();
+    });
+    document.getElementById('cat-name')?.addEventListener('input', checkCategoryLumoMode);
+    document.getElementById('cat-slug')?.addEventListener('input', checkCategoryLumoMode);
+
+    // Glow Color Picker <-> Text Sync
+    document.getElementById('cat-glow-color-picker')?.addEventListener('input', (e) => {
+        const textInput = document.getElementById('cat-glow-color');
+        if (textInput) textInput.value = e.target.value;
+    });
+    document.getElementById('cat-glow-color')?.addEventListener('input', (e) => {
+        const val = e.target.value.trim();
+        if (/^#[0-9A-Fa-f]{6}$/.test(val)) {
+            const picker = document.getElementById('cat-glow-color-picker');
+            if (picker) picker.value = val;
+        }
+    });
+
+    // Hero Light Image Upload & Preview Listener
+    document.getElementById('cat-hero-light')?.addEventListener('input', (e) => {
+        const val = e.target.value.trim();
+        const prevBox = document.getElementById('hero-light-prev-box');
+        const prevImg = document.getElementById('hero-light-prev-img');
+        if (prevBox && prevImg) {
+            if (val) {
+                const apiHost = apiClient.baseUrl ? apiClient.baseUrl.replace(/\/api$/, '') : 'https://api.chipakk.shop';
+                prevImg.src = val.startsWith('http') ? val : (apiHost + val);
+                prevBox.style.display = 'block';
+            } else {
+                prevBox.style.display = 'none';
+            }
+        }
+    });
+    document.getElementById('upload-hero-light-btn')?.addEventListener('click', () => {
+        document.getElementById('cat-hero-light-file')?.click();
+    });
+    document.getElementById('cat-hero-light-file')?.addEventListener('change', async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const uploadBtn = document.getElementById('upload-hero-light-btn');
+        const origText = uploadBtn ? uploadBtn.textContent : '';
+        if (uploadBtn) { uploadBtn.disabled = true; uploadBtn.textContent = '...'; }
+        try {
+            const formData = new FormData();
+            formData.append('image', file);
+            const res = await apiClient.upload('/admin/upload', formData);
+            const uploadedUrl = res?.data?.url || res?.url;
+            if (uploadedUrl) {
+                const input = document.getElementById('cat-hero-light');
+                if (input) input.value = uploadedUrl;
+                const prevBox = document.getElementById('hero-light-prev-box');
+                const prevImg = document.getElementById('hero-light-prev-img');
+                if (prevBox && prevImg) {
+                    const apiHost = apiClient.baseUrl ? apiClient.baseUrl.replace(/\/api$/, '') : 'https://api.chipakk.shop';
+                    prevImg.src = uploadedUrl.startsWith('http') ? uploadedUrl : (apiHost + uploadedUrl);
+                    prevBox.style.display = 'block';
+                }
+                showToast('Hero light image uploaded');
+            }
+        } catch (err) {
+            showToast(`Upload failed: ${err.message}`, 'error');
+        } finally {
+            if (uploadBtn) { uploadBtn.disabled = false; uploadBtn.textContent = origText || 'UPLOAD'; }
+            e.target.value = '';
+        }
+    });
+
+    // Hero Dark Image Upload & Preview Listener
+    document.getElementById('cat-hero-dark')?.addEventListener('input', (e) => {
+        const val = e.target.value.trim();
+        const prevBox = document.getElementById('hero-dark-prev-box');
+        const prevImg = document.getElementById('hero-dark-prev-img');
+        if (prevBox && prevImg) {
+            if (val) {
+                const apiHost = apiClient.baseUrl ? apiClient.baseUrl.replace(/\/api$/, '') : 'https://api.chipakk.shop';
+                prevImg.src = val.startsWith('http') ? val : (apiHost + val);
+                prevBox.style.display = 'block';
+            } else {
+                prevBox.style.display = 'none';
+            }
+        }
+    });
+    document.getElementById('upload-hero-dark-btn')?.addEventListener('click', () => {
+        document.getElementById('cat-hero-dark-file')?.click();
+    });
+    document.getElementById('cat-hero-dark-file')?.addEventListener('change', async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const uploadBtn = document.getElementById('upload-hero-dark-btn');
+        const origText = uploadBtn ? uploadBtn.textContent : '';
+        if (uploadBtn) { uploadBtn.disabled = true; uploadBtn.textContent = '...'; }
+        try {
+            const formData = new FormData();
+            formData.append('image', file);
+            const res = await apiClient.upload('/admin/upload', formData);
+            const uploadedUrl = res?.data?.url || res?.url;
+            if (uploadedUrl) {
+                const input = document.getElementById('cat-hero-dark');
+                if (input) input.value = uploadedUrl;
+                const prevBox = document.getElementById('hero-dark-prev-box');
+                const prevImg = document.getElementById('hero-dark-prev-img');
+                if (prevBox && prevImg) {
+                    const apiHost = apiClient.baseUrl ? apiClient.baseUrl.replace(/\/api$/, '') : 'https://api.chipakk.shop';
+                    prevImg.src = uploadedUrl.startsWith('http') ? uploadedUrl : (apiHost + uploadedUrl);
+                    prevBox.style.display = 'block';
+                }
+                showToast('Hero dark image uploaded');
             }
         } catch (err) {
             showToast(`Upload failed: ${err.message}`, 'error');
@@ -4105,6 +5637,74 @@ function setupEventListeners() {
     document.getElementById('audit-goto-sessions-btn')?.addEventListener('click', () => {
         const teamTabLink = document.querySelector('.admin-nav-item[data-tab="tab-team"]');
         if (teamTabLink) teamTabLink.click();
+    });
+
+    // --- MARSHANS MODULES EVENT LISTENERS ---
+    document.getElementById('new-material-btn')?.addEventListener('click', () => openMaterialForm());
+    document.getElementById('save-material-btn')?.addEventListener('click', saveMaterialForm);
+    document.getElementById('cancel-material-btn')?.addEventListener('click', () => {
+        const c = document.getElementById('material-form-container');
+        if (c) c.style.display = 'none';
+    });
+    document.getElementById('material-search-input')?.addEventListener('input', renderMaterialsTable);
+    document.getElementById('material-filter-type')?.addEventListener('change', renderMaterialsTable);
+    document.getElementById('mat-color-picker')?.addEventListener('input', (e) => {
+        const hex = document.getElementById('mat-color-hex');
+        if (hex) hex.value = e.target.value;
+    });
+    document.getElementById('mat-color-hex')?.addEventListener('input', (e) => {
+        const picker = document.getElementById('mat-color-picker');
+        if (picker && /^#[0-9A-F]{6}$/i.test(e.target.value)) picker.value = e.target.value;
+    });
+
+    document.getElementById('new-inventory-adjust-btn')?.addEventListener('click', () => {
+        const c = document.getElementById('inventory-form-container');
+        if (c) {
+            c.style.display = 'block';
+            c.scrollIntoView({ behavior: 'smooth' });
+        }
+    });
+    document.getElementById('save-inventory-adjust-btn')?.addEventListener('click', saveInventoryAdjust);
+    document.getElementById('cancel-inventory-adjust-btn')?.addEventListener('click', () => {
+        const c = document.getElementById('inventory-form-container');
+        if (c) c.style.display = 'none';
+    });
+
+    document.getElementById('new-finishing-btn')?.addEventListener('click', () => openFinishingForm());
+    document.getElementById('save-finishing-btn')?.addEventListener('click', saveFinishingForm);
+    document.getElementById('cancel-finishing-btn')?.addEventListener('click', () => {
+        const c = document.getElementById('finishing-form-container');
+        if (c) c.style.display = 'none';
+    });
+
+    document.querySelectorAll('#prod-jobs-filter-tabs .order-tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('#prod-jobs-filter-tabs .order-tab-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            activeProdJobStage = btn.getAttribute('data-job-stage') || '';
+            refreshProductionJobsFromAPI(activeProdJobStage);
+        });
+    });
+    document.getElementById('save-job-modal-btn')?.addEventListener('click', saveProductionJobModal);
+    document.getElementById('close-job-modal-btn')?.addEventListener('click', () => {
+        const m = document.getElementById('production-job-modal');
+        if (m) m.style.display = 'none';
+    });
+
+    document.querySelectorAll('#custom-req-filter-tabs .order-tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('#custom-req-filter-tabs .order-tab-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            activeCustomReqStatus = btn.getAttribute('data-req-status') || '';
+            refreshCustomRequestsFromAPI(activeCustomReqStatus);
+        });
+    });
+    document.getElementById('submit-quote-btn')?.addEventListener('click', submitCustomQuotation);
+    document.getElementById('convert-order-btn')?.addEventListener('click', convertCustomRequestToOrder);
+    document.getElementById('reject-quote-btn')?.addEventListener('click', rejectCustomRequest);
+    document.getElementById('close-quote-modal-btn')?.addEventListener('click', () => {
+        const m = document.getElementById('custom-request-modal');
+        if (m) m.style.display = 'none';
     });
 
     // Single Guarded Periodic Polling (every 30s) for live sessions, team members, and audit logs

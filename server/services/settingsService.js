@@ -1,10 +1,11 @@
 const { pool } = require('../config/database');
 
 /**
- * Default fallback site settings
+ * Store 1 (CHIPAKK) Default Settings Profile
+ * Low shipping fee, free shipping enabled for merchandise orders >= ₹499
  */
-const DEFAULT_SETTINGS = {
-  store_name: 'CHIPAKK',
+const STORE_1_DEFAULTS = {
+  store_name: 'CHIPAKK Stickers',
   store_status: 'OPEN',
   order_acceptance: 'ACCEPTING ORDERS',
   gst_pct: 18,
@@ -15,10 +16,50 @@ const DEFAULT_SETTINGS = {
   free_shipping_enabled: true,
   free_shipping_threshold: 49900,
   free_shipping_calculation: 'after_discounts',
-  announcement_text: 'WELCOME TO CHIPAKK!',
+  announcement_text: 'WELCOME TO CHIPAKK! GET 10% OFF ON YOUR FIRST ORDER',
   announcement_active: true,
   maintenance_active: false,
-  maintenance_message: 'We are currently down for scheduled maintenance.'
+  maintenance_message: 'CHIPAKK is currently undergoing scheduled maintenance.',
+  support_email: 'support@chipakk.shop',
+  support_phone: '+91 98765 00000'
+};
+
+/**
+ * Store 2 (THE MARSHANS) Default Settings Profile
+ * Heavy parcel shipping fee (₹100), strictly NO free shipping, 3D printing & quotation parameters
+ */
+const STORE_2_DEFAULTS = {
+  store_name: 'THE MARSHANS',
+  store_status: 'OPEN',
+  order_acceptance: 'ACCEPTING ORDERS',
+  gst_pct: 18,
+  gst_rate: 18,
+  gst_enabled: true,
+  gstin: '07AAAAA0000A1Z5',
+  shipping_fee: 10000,
+  free_shipping_enabled: false, // STRICTLY NO FREE SHIPPING for 3D manufacturing
+  free_shipping_threshold: 0,
+  free_shipping_calculation: 'after_discounts',
+  announcement_text: 'PRECISION 3D PRINTING & CUSTOM ON-DEMAND MANUFACTURING',
+  announcement_active: true,
+  maintenance_active: false,
+  maintenance_message: 'THE MARSHANS workshop is currently offline for calibration.',
+  support_email: 'support@themarshans.shop',
+  support_phone: '+91 98765 00000',
+  material_settings: {
+    default_infill: 20,
+    allow_custom_filaments: true,
+    min_wall_thickness_mm: 1.2
+  },
+  production_settings: {
+    auto_assign_printers: false,
+    qa_inspection_required: true
+  },
+  quotation_settings: {
+    auto_quote_multiplier: 2.5,
+    quote_validity_days: 14,
+    rush_fee_pct: 30
+  }
 };
 
 /**
@@ -70,33 +111,57 @@ const validateSettingsPayload = (settingsMap) => {
 };
 
 /**
- * Fetch global site settings as a key-value map merged with system defaults
+ * Fetch store-specific settings as a key-value map merged with store defaults
+ * @param {number} storeId - 1 for CHIPAKK, 2 for THE MARSHANS
  */
-const getSiteSettings = async () => {
-  const query = 'SELECT id, setting_key, setting_value, description, updated_at FROM site_settings';
-  const [rows] = await pool.execute(query);
-  
-  const settingsMap = { ...DEFAULT_SETTINGS };
-  rows.forEach(row => {
-    let val = row.setting_value;
-    if (typeof val === 'string') {
-      try { val = JSON.parse(val); } catch (e) { /* keep string */ }
+const getStoreSettings = async (storeId = 1) => {
+  const numericStoreId = parseInt(storeId, 10) === 2 ? 2 : 1;
+  const baseDefaults = numericStoreId === 2 ? STORE_2_DEFAULTS : STORE_1_DEFAULTS;
+
+  let rows = [];
+
+  try {
+    // 1. Try querying store_settings table
+    const query = 'SELECT setting_key, setting_value FROM store_settings WHERE store_id = ?';
+    [rows] = await pool.execute(query, [numericStoreId]);
+  } catch (dbErr) {
+    // Fallback: If store_settings does not exist yet (pre-migration), check legacy site_settings
+    if (numericStoreId === 1) {
+      try {
+        const [legacyRows] = await pool.execute('SELECT setting_key, setting_value FROM site_settings');
+        rows = legacyRows;
+      } catch (legErr) {
+        rows = [];
+      }
     }
-    settingsMap[row.setting_key] = val;
-  });
+  }
+
+  const settingsMap = { ...baseDefaults };
+  if (Array.isArray(rows)) {
+    rows.forEach(row => {
+      let val = row.setting_value;
+      if (typeof val === 'string') {
+        try { val = JSON.parse(val); } catch (e) { /* keep string */ }
+      }
+      settingsMap[row.setting_key] = val;
+    });
+  }
 
   return settingsMap;
 };
 
 /**
- * Upsert site settings from a key-value object (Partial Update preserving existing settings)
+ * Upsert store settings for a specific store_id (Partial Update preserving existing settings)
+ * @param {number} storeId - 1 for CHIPAKK, 2 for THE MARSHANS
+ * @param {object} settingsMap - Key-value map of updated settings
  */
-const updateSiteSettings = async (settingsMap) => {
+const updateStoreSettings = async (storeId = 1, settingsMap = {}) => {
   validateSettingsPayload(settingsMap);
 
+  const numericStoreId = parseInt(storeId, 10) === 2 ? 2 : 1;
   const keys = Object.keys(settingsMap);
   if (keys.length === 0) {
-    return getSiteSettings();
+    return getStoreSettings(numericStoreId);
   }
 
   const connection = await pool.getConnection();
@@ -104,34 +169,65 @@ const updateSiteSettings = async (settingsMap) => {
   try {
     await connection.beginTransaction();
 
-    const upsertQuery = `
-      INSERT INTO site_settings (setting_key, setting_value)
-      VALUES (?, ?)
-      ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)
-    `;
+    let storeSettingsTableExists = true;
 
-    for (const key of keys) {
-      let value = settingsMap[key];
+    try {
+      const upsertStoreQuery = `
+        INSERT INTO store_settings (store_id, setting_key, setting_value)
+        VALUES (?, ?, ?)
+        ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value), updated_at = CURRENT_TIMESTAMP
+      `;
 
-      // Normalize uppercase status strings & numeric GST values
-      if (key === 'store_status' && typeof value === 'string') {
-        value = value.trim().toUpperCase();
-      }
-      if (key === 'order_acceptance' && typeof value === 'string') {
-        value = value.trim().toUpperCase();
-      }
-      if ((key === 'gst_pct' || key === 'gst_rate') && value !== null && value !== undefined && value !== '') {
-        value = Number(value);
-      }
+      for (const key of keys) {
+        let value = settingsMap[key];
 
-      const jsonValue = JSON.stringify(value !== undefined ? value : null);
-      await connection.execute(upsertQuery, [key, jsonValue]);
+        // Normalize uppercase status strings & numeric values
+        if (key === 'store_status' && typeof value === 'string') {
+          value = value.trim().toUpperCase();
+        }
+        if (key === 'order_acceptance' && typeof value === 'string') {
+          value = value.trim().toUpperCase();
+        }
+        if ((key === 'gst_pct' || key === 'gst_rate') && value !== null && value !== undefined && value !== '') {
+          value = Number(value);
+        }
+        if ((key === 'shipping_fee' || key === 'free_shipping_threshold') && value !== null && value !== undefined && value !== '') {
+          value = Number(value);
+        }
+
+        const jsonValue = JSON.stringify(value !== undefined ? value : null);
+        await connection.execute(upsertStoreQuery, [numericStoreId, key, jsonValue]);
+      }
+    } catch (storeErr) {
+      if (storeErr.message.includes("Table 'store_settings' doesn't exist")) {
+        storeSettingsTableExists = false;
+      } else {
+        throw storeErr;
+      }
+    }
+
+    // Mirror to legacy site_settings if Store 1 for backward compatibility
+    if (numericStoreId === 1) {
+      try {
+        const upsertLegacyQuery = `
+          INSERT INTO site_settings (setting_key, setting_value)
+          VALUES (?, ?)
+          ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)
+        `;
+        for (const key of keys) {
+          let value = settingsMap[key];
+          const jsonValue = JSON.stringify(value !== undefined ? value : null);
+          await connection.execute(upsertLegacyQuery, [key, jsonValue]);
+        }
+      } catch (legErr) {
+        // Ignore if site_settings table is not present
+      }
     }
 
     await connection.commit();
     connection.release();
 
-    return getSiteSettings();
+    return getStoreSettings(numericStoreId);
   } catch (error) {
     await connection.rollback();
     connection.release();
@@ -139,10 +235,20 @@ const updateSiteSettings = async (settingsMap) => {
   }
 };
 
+/**
+ * Backward compatibility aliases for existing codebase
+ */
+const getSiteSettings = async (storeId = 1) => getStoreSettings(storeId);
+const updateSiteSettings = async (settingsMap, storeId = 1) => updateStoreSettings(storeId, settingsMap);
+
 module.exports = {
-  DEFAULT_SETTINGS,
+  STORE_1_DEFAULTS,
+  STORE_2_DEFAULTS,
+  DEFAULT_SETTINGS: STORE_1_DEFAULTS,
   ALLOWED_STORE_STATUSES,
   ALLOWED_ORDER_ACCEPTANCE,
+  getStoreSettings,
+  updateStoreSettings,
   getSiteSettings,
   updateSiteSettings,
   validateSettingsPayload

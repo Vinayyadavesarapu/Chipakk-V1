@@ -9,9 +9,11 @@ const { sendSuccess, sendError } = require('../utils/responseHandler');
 const getShippingRulesHandler = async (req, res, next) => {
   try {
     const { is_enabled, limit, offset } = req.query;
+    const storeId = req.storeId || null;
 
     const result = await shippingService.getShippingRules({
       is_enabled,
+      storeId,
       limit,
       offset
     });
@@ -35,7 +37,7 @@ const getShippingRuleByIdHandler = async (req, res, next) => {
       return sendError(res, 'Invalid shipping rule ID format. Expected numeric BIGINT ID.', 400);
     }
 
-    const rule = await shippingService.getShippingRuleById(numId);
+    const rule = await shippingService.getShippingRuleById(numId, req.storeId);
 
     if (!rule) {
       return sendError(res, `Shipping rule '${id}' not found`, 404);
@@ -53,7 +55,10 @@ const getShippingRuleByIdHandler = async (req, res, next) => {
  */
 const createShippingRuleHandler = async (req, res, next) => {
   try {
-    const ruleData = req.body;
+    const ruleData = {
+      ...(req.body || {}),
+      store_id: req.storeId || (req.body && req.body.store_id) || 1
+    };
 
     if (ruleData.free_shipping_threshold !== undefined && isNaN(Number(ruleData.free_shipping_threshold))) {
       return sendError(res, 'Free shipping threshold must be a valid numeric integer in paise.', 400);
@@ -77,6 +82,7 @@ const createShippingRuleHandler = async (req, res, next) => {
           name: rule.name,
           standard_fee: rule.standard_fee,
           free_shipping_threshold: rule.free_shipping_threshold,
+          store_id: ruleData.store_id,
           is_enabled: rule.is_enabled
         }
       ).catch(err => console.error('[Audit Log Error]', err.message));
@@ -102,7 +108,7 @@ const updateShippingRuleHandler = async (req, res, next) => {
       return sendError(res, 'Invalid shipping rule ID format. Expected numeric BIGINT ID.', 400);
     }
 
-    const updatedRule = await shippingService.updateShippingRule(numId, ruleData);
+    const updatedRule = await shippingService.updateShippingRule(numId, ruleData, req.storeId);
 
     if (!updatedRule) {
       return sendError(res, `Shipping rule with ID ${id} not found`, 404);
@@ -144,7 +150,7 @@ const deleteShippingRuleHandler = async (req, res, next) => {
       return sendError(res, 'Invalid shipping rule ID format. Expected numeric BIGINT ID.', 400);
     }
 
-    const success = await shippingService.deleteShippingRule(numId);
+    const success = await shippingService.deleteShippingRule(numId, req.storeId);
 
     if (!success) {
       return sendError(res, `Shipping rule with ID ${id} not found`, 404);
@@ -192,11 +198,56 @@ const calculateShippingFeeHandler = async (req, res, next) => {
   }
 };
 
+/**
+ * Get Consolidated Store Shipping Configuration
+ * GET /api/admin/shipping/config
+ */
+const getStoreShippingConfigHandler = async (req, res, next) => {
+  try {
+    const storeId = req.storeId || 1;
+    const config = await shippingService.getStoreShippingConfig(storeId);
+    return sendSuccess(res, config, 'Store shipping configuration retrieved successfully');
+  } catch (error) {
+    return next(error);
+  }
+};
+
+/**
+ * Update Consolidated Store Shipping Configuration
+ * PUT /api/admin/shipping/config
+ */
+const updateStoreShippingConfigHandler = async (req, res, next) => {
+  try {
+    const storeId = req.storeId || 1;
+    const { standard_fee, free_shipping_enabled, free_shipping_threshold } = req.body;
+    const updated = await shippingService.updateStoreShippingConfig(storeId, {
+      standard_fee,
+      free_shipping_enabled,
+      free_shipping_threshold
+    });
+
+    writeAuditLog({
+      actorId: req.user?.uid || 'admin',
+      action: 'UPDATE_STORE_SHIPPING_CONFIG',
+      entity: 'store_settings',
+      entityId: String(storeId),
+      details: { standard_fee, free_shipping_enabled, free_shipping_threshold },
+      ipAddress: req.ip
+    }).catch(() => {});
+
+    return sendSuccess(res, updated, 'Store shipping configuration updated successfully');
+  } catch (error) {
+    return next(error);
+  }
+};
+
 module.exports = {
   getShippingRulesHandler,
   getShippingRuleByIdHandler,
   createShippingRuleHandler,
   updateShippingRuleHandler,
   deleteShippingRuleHandler,
-  calculateShippingFeeHandler
+  calculateShippingFeeHandler,
+  getStoreShippingConfigHandler,
+  updateStoreShippingConfigHandler
 };

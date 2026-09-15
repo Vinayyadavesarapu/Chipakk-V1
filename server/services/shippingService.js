@@ -13,16 +13,42 @@ const safeJsonParse = (val, fallback = null) => {
   }
 };
 
+let hasStoreIdColumn = null;
+const checkHasStoreId = async () => {
+  if (hasStoreIdColumn !== null) return hasStoreIdColumn;
+  try {
+    const [cols] = await pool.execute("SHOW COLUMNS FROM shipping_rules LIKE 'store_id'");
+    hasStoreIdColumn = cols && cols.length > 0;
+  } catch (err) {
+    hasStoreIdColumn = false;
+  }
+  return hasStoreIdColumn;
+};
+
 /**
  * Fetch list of shipping rules with pagination and filtering
  */
 const getShippingRules = async ({
   is_enabled,
+  storeId = null,
   limit = 50,
   offset = 0
 } = {}) => {
+  const hasStoreId = await checkHasStoreId();
   const conditions = [];
   const params = [];
+
+  if (hasStoreId && storeId !== null && storeId !== undefined && String(storeId).trim() !== '') {
+    const sId = parseInt(storeId, 10);
+    if (!isNaN(sId)) {
+      if (sId === 1) {
+        conditions.push('(sr.store_id = 1 OR sr.store_id IS NULL)');
+      } else {
+        conditions.push('sr.store_id = ?');
+        params.push(sId);
+      }
+    }
+  }
 
   if (is_enabled !== undefined && is_enabled !== null && is_enabled !== '') {
     conditions.push('sr.is_enabled = ?');
@@ -42,6 +68,7 @@ const getShippingRules = async ({
   const query = `
     SELECT 
       sr.id,
+      ${hasStoreId ? 'COALESCE(sr.store_id, 1) AS store_id,' : '1 AS store_id,'}
       sr.name,
       sr.free_shipping_threshold,
       sr.standard_fee,
@@ -81,15 +108,31 @@ const getShippingRules = async ({
 /**
  * Fetch a single shipping rule by numeric BIGINT ID
  */
-const getShippingRuleById = async (ruleId) => {
+const getShippingRuleById = async (ruleId, storeId = null) => {
   if (!ruleId) return null;
 
   const numId = parseInt(ruleId, 10);
   if (isNaN(numId)) return null;
+  const hasStoreId = await checkHasStoreId();
+
+  const params = [numId];
+  let storeCond = '';
+  if (hasStoreId && storeId !== null && storeId !== undefined && String(storeId).trim() !== '') {
+    const sId = parseInt(storeId, 10);
+    if (!isNaN(sId)) {
+      if (sId === 1) {
+        storeCond = ' AND (sr.store_id = 1 OR sr.store_id IS NULL)';
+      } else {
+        storeCond = ' AND sr.store_id = ?';
+        params.push(sId);
+      }
+    }
+  }
 
   const query = `
     SELECT 
       sr.id,
+      ${hasStoreId ? 'COALESCE(sr.store_id, 1) AS store_id,' : '1 AS store_id,'}
       sr.name,
       sr.free_shipping_threshold,
       sr.standard_fee,
@@ -98,11 +141,11 @@ const getShippingRuleById = async (ruleId) => {
       sr.created_at,
       sr.updated_at
     FROM shipping_rules sr
-    WHERE sr.id = ?
+    WHERE sr.id = ?${storeCond}
     LIMIT 1
   `;
 
-  const [rows] = await pool.execute(query, [numId]);
+  const [rows] = await pool.execute(query, params);
   if (!rows || rows.length === 0) {
     return null;
   }
@@ -128,9 +171,12 @@ const createShippingRule = async (ruleData) => {
     free_shipping_threshold = 0,
     standard_fee = 0,
     is_enabled = 1,
-    regional_overrides = null
+    regional_overrides = null,
+    store_id = 1
   } = ruleData;
 
+  const hasStoreId = await checkHasStoreId();
+  const activeStoreId = parseInt(store_id, 10) === 2 ? 2 : 1;
   const ruleName = name && typeof name === 'string' && name.trim() ? name.trim() : 'Standard Shipping';
   const thresholdVal = Math.max(parseInt(free_shipping_threshold, 10) || 0, 0);
   const feeVal = Math.max(parseInt(standard_fee, 10) || 0, 0);
@@ -139,13 +185,24 @@ const createShippingRule = async (ruleData) => {
     ? JSON.stringify(regional_overrides)
     : null;
 
-  const query = `
+  const query = hasStoreId ? `
+    INSERT INTO shipping_rules (
+      name, store_id, free_shipping_threshold, standard_fee, is_enabled, regional_overrides
+    ) VALUES (?, ?, ?, ?, ?, ?)
+  ` : `
     INSERT INTO shipping_rules (
       name, free_shipping_threshold, standard_fee, is_enabled, regional_overrides
     ) VALUES (?, ?, ?, ?, ?)
   `;
 
-  const params = [
+  const params = hasStoreId ? [
+    ruleName,
+    activeStoreId,
+    thresholdVal,
+    feeVal,
+    is_enabled ? 1 : 0,
+    overridesJson
+  ] : [
     ruleName,
     thresholdVal,
     feeVal,
@@ -154,19 +211,19 @@ const createShippingRule = async (ruleData) => {
   ];
 
   const [result] = await pool.execute(query, params);
-  return getShippingRuleById(result.insertId);
+  return getShippingRuleById(result.insertId, activeStoreId);
 };
 
 /**
  * Update an existing shipping rule in MySQL
  */
-const updateShippingRule = async (id, ruleData) => {
+const updateShippingRule = async (id, ruleData, storeId = null) => {
   const numId = parseInt(id, 10);
   if (isNaN(numId)) {
     throw new Error('Invalid shipping rule ID format.');
   }
 
-  const existing = await getShippingRuleById(numId);
+  const existing = await getShippingRuleById(numId, storeId);
   if (!existing) {
     return null;
   }
@@ -218,16 +275,21 @@ const updateShippingRule = async (id, ruleData) => {
     await pool.execute(query, params);
   }
 
-  return getShippingRuleById(numId);
+  return getShippingRuleById(numId, storeId);
 };
 
 /**
  * Soft disable a shipping rule (setting is_enabled = 0)
  */
-const deleteShippingRule = async (id) => {
+const deleteShippingRule = async (id, storeId = null) => {
   const numId = parseInt(id, 10);
   if (isNaN(numId)) {
     throw new Error('Invalid shipping rule ID format.');
+  }
+
+  const existing = await getShippingRuleById(numId, storeId);
+  if (!existing) {
+    return false;
   }
 
   const [result] = await pool.execute('UPDATE shipping_rules SET is_enabled = 0 WHERE id = ?', [numId]);
@@ -237,34 +299,49 @@ const deleteShippingRule = async (id) => {
 /**
  * Calculate applicable shipping fee for a given order subtotal and optional region
  */
-const calculateShippingFee = async ({ subtotal, region, rule_id } = {}) => {
+const calculateShippingFee = async ({ subtotal, region, rule_id, storeId = 1 } = {}) => {
   const parsedSubtotal = Math.max(parseInt(subtotal, 10) || 0, 0);
+  const activeStoreId = parseInt(storeId, 10) === 2 ? 2 : 1;
 
   let rule = null;
   if (rule_id) {
-    rule = await getShippingRuleById(rule_id);
+    rule = await getShippingRuleById(rule_id, activeStoreId);
   }
 
   if (!rule) {
-    const [rows] = await pool.execute(
-      'SELECT * FROM shipping_rules WHERE is_enabled = 1 ORDER BY id DESC LIMIT 1'
-    );
-    if (rows.length > 0) {
-      const r = rows[0];
-      rule = {
-        ...r,
-        regional_overrides: safeJsonParse(r.regional_overrides, null)
-      };
+    try {
+      const hasStoreId = await checkHasStoreId();
+      let query = 'SELECT * FROM shipping_rules WHERE is_enabled = 1';
+      const params = [];
+      if (hasStoreId) {
+        if (activeStoreId === 2) {
+          query += ' AND store_id = 2';
+        } else {
+          query += ' AND (store_id = 1 OR store_id IS NULL)';
+        }
+      }
+      query += ' ORDER BY id DESC LIMIT 1';
+      const [rows] = await pool.execute(query, params);
+      if (rows && rows.length > 0) {
+        const r = rows[0];
+        rule = {
+          ...r,
+          regional_overrides: safeJsonParse(r.regional_overrides, null)
+        };
+      }
+    } catch (_) {
+      // Fall back gracefully to store defaults if database is unreachable
     }
   }
 
   // Fallback defaults if no rule exists in database
   if (!rule) {
+    const isMarshans = activeStoreId === 2;
     rule = {
       id: null,
-      name: 'Default Standard Shipping',
-      free_shipping_threshold: 49900,
-      standard_fee: 5000,
+      name: isMarshans ? 'Default Marshans 3D Shipping' : 'Default Standard Shipping',
+      free_shipping_threshold: isMarshans ? 99999900 : 49900,
+      standard_fee: isMarshans ? 8000 : 5000,
       is_enabled: 1,
       regional_overrides: null
     };
@@ -327,11 +404,42 @@ const calculateShippingFee = async ({ subtotal, region, rule_id } = {}) => {
   };
 };
 
+/**
+ * Unified store shipping config (fees, policy, thresholds)
+ */
+const getStoreShippingConfig = async (storeId = 1) => {
+  const settingsService = require('./settingsService');
+  const settings = await settingsService.getStoreSettings(storeId);
+  const rulesResult = await getShippingRules({ storeId, limit: 20 });
+  return {
+    store_id: storeId,
+    standard_fee: settings.shipping_fee !== undefined ? settings.shipping_fee : 5000,
+    standard_fee_rupees: Math.round((settings.shipping_fee !== undefined ? settings.shipping_fee : 5000) / 100),
+    free_shipping_enabled: settings.free_shipping_enabled !== false,
+    free_shipping_threshold: settings.free_shipping_threshold !== undefined ? settings.free_shipping_threshold : 49900,
+    free_shipping_threshold_rupees: Math.round((settings.free_shipping_threshold !== undefined ? settings.free_shipping_threshold : 49900) / 100),
+    rules: rulesResult.rules || []
+  };
+};
+
+const updateStoreShippingConfig = async (storeId = 1, { standard_fee, free_shipping_enabled, free_shipping_threshold }) => {
+  const settingsService = require('./settingsService');
+  const payload = {};
+  if (standard_fee !== undefined) payload.shipping_fee = parseInt(standard_fee, 10);
+  if (free_shipping_enabled !== undefined) payload.free_shipping_enabled = free_shipping_enabled === true || free_shipping_enabled === 'true';
+  if (free_shipping_threshold !== undefined) payload.free_shipping_threshold = parseInt(free_shipping_threshold, 10);
+
+  await settingsService.updateStoreSettings(storeId, payload);
+  return getStoreShippingConfig(storeId);
+};
+
 module.exports = {
   getShippingRules,
   getShippingRuleById,
   createShippingRule,
   updateShippingRule,
   deleteShippingRule,
-  calculateShippingFee
+  calculateShippingFee,
+  getStoreShippingConfig,
+  updateStoreShippingConfig
 };

@@ -1,6 +1,21 @@
 const productService = require('../services/productService');
+const marshansProductService = require('../services/marshansProductService');
+const { isMarshansHybridCatalogEnabled } = require('../config/features');
 const { writeAuditLog } = require('../services/auditService');
 const { sendSuccess, sendError } = require('../utils/responseHandler');
+
+/**
+ * Determine the effective product service based on active store and feature flag.
+ * If MARSHANS_HYBRID_CATALOG_ENABLED is true and req.storeId === 2, uses marshansProductService.
+ * Otherwise, preserves legacy productService (Store 1 and legacy Store 2).
+ */
+const getEffectiveProductService = (req) => {
+  const storeId = req && req.storeId ? req.storeId : 1;
+  if (isMarshansHybridCatalogEnabled() && storeId === 2) {
+    return marshansProductService;
+  }
+  return productService;
+};
 
 /**
  * Get Product Catalog List Handler
@@ -9,14 +24,18 @@ const { sendSuccess, sendError } = require('../utils/responseHandler');
  */
 const getProductsHandler = async (req, res, next) => {
   try {
-    const { search, category_id, active, featured, drop_status, limit, offset } = req.query;
+    const { search, category_id, active, featured, is_best_seller, drop_status, limit, offset } = req.query;
+    const store_id = req.storeId || null;
+    const effectiveService = getEffectiveProductService(req);
 
-    const result = await productService.getProducts({
+    const result = await effectiveService.getProducts({
       search,
       category_id,
       active,
       featured,
+      is_best_seller,
       drop_status,
+      store_id,
       limit,
       offset
     });
@@ -40,7 +59,13 @@ const getProductByIdHandler = async (req, res, next) => {
       return sendError(res, 'Product ID or Admin Product ID is required.', 400);
     }
 
-    const product = await productService.getProductById(String(id).trim());
+    const effectiveService = getEffectiveProductService(req);
+    let product = await effectiveService.getProductById(String(id).trim());
+
+    // Fallback check on legacy service if hybrid service returned null
+    if (!product && effectiveService !== productService) {
+      product = await productService.getProductById(String(id).trim());
+    }
 
     if (!product) {
       return sendError(res, `Product '${id}' not found`, 404);
@@ -59,6 +84,7 @@ const getProductByIdHandler = async (req, res, next) => {
 const createProductHandler = async (req, res, next) => {
   try {
     const productData = req.body;
+    productData.store_id = req.storeId || 1;
 
     if (!productData.name || typeof productData.name !== 'string' || !productData.name.trim()) {
       return sendError(res, 'Product name is required', 400);
@@ -68,7 +94,8 @@ const createProductHandler = async (req, res, next) => {
       return sendError(res, 'Product price in paise is required', 400);
     }
 
-    const product = await productService.createProduct(productData);
+    const effectiveService = getEffectiveProductService(req);
+    const product = await effectiveService.createProduct(productData);
 
     // Write audit log if request is authenticated admin
     if (req.user && req.user.uid) {
@@ -90,7 +117,7 @@ const createProductHandler = async (req, res, next) => {
     return sendSuccess(res, product, 'Product created successfully', 201);
   } catch (error) {
     if (error.code === 'ER_DUP_ENTRY') {
-      const isAdminId = error.message.includes('uk_products_admin_product_id') || error.message.includes('admin_product_id');
+      const isAdminId = error.message.includes('admin_product_id') || error.message.includes('admin_id');
       const msg = isAdminId ? 'A product with this Admin Product ID already exists' : 'A product with this SKU already exists';
       return sendError(res, msg, 400);
     }
@@ -112,7 +139,8 @@ const updateProductHandler = async (req, res, next) => {
       return sendError(res, 'Invalid product ID format. Expected numeric BIGINT ID.', 400);
     }
 
-    const updatedProduct = await productService.updateProduct(numId, productData);
+    const effectiveService = getEffectiveProductService(req);
+    const updatedProduct = await effectiveService.updateProduct(numId, productData);
 
     if (!updatedProduct) {
       return sendError(res, `Product with ID ${id} not found`, 404);
@@ -137,7 +165,7 @@ const updateProductHandler = async (req, res, next) => {
     return sendSuccess(res, updatedProduct, 'Product updated successfully');
   } catch (error) {
     if (error.code === 'ER_DUP_ENTRY') {
-      const isAdminId = error.message.includes('uk_products_admin_product_id') || error.message.includes('admin_product_id');
+      const isAdminId = error.message.includes('admin_product_id') || error.message.includes('admin_id');
       const msg = isAdminId ? 'A product with this Admin Product ID already exists' : 'A product with this SKU already exists';
       return sendError(res, msg, 400);
     }
@@ -158,7 +186,8 @@ const deleteProductHandler = async (req, res, next) => {
       return sendError(res, 'Invalid product ID format. Expected numeric BIGINT ID.', 400);
     }
 
-    const success = await productService.deleteProduct(numId);
+    const effectiveService = getEffectiveProductService(req);
+    const success = await effectiveService.deleteProduct(numId);
 
     if (!success) {
       return sendError(res, `Product with ID ${id} not found`, 404);
@@ -183,6 +212,7 @@ const deleteProductHandler = async (req, res, next) => {
 };
 
 module.exports = {
+  getEffectiveProductService,
   getProductsHandler,
   getProductByIdHandler,
   createProductHandler,

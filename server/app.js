@@ -14,9 +14,11 @@ const eventRoutes = require('./routes/events');
 const orderRoutes = require('./routes/orders');
 const customerRoutes = require('./routes/customer');
 const paymentRoutes = require('./routes/payments');
+const cartRoutes = require('./routes/cart');
 const adminRoutes = require('./routes/admin');
 
 // Import Middlewares
+const { resolveStoreContext } = require('./middleware/storeContext');
 const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
 
 const app = express();
@@ -65,12 +67,13 @@ const corsOptions = {
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Session-ID', 'x-session-id']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Session-ID', 'x-session-id', 'X-Store-ID', 'x-store-id', 'X-Store-Code', 'x-store-code']
 };
 
 app.use(cors(corsOptions));
 
 const path = require('path');
+const fs = require('fs');
 
 // Body Parsing Middlewares (Capturing rawBody for cryptographic webhook HMAC verification)
 app.use(express.json({
@@ -97,6 +100,27 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 const webDir = path.join(__dirname, '../web');
 const customerDir = path.join(__dirname, '../customer-workspace');
+
+// Explicit Logo Assets Routes (Prevents 404s, case sensitivity issues, or missing favicon)
+app.get([
+  '/assets/images/logo.png',
+  '/assets/images/Logo.png',
+  '/assets/images/LOGO.PNG',
+  '/logo.png',
+  '/Logo.png',
+  '/LOGO.PNG',
+  '/favicon.ico'
+], (req, res) => {
+  const customerLogo = path.join(customerDir, 'assets/images/logo.png');
+  const webLogo = path.join(webDir, 'logo.png');
+  if (fs.existsSync(customerLogo)) {
+    return res.sendFile(customerLogo);
+  }
+  if (fs.existsSync(webLogo)) {
+    return res.sendFile(webLogo);
+  }
+  return res.status(404).send('Logo not found');
+});
 
 // 1. CHIPAKK Admin Workspace Direct Routes
 app.get(['/admin.html', '/admin'], (req, res) => {
@@ -152,7 +176,8 @@ app.use('/web', express.static(webDir));
 
 const { getPublicStoreBuilderHandler } = require('./controllers/storeBuilderController');
 
-// API Routes Mounting
+// API Routes Mounting (with automatic multi-store resolution)
+app.use('/api', resolveStoreContext);
 app.use('/api/health', healthRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/categories', categoryRoutes);
@@ -161,6 +186,7 @@ app.use('/api/coupons', couponRoutes);
 app.use('/api/events', eventRoutes);
 app.use('/api/store-builder', getPublicStoreBuilderHandler);
 app.use('/api/orders', orderRoutes);
+app.use('/api/cart', cartRoutes);
 app.use('/api/customer', customerRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/admin', adminRoutes);

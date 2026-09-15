@@ -2,15 +2,37 @@ const { pool } = require('../config/database');
 const couponService = require('./couponService');
 const shippingService = require('./shippingService');
 const settingsService = require('./settingsService');
+const { isMarshansHybridCatalogEnabled } = require('../config/features');
+
+let hasMarshansColInOrderItems = null;
+const checkHasMarshansOrderCol = async (conn = pool) => {
+  if (hasMarshansColInOrderItems !== null) return hasMarshansColInOrderItems;
+  try {
+    const [cols] = await conn.execute(
+      "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'order_items' AND COLUMN_NAME = 'marshans_product_id'"
+    );
+    hasMarshansColInOrderItems = cols && cols.length > 0;
+  } catch (_) {
+    hasMarshansColInOrderItems = false;
+  }
+  return hasMarshansColInOrderItems;
+};
 
 /**
  * Approved Fulfillment Statuses (Strict Uppercase Machine Values)
  */
 const ALLOWED_FULFILLMENT_STATUSES = [
   'NEW',
+  'ORDER PLACED',
   'CONFIRMED',
+  'ORDER CONFIRMED',
   'PROCESSING',
+  'PREPARING',
+  'QUALITY CHECK',
+  'QUALITY_CHECK',
+  'READY',
   'READY_TO_SHIP',
+  'PACKED',
   'SHIPPED',
   'OUT_FOR_DELIVERY',
   'DELIVERED',
@@ -32,15 +54,72 @@ const safeJsonParse = (val, fallback = null) => {
   }
 };
 
+let hasHistoryTable = null;
+const checkHasHistoryTable = async (connection = pool) => {
+  if (hasHistoryTable !== null) return hasHistoryTable;
+  try {
+    const [tables] = await connection.execute(
+      "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'order_status_history'"
+    );
+    hasHistoryTable = tables && tables.length > 0;
+  } catch (err) {
+    hasHistoryTable = false;
+  }
+  return hasHistoryTable;
+};
+
+/**
+ * Automatically record a chronological status history transition
+ */
+const recordOrderStatusHistory = async (orderId, status, { changed_by = 'System', note = null } = {}, connection = pool) => {
+  try {
+    const hasTable = await checkHasHistoryTable(connection);
+    if (!hasTable) return;
+    await connection.execute(
+      'INSERT INTO order_status_history (order_id, status, changed_by, note, created_at) VALUES (?, ?, ?, ?, NOW())',
+      [orderId, String(status).trim(), changed_by || 'System', note || null]
+    );
+  } catch (err) {
+    console.warn('[OrderStatusHistory Warning]', err.message);
+  }
+};
+
+/**
+ * Retrieve chronological status history timeline for an order
+ */
+const getOrderStatusHistory = async (orderId, connection = pool) => {
+  try {
+    const hasTable = await checkHasHistoryTable(connection);
+    if (!hasTable) return [];
+    const [rows] = await connection.execute(
+      'SELECT id, order_id, status, changed_by, note, created_at FROM order_status_history WHERE order_id = ? ORDER BY created_at ASC, id ASC',
+      [orderId]
+    );
+    return rows.map(r => ({
+      id: r.id,
+      status: r.status,
+      changed_by: r.changed_by,
+      actor: r.changed_by,
+      note: r.note,
+      created_at: r.created_at,
+      timestamp: r.created_at
+    }));
+  } catch (err) {
+    console.warn('[OrderStatusHistory Fetch Error]', err.message);
+    return [];
+  }
+};
+
 /**
  * Fetch list of orders with filters & pagination
  * Supports search (order_number, customer_name, customer_email, customer_phone),
- * fulfillment_status, payment_status, and pagination.
+ * fulfillment_status, payment_status, store_id, and pagination.
  */
 const getOrders = async ({
   search,
   fulfillment_status,
   payment_status,
+  store_id = null,
   limit = 50,
   offset = 0
 } = {}) => {
@@ -55,6 +134,18 @@ const getOrders = async ({
   if (payment_status && String(payment_status).trim()) {
     conditions.push('o.payment_status = ?');
     params.push(String(payment_status).trim().toLowerCase());
+  }
+
+  if (store_id !== null && store_id !== undefined && String(store_id).trim() !== '') {
+    const sId = parseInt(store_id, 10);
+    if (!isNaN(sId)) {
+      if (sId === 1) {
+        conditions.push('(o.store_id = 1 OR o.store_id IS NULL)');
+      } else {
+        conditions.push('o.store_id = ?');
+        params.push(sId);
+      }
+    }
   }
 
   if (search && String(search).trim()) {
@@ -94,6 +185,7 @@ const getOrders = async ({
       o.tracking_no,
       o.ship_date,
       o.ship_notes,
+      COALESCE(o.store_id, 1) AS store_id,
       o.created_at,
       o.updated_at
     FROM orders o
@@ -125,11 +217,25 @@ const getOrders = async ({
 /**
  * Fetch a single order by BIGINT ID or order_number string with line items.
  */
-const getOrderById = async (orderIdOrNumber) => {
+const getOrderById = async (orderIdOrNumber, storeId = null) => {
   if (!orderIdOrNumber) return null;
 
   const numId = parseInt(orderIdOrNumber, 10);
   const isNumeric = !isNaN(numId) && String(numId) === String(orderIdOrNumber);
+
+  const params = [isNumeric ? numId : String(orderIdOrNumber).trim()];
+  let storeCondition = '';
+  if (storeId !== null && storeId !== undefined && String(storeId).trim() !== '') {
+    const sId = parseInt(storeId, 10);
+    if (!isNaN(sId)) {
+      if (sId === 1) {
+        storeCondition = ' AND (o.store_id = 1 OR o.store_id IS NULL)';
+      } else {
+        storeCondition = ' AND o.store_id = ?';
+        params.push(sId);
+      }
+    }
+  }
 
   const orderQuery = `
     SELECT 
@@ -152,15 +258,15 @@ const getOrderById = async (orderIdOrNumber) => {
       o.tracking_no,
       o.ship_date,
       o.ship_notes,
+      COALESCE(o.store_id, 1) AS store_id,
       o.created_at,
       o.updated_at
     FROM orders o
-    WHERE ${isNumeric ? 'o.id = ?' : 'o.order_number = ?'}
+    WHERE ${isNumeric ? 'o.id = ?' : 'o.order_number = ?'}${storeCondition}
     LIMIT 1
   `;
 
-  const param = isNumeric ? numId : String(orderIdOrNumber).trim();
-  const [orderRows] = await pool.execute(orderQuery, [param]);
+  const [orderRows] = await pool.execute(orderQuery, params);
 
   if (!orderRows || orderRows.length === 0) {
     return null;
@@ -182,11 +288,13 @@ const getOrderById = async (orderIdOrNumber) => {
   order.shipping_charge_rupees = Math.round(shippingPaise / 100);
 
   // Fetch Order Items with product image
+  const hasMarshansProductCol = await checkHasMarshansOrderCol();
   const itemsQuery = `
     SELECT 
       oi.id,
       oi.order_id,
       oi.product_id,
+      ${hasMarshansProductCol ? 'oi.marshans_product_id,' : 'NULL AS marshans_product_id,'}
       oi.variant_id,
       oi.product_name,
       oi.sku,
@@ -197,7 +305,11 @@ const getOrderById = async (orderIdOrNumber) => {
       oi.admin_product_id_snapshot,
       oi.production_status,
       oi.created_at,
-      (SELECT image_url FROM product_images WHERE product_id = oi.product_id ORDER BY display_order ASC, id ASC LIMIT 1) AS product_image
+      COALESCE(
+        (SELECT image_url FROM product_images WHERE product_id = oi.product_id ORDER BY display_order ASC, id ASC LIMIT 1),
+        ${hasMarshansProductCol ? '(SELECT image_url FROM marshans_product_images WHERE product_id = oi.marshans_product_id ORDER BY is_primary DESC, sort_order ASC, id ASC LIMIT 1),' : ''}
+        NULL
+      ) AS product_image
     FROM order_items oi
     WHERE oi.order_id = ?
     ORDER BY oi.id ASC
@@ -228,6 +340,8 @@ const getOrderById = async (orderIdOrNumber) => {
 
   order.items = itemRows.map(item => ({
     ...item,
+    product_id: item.marshans_product_id || item.product_id,
+    marshans_product_id: item.marshans_product_id || null,
     img: item.product_image || null,
     custom_designs: customDesignsByItem[item.id] || [],
     variant_options: safeJsonParse(item.variant_options, null),
@@ -235,13 +349,16 @@ const getOrderById = async (orderIdOrNumber) => {
     total_price_rupees: Math.round((parseInt(item.total_price, 10) || 0) / 100)
   }));
 
+  // Attach status history timeline
+  order.status_history = await getOrderStatusHistory(numOrderId);
+
   return order;
 };
 
 /**
- * Update order fulfillment_status with strict validation
+ * Update order fulfillment_status with strict validation and audit timeline
  */
-const updateOrderStatus = async (id, status) => {
+const updateOrderStatus = async (id, status, options = {}) => {
   const numId = parseInt(id, 10);
   if (isNaN(numId)) {
     throw new Error('Invalid order ID format. Expected numeric BIGINT ID.');
@@ -253,7 +370,7 @@ const updateOrderStatus = async (id, status) => {
     throw new Error(`Invalid fulfillment status. Allowed values: ${ALLOWED_FULFILLMENT_STATUSES.join(', ')}`);
   }
 
-  const existing = await getOrderById(numId);
+  const existing = await getOrderById(numId, options.store_id);
   if (!existing) {
     return null;
   }
@@ -261,7 +378,13 @@ const updateOrderStatus = async (id, status) => {
   const query = 'UPDATE orders SET fulfillment_status = ? WHERE id = ?';
   await pool.execute(query, [normalizedStatus, numId]);
 
-  return getOrderById(numId);
+  // Record status history transition
+  await recordOrderStatusHistory(numId, normalizedStatus, {
+    changed_by: options.changed_by || 'Admin',
+    note: options.note || `Status changed from ${existing.fulfillment_status} to ${normalizedStatus}`
+  });
+
+  return getOrderById(numId, options.store_id);
 };
 
 /**
@@ -282,7 +405,7 @@ const updateOrderShipping = async (id, shippingData = {}) => {
 
   const safeCourier = courier !== undefined ? (courier && String(courier).trim() ? String(courier).trim() : null) : existing.courier;
   const safeTrackingNo = tracking_no !== undefined ? (tracking_no && String(tracking_no).trim() ? String(tracking_no).trim() : null) : existing.tracking_no;
-  
+
   let safeShipDate = existing.ship_date;
   if (ship_date !== undefined) {
     if (ship_date) {
@@ -360,8 +483,8 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
     payment_method = 'COD'
   } = orderPayload || {};
 
-  // 1. Validate items array
-  if (!items || !Array.isArray(items) || items.length === 0) {
+  // 1. Validate items array or cart_id
+  if ((!items || !Array.isArray(items) || items.length === 0) && !orderPayload?.cart_id) {
     const err = new Error('Order must contain at least one item.');
     err.statusCode = 400;
     throw err;
@@ -435,11 +558,105 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
       phone: cleanPhone
     }, connection);
 
+    const activeStoreId = parseInt(orderPayload?.store_id, 10) === 2 ? 2 : 1;
+    const isHybridMarshans = isMarshansHybridCatalogEnabled() && activeStoreId === 2;
+
+    // Resolve items from cart if cart_id is provided and items is empty or omitted
+    let orderItems = items;
+    if ((!orderItems || !Array.isArray(orderItems) || orderItems.length === 0) && orderPayload?.cart_id) {
+      const numCartId = parseInt(orderPayload.cart_id, 10);
+      if (isNaN(numCartId)) {
+        const err = new Error('Invalid cart ID.');
+        err.statusCode = 400;
+        throw err;
+      }
+
+      // Verify cart existence and ownership
+      const [cRows] = await connection.execute(
+        'SELECT id, user_id, store_id, session_id, status FROM carts WHERE id = ? LIMIT 1',
+        [numCartId]
+      );
+      if (!cRows || cRows.length === 0) {
+        const err = new Error('Cart not found.');
+        err.statusCode = 404;
+        throw err;
+      }
+
+      const cartRec = cRows[0];
+      if (cartRec.status !== 'active') {
+        const err = new Error('Cart is no longer active.');
+        err.statusCode = 400;
+        throw err;
+      }
+
+      if (parseInt(cartRec.store_id, 10) !== activeStoreId) {
+        const err = new Error('Cart does not belong to the active store.');
+        err.statusCode = 400;
+        throw err;
+      }
+
+      if (cartRec.user_id && parseInt(cartRec.user_id, 10) !== parseInt(customerId, 10)) {
+        const err = new Error("Access denied: Cannot checkout another customer's cart.");
+        err.statusCode = 403;
+        throw err;
+      }
+
+      const [cItems] = await connection.execute(
+        'SELECT product_id, marshans_product_id, variant_id, quantity FROM cart_items WHERE cart_id = ?',
+        [numCartId]
+      );
+
+      if (!cItems || cItems.length === 0) {
+        const err = new Error('Cart is empty.');
+        err.statusCode = 400;
+        throw err;
+      }
+
+      // Enforce cart item invariants
+      for (const ci of cItems) {
+        if (isHybridMarshans) {
+          if (ci.product_id !== null && ci.product_id !== undefined) {
+            const err = new Error('Corrupt cart item: CHIPAKK product found in MARSHANS cart.');
+            err.statusCode = 400;
+            throw err;
+          }
+          if (!ci.marshans_product_id) {
+            const err = new Error('Corrupt cart item: Missing MARSHANS product ID in cart item.');
+            err.statusCode = 400;
+            throw err;
+          }
+        } else {
+          if (ci.marshans_product_id !== null && ci.marshans_product_id !== undefined) {
+            const err = new Error('Corrupt cart item: MARSHANS product found in CHIPAKK cart.');
+            err.statusCode = 400;
+            throw err;
+          }
+          if (!ci.product_id) {
+            const err = new Error('Corrupt cart item: Missing product ID in CHIPAKK cart item.');
+            err.statusCode = 400;
+            throw err;
+          }
+        }
+      }
+
+      orderItems = cItems.map(ci => ({
+        product_id: isHybridMarshans ? ci.marshans_product_id : ci.product_id,
+        variant_id: ci.variant_id,
+        quantity: ci.quantity
+      }));
+    }
+
+    if (!orderItems || !Array.isArray(orderItems) || orderItems.length === 0) {
+      const err = new Error('Order must contain at least one item.');
+      err.statusCode = 400;
+      throw err;
+    }
+
     // 4. Server-side validation of cart items & price lookup
     let subtotalPaise = 0;
     const validatedItems = [];
 
-    for (const item of items) {
+    for (const item of orderItems) {
       const productId = parseInt(item.product_id || item.id, 10);
       const qty = Math.max(parseInt(item.quantity || item.qty, 10) || 1, 1);
 
@@ -449,47 +666,75 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
         throw err;
       }
 
-      // Fetch active product from DB
-      const [prodRows] = await connection.execute(
-        'SELECT id, name, sku, price, active, admin_product_id FROM products WHERE id = ? LIMIT 1',
-        [productId]
-      );
-
-      if (!prodRows || prodRows.length === 0 || !prodRows[0].active) {
-        const err = new Error(`Product #${productId} is invalid or no longer available.`);
-        err.statusCode = 400;
-        throw err;
-      }
-
-      const product = prodRows[0];
-      let unitPricePaise = parseInt(product.price, 10) || 0;
-      let itemSku = product.sku;
+      let product;
+      let unitPricePaise = 0;
+      let itemSku = '';
       let variantId = null;
       let variantOptions = null;
 
-      // Validate variant if provided
-      const rawVariantId = item.variant_id;
-      if (rawVariantId) {
-        const numVariantId = parseInt(rawVariantId, 10);
-        if (!isNaN(numVariantId)) {
-          const [variantRows] = await connection.execute(
-            'SELECT id, product_id, sku, price, option_combination, active FROM product_variants WHERE id = ? AND product_id = ? LIMIT 1',
-            [numVariantId, productId]
-          );
+      if (isHybridMarshans) {
+        // Fetch active Store 2 product from marshans_products
+        const [prodRows] = await connection.execute(
+          'SELECT id, name, sku, price, active, admin_product_id FROM marshans_products WHERE id = ? LIMIT 1',
+          [productId]
+        );
 
-          if (!variantRows || variantRows.length === 0 || !variantRows[0].active) {
-            const err = new Error(`Variant #${numVariantId} is invalid or no longer available for product "${product.name}".`);
-            err.statusCode = 400;
-            throw err;
+        if (!prodRows || prodRows.length === 0 || !prodRows[0].active) {
+          const err = new Error(`Product #${productId} is invalid or no longer available in THE MARSHANS catalog.`);
+          err.statusCode = 400;
+          throw err;
+        }
+
+        product = prodRows[0];
+        unitPricePaise = parseInt(product.price, 10) || 0;
+        itemSku = product.sku;
+      } else {
+        // Fetch active Store 1 product from products
+        const [prodRows] = await connection.execute(
+          'SELECT id, name, sku, price, active, admin_product_id, store_id FROM products WHERE id = ? LIMIT 1',
+          [productId]
+        );
+
+        if (!prodRows || prodRows.length === 0 || !prodRows[0].active) {
+          const err = new Error(`Product #${productId} is invalid or no longer available.`);
+          err.statusCode = 400;
+          throw err;
+        }
+
+        product = prodRows[0];
+        if (product.store_id && parseInt(product.store_id, 10) === 2) {
+          const err = new Error(`Product #${productId} does not belong to CHIPAKK store.`);
+          err.statusCode = 400;
+          throw err;
+        }
+
+        unitPricePaise = parseInt(product.price, 10) || 0;
+        itemSku = product.sku;
+
+        // Validate variant if provided
+        const rawVariantId = item.variant_id;
+        if (rawVariantId) {
+          const numVariantId = parseInt(rawVariantId, 10);
+          if (!isNaN(numVariantId)) {
+            const [variantRows] = await connection.execute(
+              'SELECT id, product_id, sku, price, option_combination, active FROM product_variants WHERE id = ? AND product_id = ? LIMIT 1',
+              [numVariantId, productId]
+            );
+
+            if (!variantRows || variantRows.length === 0 || !variantRows[0].active) {
+              const err = new Error(`Variant #${numVariantId} is invalid or no longer available for product "${product.name}".`);
+              err.statusCode = 400;
+              throw err;
+            }
+
+            const variant = variantRows[0];
+            variantId = variant.id;
+            unitPricePaise = parseInt(variant.price, 10) || 0;
+            if (variant.sku) itemSku = variant.sku;
+            variantOptions = typeof variant.option_combination === 'string'
+              ? variant.option_combination
+              : JSON.stringify(variant.option_combination);
           }
-
-          const variant = variantRows[0];
-          variantId = variant.id;
-          unitPricePaise = parseInt(variant.price, 10) || 0;
-          if (variant.sku) itemSku = variant.sku;
-          variantOptions = typeof variant.option_combination === 'string'
-            ? variant.option_combination
-            : JSON.stringify(variant.option_combination);
         }
       }
 
@@ -497,7 +742,8 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
       subtotalPaise += lineTotalPaise;
 
       validatedItems.push({
-        product_id: product.id,
+        product_id: isHybridMarshans ? null : product.id,
+        marshans_product_id: isHybridMarshans ? product.id : null,
         variant_id: variantId,
         product_name: product.name,
         sku: itemSku,
@@ -509,13 +755,13 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
       });
     }
 
-    // 5. Server-side coupon validation
+    // 5. Server-side coupon validation (store-scoped)
     let discountPaise = 0;
     let validatedCoupon = null;
 
     if (coupon_code && String(coupon_code).trim()) {
       const codeStr = String(coupon_code).trim().toUpperCase();
-      const couponCheck = await couponService.validateCoupon(codeStr, subtotalPaise);
+      const couponCheck = await couponService.validateCoupon(codeStr, subtotalPaise, activeStoreId);
 
       if (!couponCheck.valid) {
         const err = new Error(couponCheck.message || 'Invalid coupon code.');
@@ -527,10 +773,11 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
       discountPaise = validatedCoupon.discount_paise || 0;
     }
 
-    // 6. Server-side shipping fee calculation
+    // 6. Server-side shipping fee calculation (store-scoped)
     const shippingCheck = await shippingService.calculateShippingFee({
       subtotal: Math.max(0, subtotalPaise - discountPaise),
-      region: state.trim()
+      region: state.trim(),
+      storeId: activeStoreId
     });
     const shippingChargePaise = shippingCheck.shipping_fee || 0;
 
@@ -538,10 +785,11 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
     const discountedSubtotalPaise = Math.max(0, subtotalPaise - discountPaise);
     const totalPricePaise = discountedSubtotalPaise + shippingChargePaise;
 
-    // 8. Generate order number
+    // 8. Generate order number (CHP for CHIPAKK, MRSH for THE MARSHANS)
     const timestampPart = Date.now().toString().slice(-6);
     const randomPart = Math.floor(1000 + Math.random() * 9000);
-    const orderNumber = `CHP-${timestampPart}${randomPart}`;
+    const orderPrefix = activeStoreId === 2 ? 'MRSH' : 'CHP';
+    const orderNumber = `${orderPrefix}-${timestampPart}${randomPart}`;
 
     // 9. Shipping address snapshot JSON
     const shippingSnapshot = {
@@ -555,32 +803,58 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
       country: country ? country.trim() : 'India'
     };
 
-    // 10. Insert into orders table (check for customer_phone column dynamically)
+    // 10. Insert into orders table (check for customer_phone & store_id columns dynamically)
     let hasPhoneCol = false;
+    let hasStoreIdCol = true;
     try {
       const [orderCols] = await connection.execute(
-        "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'orders' AND COLUMN_NAME = 'customer_phone'"
+        "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'orders' AND COLUMN_NAME IN ('customer_phone', 'store_id')"
       );
-      hasPhoneCol = orderCols && orderCols.length > 0;
-    } catch (e) {}
+      const colNames = (orderCols || []).map(c => c.COLUMN_NAME.toLowerCase());
+      hasPhoneCol = colNames.includes('customer_phone');
+      hasStoreIdCol = colNames.includes('store_id');
+    } catch (e) { }
 
     let orderInsertQuery;
     let orderParams;
 
-    if (hasPhoneCol) {
+    if (hasPhoneCol && hasStoreIdCol) {
       orderInsertQuery = `
         INSERT INTO orders (
-          order_number, customer_id, customer_email, customer_name, customer_phone,
+          order_number, customer_id, store_id, customer_email, customer_name, customer_phone,
           shipping_address, payment_method, payment_status, fulfillment_status,
           subtotal, discount_total, shipping_charge, total_price, coupon_code
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', ?, ?, ?, ?, ?)
       `;
       orderParams = [
         orderNumber,
         customerId,
+        activeStoreId,
         shippingSnapshot.email,
         shippingSnapshot.name,
         shippingSnapshot.phone,
+        JSON.stringify(shippingSnapshot),
+        payment_method ? String(payment_method).toUpperCase() : 'COD',
+        subtotalPaise,
+        discountPaise,
+        shippingChargePaise,
+        totalPricePaise,
+        validatedCoupon ? validatedCoupon.code : null
+      ];
+    } else if (hasStoreIdCol) {
+      orderInsertQuery = `
+        INSERT INTO orders (
+          order_number, customer_id, store_id, customer_email, customer_name,
+          shipping_address, payment_method, payment_status, fulfillment_status,
+          subtotal, discount_total, shipping_charge, total_price, coupon_code
+        ) VALUES (?, ?, ?, ?, ?, ?, 'pending', 'pending', ?, ?, ?, ?, ?)
+      `;
+      orderParams = [
+        orderNumber,
+        customerId,
+        activeStoreId,
+        shippingSnapshot.email,
+        shippingSnapshot.name,
         JSON.stringify(shippingSnapshot),
         payment_method ? String(payment_method).toUpperCase() : 'COD',
         subtotalPaise,
@@ -595,7 +869,7 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
           order_number, customer_id, customer_email, customer_name,
           shipping_address, payment_method, payment_status, fulfillment_status,
           subtotal, discount_total, shipping_charge, total_price, coupon_code
-        ) VALUES (?, ?, ?, ?, ?, ?, 'pending', 'pending', ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, 'pending', 'pending', ?, ?, ?, ?, ?)
       `;
       orderParams = [
         orderNumber,
@@ -616,35 +890,77 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
 
     const orderId = orderResult.insertId;
 
-    // 11. Insert order items
-    const itemInsertQuery = `
-      INSERT INTO order_items (
-        order_id,
-        product_id,
-        variant_id,
-        product_name,
-        sku,
-        admin_product_id_snapshot,
-        variant_options,
-        unit_price,
-        quantity,
-        total_price
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `;
+    // 11. Insert order items (Hybrid Architecture Bridge Preparation)
+    let hasMarshansProductCol = false;
+    try {
+      const [colCheck] = await connection.execute(
+        "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'order_items' AND COLUMN_NAME = 'marshans_product_id'"
+      );
+      hasMarshansProductCol = colCheck && colCheck.length > 0;
+    } catch (_) { }
 
-    for (const it of validatedItems) {
-      await connection.execute(itemInsertQuery, [
-        orderId,
-        it.product_id,
-        it.variant_id,
-        it.product_name,
-        it.sku,
-        it.admin_product_id_snapshot,
-        it.variant_options,
-        it.unit_price,
-        it.quantity,
-        it.total_price
-      ]);
+    if (hasMarshansProductCol) {
+      const itemInsertQuery = `
+        INSERT INTO order_items (
+          order_id,
+          product_id,
+          marshans_product_id,
+          variant_id,
+          product_name,
+          sku,
+          admin_product_id_snapshot,
+          variant_options,
+          unit_price,
+          quantity,
+          total_price
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `;
+
+      for (const it of validatedItems) {
+        await connection.execute(itemInsertQuery, [
+          orderId,
+          it.product_id,
+          it.marshans_product_id,
+          it.variant_id,
+          it.product_name,
+          it.sku,
+          it.admin_product_id_snapshot,
+          it.variant_options,
+          it.unit_price,
+          it.quantity,
+          it.total_price
+        ]);
+      }
+    } else {
+      const itemInsertQuery = `
+        INSERT INTO order_items (
+          order_id,
+          product_id,
+          variant_id,
+          product_name,
+          sku,
+          admin_product_id_snapshot,
+          variant_options,
+          unit_price,
+          quantity,
+          total_price
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `;
+
+      for (const it of validatedItems) {
+        await connection.execute(itemInsertQuery, [
+          orderId,
+          it.product_id || it.marshans_product_id,
+          it.variant_id,
+          it.product_name,
+          it.sku,
+          it.admin_product_id_snapshot,
+          it.variant_options,
+          it.unit_price,
+          it.quantity,
+          it.total_price
+        ]);
+      }
     }
 
     // 12. Record coupon usage if coupon applied
@@ -659,10 +975,22 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
       );
     }
 
+    // 13. Record initial chronological status transition
+    await recordOrderStatusHistory(orderId, 'ORDER PLACED', {
+      changed_by: 'Customer',
+      note: 'Order placed by customer checkout'
+    }, connection);
+
+    // 14. Convert & clear persistent cart atomically if order originated from a cart
+    if (orderPayload?.cart_id) {
+      await connection.execute('UPDATE carts SET status = "converted" WHERE id = ?', [orderPayload.cart_id]);
+      await connection.execute('DELETE FROM cart_items WHERE cart_id = ?', [orderPayload.cart_id]);
+    }
+
     await connection.commit();
     connection.release();
 
-    return getOrderById(orderId);
+    return getOrderById(orderId, activeStoreId);
   } catch (error) {
     await connection.rollback();
     connection.release();

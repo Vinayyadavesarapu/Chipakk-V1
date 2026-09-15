@@ -13,6 +13,7 @@ const getCouponsHandler = async (req, res, next) => {
     const result = await couponService.getCoupons({
       search,
       active,
+      store_id: req.storeId || req.query.store_id || null,
       limit,
       offset
     });
@@ -36,7 +37,7 @@ const getCouponByIdHandler = async (req, res, next) => {
       return sendError(res, 'Coupon ID or Coupon Code is required.', 400);
     }
 
-    const coupon = await couponService.getCouponById(String(id).trim());
+    const coupon = await couponService.getCouponById(String(id).trim(), req.storeId);
 
     if (!coupon) {
       return sendError(res, `Coupon '${id}' not found`, 404);
@@ -54,7 +55,10 @@ const getCouponByIdHandler = async (req, res, next) => {
  */
 const createCouponHandler = async (req, res, next) => {
   try {
-    const couponData = req.body;
+    const couponData = {
+      ...(req.body || {}),
+      store_id: req.storeId || (req.body && req.body.store_id) || 1
+    };
 
     if (!couponData.code || typeof couponData.code !== 'string' || !couponData.code.trim()) {
       return sendError(res, 'Coupon code is required.', 400);
@@ -82,6 +86,7 @@ const createCouponHandler = async (req, res, next) => {
           code: coupon.code,
           discount_type: coupon.discount_type,
           discount_value: coupon.discount_value,
+          store_id: couponData.store_id,
           active: coupon.active
         }
       ).catch(err => console.error('[Audit Log Error]', err.message));
@@ -111,7 +116,7 @@ const updateCouponHandler = async (req, res, next) => {
       return sendError(res, 'Invalid coupon ID format. Expected numeric BIGINT ID.', 400);
     }
 
-    const updatedCoupon = await couponService.updateCoupon(numId, couponData);
+    const updatedCoupon = await couponService.updateCoupon(numId, couponData, req.storeId);
 
     if (!updatedCoupon) {
       return sendError(res, `Coupon with ID ${id} not found`, 404);
@@ -156,7 +161,7 @@ const deleteCouponHandler = async (req, res, next) => {
       return sendError(res, 'Invalid coupon ID format. Expected numeric BIGINT ID.', 400);
     }
 
-    const success = await couponService.deleteCoupon(numId);
+    const success = await couponService.deleteCoupon(numId, req.storeId);
 
     if (!success) {
       return sendError(res, `Coupon with ID ${id} not found`, 404);

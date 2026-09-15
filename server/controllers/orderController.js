@@ -14,6 +14,7 @@ const getOrdersHandler = async (req, res, next) => {
       search,
       fulfillment_status,
       payment_status,
+      store_id: req.storeId || req.query.store_id || null,
       limit,
       offset
     });
@@ -36,7 +37,7 @@ const getOrderByIdHandler = async (req, res, next) => {
       return sendError(res, 'Order ID or Order Number is required.', 400);
     }
 
-    const order = await orderService.getOrderById(String(id).trim());
+    const order = await orderService.getOrderById(String(id).trim(), req.storeId);
 
     if (!order) {
       return sendError(res, `Order '${id}' not found`, 404);
@@ -55,7 +56,7 @@ const getOrderByIdHandler = async (req, res, next) => {
 const updateOrderStatusHandler = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { status, fulfillment_status } = req.body;
+    const { status, fulfillment_status, note } = req.body;
 
     const numId = parseInt(id, 10);
     if (isNaN(numId)) {
@@ -79,15 +80,19 @@ const updateOrderStatusHandler = async (req, res, next) => {
       );
     }
 
-    // Fetch existing order to capture previous status for audit log
-    const existingOrder = await orderService.getOrderById(numId);
+    // Fetch existing order to capture previous status for audit log (scoped to active store)
+    const existingOrder = await orderService.getOrderById(numId, req.storeId);
     if (!existingOrder) {
       return sendError(res, `Order with ID ${id} not found`, 404);
     }
 
     const previousStatus = existingOrder.fulfillment_status;
 
-    const updatedOrder = await orderService.updateOrderStatus(numId, rawStatus);
+    const updatedOrder = await orderService.updateOrderStatus(numId, rawStatus, {
+      changed_by: (req.user && (req.user.email || req.user.name)) || 'Admin',
+      note: note || `Status updated to ${rawStatus}`,
+      store_id: req.storeId
+    });
 
     // Write audit log if request is authenticated admin
     if (req.user && req.user.uid) {
@@ -171,7 +176,12 @@ const createCustomerOrderHandler = async (req, res, next) => {
       return sendError(res, 'Authentication required to place an order.', 401);
     }
 
-    const order = await orderService.createCustomerOrder(req.body || {}, req.user);
+    const payload = {
+      ...(req.body || {}),
+      store_id: req.storeId || (req.body && req.body.store_id) || 1
+    };
+
+    const order = await orderService.createCustomerOrder(payload, req.user);
     return sendSuccess(res, order, 'Order placed successfully', 201);
   } catch (error) {
     if (error.statusCode) {

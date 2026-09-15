@@ -103,6 +103,21 @@
 
   const API_BASE = resolveApiBaseUrl();
 
+  function getActiveStoreId() {
+    if (typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search);
+      const storeParam = urlParams.get('store_id') || urlParams.get('store');
+      if (storeParam === '2' || storeParam === 'marshans' || storeParam === 'themarshans') return 2;
+      if (storeParam === '1' || storeParam === 'chipakk') return 1;
+      if (window.CHIPAKK_STORE_ID) return Number(window.CHIPAKK_STORE_ID);
+      try {
+        const stored = localStorage.getItem('chipakk_active_store_id');
+        if (stored) return Number(stored);
+      } catch (_) {}
+    }
+    return 1;
+  }
+
   // In-memory session cache to avoid duplicate API requests during a single page visit
   const apiCache = new Map();
 
@@ -117,10 +132,12 @@
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 6000);
+      const storeId = options.storeId || (options.headers && (options.headers['X-Store-ID'] || options.headers['x-store-id'])) || getActiveStoreId();
 
       const res = await fetch(url, {
         headers: {
           "Accept": "application/json",
+          "X-Store-ID": String(storeId),
           ...(options.headers || {})
         },
         signal: controller.signal,
@@ -726,15 +743,20 @@
   async function getCategories(options = {}) {
     try {
       const data = await fetchApi("/categories", options);
-      if (Array.isArray(data)) {
-        const normalized = data.map(normalizeCategory).filter(c => c && c.active);
+      const list = Array.isArray(data) ? data : (data && Array.isArray(data.categories) ? data.categories : []);
+      if (Array.isArray(list) && list.length > 0) {
+        const normalized = list
+          .map(normalizeCategory)
+          .filter(c => c && c.active && (c.name || '').toLowerCase().trim() !== 'best seller' && (c.slug || '').toLowerCase().trim() !== 'best-seller');
         CHIPAKK_DATA.categories = normalized;
         return normalized;
       }
       return [];
     } catch (err) {
       console.warn("[CHIPAKK] Falling back to local categories repository:", err.message);
-      return CHIPAKK_DATA.categories.map(normalizeCategory).filter(c => c && c.active);
+      return (CHIPAKK_DATA.categories || [])
+        .map(normalizeCategory)
+        .filter(c => c && c.active && (c.name || '').toLowerCase().trim() !== 'best seller' && (c.slug || '').toLowerCase().trim() !== 'best-seller');
     }
   }
 

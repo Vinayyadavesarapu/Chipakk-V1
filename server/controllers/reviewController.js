@@ -9,12 +9,14 @@ const { sendSuccess, sendError } = require('../utils/responseHandler');
 const getReviewsHandler = async (req, res, next) => {
   try {
     const { search, status, product_id, rating, limit, offset } = req.query;
+    const store_id = req.storeId || req.query.store_id || null;
 
     const result = await reviewService.getReviews({
       search,
       status,
       product_id,
       rating,
+      store_id,
       limit,
       offset
     });

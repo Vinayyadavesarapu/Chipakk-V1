@@ -1,4 +1,17 @@
 const { pool } = require('../config/database');
+const { isMarshansHybridCatalogEnabled } = require('../config/features');
+
+let hasStoreIdCol = null;
+const checkHasStoreId = async () => {
+  if (hasStoreIdCol !== null) return hasStoreIdCol;
+  try {
+    const [cols] = await pool.execute("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'coupons' AND COLUMN_NAME = 'store_id'");
+    hasStoreIdCol = cols && cols.length > 0;
+  } catch (e) {
+    hasStoreIdCol = false;
+  }
+  return hasStoreIdCol;
+};
 
 /**
  * Fetch list of coupons with pagination and filtering
@@ -6,11 +19,25 @@ const { pool } = require('../config/database');
 const getCoupons = async ({
   search,
   active,
+  store_id = null,
   limit = 50,
   offset = 0
 } = {}) => {
+  const hasStoreId = await checkHasStoreId();
   const conditions = [];
   const params = [];
+
+  if (hasStoreId && store_id !== null && store_id !== undefined && String(store_id).trim() !== '') {
+    const sId = parseInt(store_id, 10);
+    if (!isNaN(sId)) {
+      if (sId === 1) {
+        conditions.push('(c.store_id = 1 OR c.store_id IS NULL)');
+      } else {
+        conditions.push('c.store_id = ?');
+        params.push(sId);
+      }
+    }
+  }
 
   if (active !== undefined && active !== null && active !== '') {
     conditions.push('c.active = ?');
@@ -36,6 +63,7 @@ const getCoupons = async ({
   const query = `
     SELECT 
       c.id,
+      ${hasStoreId ? 'COALESCE(c.store_id, 1) AS store_id,' : '1 AS store_id,'}
       c.code,
       c.discount_type,
       c.discount_value,
@@ -82,15 +110,31 @@ const getCoupons = async ({
 /**
  * Fetch a single coupon by numeric BIGINT ID or uppercase code string, including recent redemption usages
  */
-const getCouponById = async (couponIdOrCode) => {
+const getCouponById = async (couponIdOrCode, store_id = null) => {
   if (!couponIdOrCode) return null;
 
   const numId = parseInt(couponIdOrCode, 10);
   const isNumeric = !isNaN(numId) && String(numId) === String(couponIdOrCode);
+  const hasStoreId = await checkHasStoreId();
+
+  const params = [isNumeric ? numId : String(couponIdOrCode).trim().toUpperCase()];
+  let storeCond = '';
+  if (hasStoreId && store_id !== null && store_id !== undefined && String(store_id).trim() !== '') {
+    const sId = parseInt(store_id, 10);
+    if (!isNaN(sId)) {
+      if (sId === 1) {
+        storeCond = ' AND (c.store_id = 1 OR c.store_id IS NULL)';
+      } else {
+        storeCond = ' AND c.store_id = ?';
+        params.push(sId);
+      }
+    }
+  }
 
   const couponQuery = `
     SELECT 
       c.id,
+      ${hasStoreId ? 'COALESCE(c.store_id, 1) AS store_id,' : '1 AS store_id,'}
       c.code,
       c.discount_type,
       c.discount_value,
@@ -104,12 +148,11 @@ const getCouponById = async (couponIdOrCode) => {
       c.created_at,
       c.updated_at
     FROM coupons c
-    WHERE ${isNumeric ? 'c.id = ?' : 'UPPER(c.code) = ?'}
+    WHERE (${isNumeric ? 'c.id = ?' : 'UPPER(c.code) = ?'})${storeCond}
     LIMIT 1
   `;
 
-  const param = isNumeric ? numId : String(couponIdOrCode).trim().toUpperCase();
-  const [couponRows] = await pool.execute(couponQuery, [param]);
+  const [couponRows] = await pool.execute(couponQuery, params);
 
   if (!couponRows || couponRows.length === 0) {
     return null;
@@ -169,8 +212,12 @@ const createCoupon = async (couponData) => {
     start_date = null,
     end_date = null,
     usage_limit = null,
-    active = 1
+    active = 1,
+    store_id = 1
   } = couponData;
+
+  const hasStoreId = await checkHasStoreId();
+  const activeStoreId = parseInt(store_id, 10) === 2 ? 2 : 1;
 
   if (!code || typeof code !== 'string' || !code.trim()) {
     throw new Error('Coupon code is required');
@@ -213,18 +260,43 @@ const createCoupon = async (couponData) => {
   }
 
   // Check code uniqueness case-insensitively
-  const [dupRows] = await pool.execute('SELECT id FROM coupons WHERE UPPER(code) = ? LIMIT 1', [normalizedCode]);
+  // When MARSHANS_HYBRID_CATALOG_ENABLED is true, scope uniqueness check to store_id.
+  // Otherwise (default), maintain existing global code uniqueness check.
+  const isHybrid = isMarshansHybridCatalogEnabled();
+  const dupQuery = (isHybrid && hasStoreId)
+    ? 'SELECT id FROM coupons WHERE UPPER(code) = ? AND store_id = ? LIMIT 1'
+    : 'SELECT id FROM coupons WHERE UPPER(code) = ? LIMIT 1';
+  const dupParams = (isHybrid && hasStoreId)
+    ? [normalizedCode, activeStoreId]
+    : [normalizedCode];
+
+  const [dupRows] = await pool.execute(dupQuery, dupParams);
   if (dupRows.length > 0) {
     throw new Error(`A coupon with code '${normalizedCode}' already exists.`);
   }
 
-  const query = `
+  const query = hasStoreId ? `
+    INSERT INTO coupons (
+      code, store_id, discount_type, discount_value, min_order_value, max_discount_amount, start_date, end_date, usage_limit, active
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  ` : `
     INSERT INTO coupons (
       code, discount_type, discount_value, min_order_value, max_discount_amount, start_date, end_date, usage_limit, active
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `;
 
-  const params = [
+  const params = hasStoreId ? [
+    normalizedCode,
+    activeStoreId,
+    type,
+    parsedVal,
+    parseInt(min_order_value, 10) || 0,
+    max_discount_amount !== null && max_discount_amount !== undefined ? (parseInt(max_discount_amount, 10) || null) : null,
+    safeStartDate,
+    safeEndDate,
+    usage_limit !== null && usage_limit !== undefined ? (parseInt(usage_limit, 10) || null) : null,
+    active ? 1 : 0
+  ] : [
     normalizedCode,
     type,
     parsedVal,
@@ -237,22 +309,24 @@ const createCoupon = async (couponData) => {
   ];
 
   const [result] = await pool.execute(query, params);
-  return getCouponById(result.insertId);
+  return getCouponById(result.insertId, activeStoreId);
 };
 
 /**
  * Update an existing coupon code in MySQL
  */
-const updateCoupon = async (id, couponData) => {
+const updateCoupon = async (id, couponData, store_id = null) => {
   const numId = parseInt(id, 10);
   if (isNaN(numId)) {
     throw new Error('Invalid coupon ID format.');
   }
 
-  const existing = await getCouponById(numId);
+  const existing = await getCouponById(numId, store_id);
   if (!existing) {
     return null;
   }
+
+  const hasStoreId = await checkHasStoreId();
 
   const {
     code,
@@ -274,7 +348,16 @@ const updateCoupon = async (id, couponData) => {
       throw new Error('Coupon code cannot be empty');
     }
     const normalizedCode = code.trim().toUpperCase();
-    const [dupRows] = await pool.execute('SELECT id FROM coupons WHERE UPPER(code) = ? AND id != ? LIMIT 1', [normalizedCode, numId]);
+    const isHybrid = isMarshansHybridCatalogEnabled();
+    const effectiveStoreId = store_id || existing.store_id || 1;
+    const dupQuery = (isHybrid && hasStoreId)
+      ? 'SELECT id FROM coupons WHERE UPPER(code) = ? AND store_id = ? AND id != ? LIMIT 1'
+      : 'SELECT id FROM coupons WHERE UPPER(code) = ? AND id != ? LIMIT 1';
+    const dupParams = (isHybrid && hasStoreId)
+      ? [normalizedCode, effectiveStoreId, numId]
+      : [normalizedCode, numId];
+
+    const [dupRows] = await pool.execute(dupQuery, dupParams);
     if (dupRows.length > 0) {
       throw new Error(`A coupon with code '${normalizedCode}' already exists.`);
     }
@@ -360,16 +443,21 @@ const updateCoupon = async (id, couponData) => {
     await pool.execute(query, params);
   }
 
-  return getCouponById(numId);
+  return getCouponById(numId, store_id);
 };
 
 /**
  * Soft deactivate a coupon (preserves coupon_usage historical redemption records)
  */
-const deleteCoupon = async (id) => {
+const deleteCoupon = async (id, store_id = null) => {
   const numId = parseInt(id, 10);
   if (isNaN(numId)) {
     throw new Error('Invalid coupon ID format.');
+  }
+
+  const existing = await getCouponById(numId, store_id);
+  if (!existing) {
+    return false;
   }
 
   const [result] = await pool.execute('UPDATE coupons SET active = 0 WHERE id = ?', [numId]);
@@ -379,13 +467,13 @@ const deleteCoupon = async (id) => {
 /**
  * Validate coupon code against subtotal for customer checkout
  */
-const validateCoupon = async (code, subtotalPaise = 0) => {
+const validateCoupon = async (code, subtotalPaise = 0, store_id = null) => {
   if (!code || typeof code !== 'string' || !code.trim()) {
     return { valid: false, message: 'Coupon code is required.' };
   }
 
   const normalizedCode = code.trim().toUpperCase();
-  const coupon = await getCouponById(normalizedCode);
+  const coupon = await getCouponById(normalizedCode, store_id);
 
   if (!coupon || !coupon.active) {
     return { valid: false, message: 'Invalid or inactive coupon code.' };
@@ -454,3 +542,4 @@ module.exports = {
   deleteCoupon,
   validateCoupon
 };
+
