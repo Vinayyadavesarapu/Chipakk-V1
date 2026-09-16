@@ -26,8 +26,27 @@
             font-family: system-ui, -apple-system, sans-serif;
         }
 
+        .form-hint {
+            display: block;
+            font-size: 0.74rem;
+            color: #555;
+            margin-top: 3px;
+            line-height: 1.35;
+            font-weight: normal;
+        }
+
+        .help-callout {
+            background: #eef2ff;
+            border-left: 3px solid #6366f1;
+            padding: 8px 12px;
+            margin-bottom: 14px;
+            font-size: 0.8rem;
+            color: #3730a3;
+            border-radius: 2px;
+            line-height: 1.4;
+        }
+        
         .nav-category-header {
-            font-size: 0.65rem;
             font-weight: 900;
             letter-spacing: 1px;
             color: #777;
@@ -679,6 +698,9 @@
                 <button type="button" id="switch-store-marshans" class="retro-btn" data-store-id="2" style="padding: 6px 16px; font-weight: 900; font-size: 0.82rem; cursor: pointer; border: 2px solid #000; background: #fff; color: #000;">
                     [ THE MARSHANS ]
                 </button>
+                <small style="display: block; width: 100%; font-size: 0.75rem; color: #666; margin-top: 2px;">
+                    ⓘ Selects which storefront catalog, categories, orders, and settings you are actively managing. CHIPAKK (Store 1) and THE MARSHANS (Store 2) maintain completely independent catalogs.
+                </small>
             </div>
 
             <!-- TAB 1: DASHBOARD -->
@@ -910,34 +932,49 @@
                                 <label for="prod-sku">SKU <small style="color: #666; font-weight: normal;">(Stock Keeping Unit)</small></label>
                                 <input type="text" id="prod-sku" class="retro-input"
                                     placeholder="e.g. SKU-MRSH-101">
+                                <small class="form-hint">Unique code used to identify and track this product or variant in inventory. Example: CK-ANI-001</small>
                             </div>
                             <div class="retro-field">
                                 <label for="prod-title">Product Name <span style="color:red;">*</span></label>
                                 <input type="text" id="prod-title" class="retro-input"
                                     placeholder="e.g. Cyberpunk Glitch Sticker" required>
+                                <small class="form-hint">The name customers will see on the storefront.</small>
                             </div>
                             <div class="retro-field">
                                 <label for="prod-desc">Full Description</label>
                                 <textarea id="prod-desc" class="retro-input" rows="3"
                                     placeholder="Detailed product specifications, usage instructions, and background..."></textarea>
+                                <small class="form-hint">Product information shown to customers. Use this to describe features, materials, size, and usage.</small>
                             </div>
                             <div class="retro-field">
                                 <label for="prod-price">Price (₹) <span style="color:red;">*</span></label>
                                 <input type="number" id="prod-price" class="retro-input" placeholder="199" required
                                     min="0">
+                                <small class="form-hint">The selling price customers pay for this product in whole rupees (₹). Example: 15 for ₹15 or 1500 for ₹1,500.</small>
+                            </div>
+                            <div class="retro-field">
+                                <label for="prod-compare-at-price">Compare-at Price (₹) <small style="color: #666; font-weight: normal;">(Original / Strikethrough price)</small></label>
+                                <input type="number" id="prod-compare-at-price" class="retro-input" placeholder="299"
+                                    min="0">
+                                <small class="form-hint">Optional original/reference price shown as strikethrough to indicate a discount. Example: ₹499 when selling price is ₹349.</small>
                             </div>
                             <div class="retro-field">
                                 <label for="prod-category">Category <span style="color:red;">*</span></label>
                                 <select id="prod-category" class="retro-input"></select>
+                                <small class="form-hint">Groups the product into a category on the storefront.</small>
                             </div>
                             <div class="retro-field">
                                 <label for="prod-tags">Search Tags</label>
                                 <input type="text" id="prod-tags" class="retro-input"
                                     placeholder="comma, separated, tags">
+                                <small class="form-hint">Comma-separated keywords to help customers find this product via storefront search.</small>
                             </div>
-                            <div class="retro-field" style="display: flex; align-items: center; gap: 8px; margin: 12px 0 6px 0; background: #fffbe6; border: 1.5px solid #ffe58f; padding: 8px 10px; border-radius: 4px;">
-                                <input type="checkbox" id="prod-is-best-seller" style="width: 18px; height: 18px; cursor: pointer;">
-                                <label for="prod-is-best-seller" style="margin: 0; cursor: pointer; font-weight: bold; font-size: 0.85rem; color: #ad6800;">🌟 Best Seller (Featured on Storefront Showcase)</label>
+                            <div class="retro-field" style="display: flex; flex-direction: column; gap: 4px; margin: 12px 0 6px 0; background: #fffbe6; border: 1.5px solid #ffe58f; padding: 8px 10px; border-radius: 4px;">
+                                <div style="display: flex; align-items: center; gap: 8px;">
+                                    <input type="checkbox" id="prod-is-best-seller" style="width: 18px; height: 18px; cursor: pointer;">
+                                    <label for="prod-is-best-seller" style="margin: 0; cursor: pointer; font-weight: bold; font-size: 0.85rem; color: #ad6800;">🌟 Best Seller (Featured on Storefront Showcase)</label>
+                                </div>
+                                <small class="form-hint" style="color: #8c5300; margin: 0 0 0 26px;">Marks this product as a Best Seller. This is a product label/showcase filter, not a category.</small>
                             </div>
                         </div>
 
@@ -985,6 +1022,7 @@
                                 <div class="retro-field" id="prod-generic-360-container">
                                     <label for="prod-360-url">360° View Asset URL <small style="color: #666; font-weight: normal;">(Optional interactive 360 viewer link)</small></label>
                                     <input type="text" id="prod-360-url" class="retro-input" placeholder="https://.../360-viewer or interactive iframe link">
+                                    <small class="form-hint">Optional interactive 360° product view. Use only when a valid 360° asset or iframe link is available.</small>
                                 </div>
 
                                 <!-- LUMO Experience Assets (Light + Dark Mode) -->
@@ -1012,6 +1050,7 @@
                                                     <button type="button" class="retro-btn" id="prod-lumo-light-upload-btn" style="padding: 4px 8px; font-size: 0.7rem; white-space: nowrap; background: #e2e8f0; color: #0f172a; border-color: #94a3b8;">UPLOAD</button>
                                                 </div>
                                                 <input type="file" id="prod-lumo-light-file" accept="image/*" style="display: none;">
+                                                <small class="form-hint" style="color: #64748b;">Product image used for the Light (daytime / unlit) appearance.</small>
                                                 <div id="prod-lumo-light-preview-wrap" style="margin-top: 6px; display: none; text-align: center; background: #f1f5f9; padding: 4px; border: 1px dashed #cbd5e1; border-radius: 3px;">
                                                     <img id="prod-lumo-light-preview" src="" alt="Light Mode Preview" style="max-height: 80px; max-width: 100%; object-fit: contain;">
                                                 </div>
@@ -1019,6 +1058,7 @@
                                             <div class="retro-field" style="margin-bottom: 0;">
                                                 <label for="prod-lumo-light-360" style="color: #1e293b; font-size: 0.73rem; font-weight: bold;">Light Mode 360° View URL <small style="color: #64748b; font-weight: normal;">(Optional)</small></label>
                                                 <input type="text" id="prod-lumo-light-360" class="retro-input" placeholder="https://.../light-360" style="font-size: 0.75rem; background: #f8fafc; color: #0f172a; border-color: #94a3b8;">
+                                                <small class="form-hint" style="color: #64748b;">Optional 360° view for the Light appearance.</small>
                                             </div>
                                         </div>
 
@@ -1034,6 +1074,7 @@
                                                     <button type="button" class="retro-btn" id="prod-lumo-dark-upload-btn" style="padding: 4px 8px; font-size: 0.7rem; white-space: nowrap; background: #131b2e; color: #00e5ff; border-color: #00e5ff;">UPLOAD</button>
                                                 </div>
                                                 <input type="file" id="prod-lumo-dark-file" accept="image/*" style="display: none;">
+                                                <small class="form-hint" style="color: #94a3b8;">Product image used for the Dark (nighttime / illuminated glow) appearance.</small>
                                                 <div id="prod-lumo-dark-preview-wrap" style="margin-top: 6px; display: none; text-align: center; background: #040810; padding: 4px; border: 1px dashed #00e5ff; border-radius: 3px;">
                                                     <img id="prod-lumo-dark-preview" src="" alt="Dark Mode Preview" style="max-height: 80px; max-width: 100%; object-fit: contain; filter: drop-shadow(0 0 6px rgba(0, 229, 255, 0.6));">
                                                 </div>
@@ -1041,6 +1082,7 @@
                                             <div class="retro-field" style="margin-bottom: 0;">
                                                 <label for="prod-lumo-dark-360" style="color: #e2e8f0; font-size: 0.73rem; font-weight: bold;">Dark Mode 360° View URL <small style="color: #94a3b8; font-weight: normal;">(Optional)</small></label>
                                                 <input type="text" id="prod-lumo-dark-360" class="retro-input" placeholder="https://.../dark-360" style="font-size: 0.75rem; background: #131b2e; color: #f8fafc; border-color: #334155;">
+                                                <small class="form-hint" style="color: #94a3b8;">Optional 360° view for the Dark appearance.</small>
                                             </div>
                                         </div>
                                     </div>
@@ -1053,12 +1095,14 @@
                                     <option value="true">Active (Available to Order)</option>
                                     <option value="false">Inactive (Disabled / Off)</option>
                                 </select>
+                                <small class="form-hint">Controls whether this product is available and purchasable on the storefront.</small>
                             </div>
 
                             <!-- Image Management Component -->
                             <div class="retro-field">
                                 <label>Product Images <span style="color:red;">* (At least 1 image
                                         required)</span></label>
+                                <small class="form-hint" style="margin-bottom: 6px;">Upload WebP, PNG, or JPEG product images. The image marked PRIMARY is the default image across the storefront; additional images appear in the customer gallery. Removing an image only deletes that image asset, not the product.</small>
                                 <div style="display: flex; gap: 8px;">
                                     <input type="text" id="prod-image-url" class="retro-input"
                                         placeholder="Paste image URL (HTTPS / Data URI)" style="font-size: 0.8rem;">
@@ -1118,6 +1162,10 @@
                     <button class="retro-btn retro-btn-primary" id="new-cat-btn">+ ADD CATEGORY</button>
                 </div>
 
+                <div class="help-callout">
+                    💡 <strong>Category Architecture Note:</strong> "Best Seller" is a product attribute/showcase filter, not a category. To feature an item as a Best Seller, edit the product and check the 🌟 Best Seller box.
+                </div>
+
                 <!-- Category Form Container -->
                 <div id="category-form-container" class="retro-panel"
                     style="background-color: #fff; max-width: 800px; width: 100%; margin-bottom: 30px; display: none;">
@@ -1127,15 +1175,18 @@
                             <label for="cat-name">Category Name <span style="color:red;">*</span></label>
                             <input type="text" id="cat-name" class="retro-input" placeholder="e.g. Gaming, Memes"
                                 required>
+                            <small class="form-hint">Name used to organize products and display navigation links on the storefront.</small>
                         </div>
                         <div class="retro-field">
                             <label for="cat-slug">URL Slug</label>
                             <input type="text" id="cat-slug" class="retro-input" placeholder="e.g. gaming">
+                            <small class="form-hint">URL-friendly identifier for the category. Example: anime</small>
                         </div>
                     </div>
                     <div class="retro-field">
                         <label for="cat-desc">Description</label>
                         <input type="text" id="cat-desc" class="retro-input" placeholder="Short sector description">
+                        <small class="form-hint">Short category summary displayed on category headers and previews.</small>
                     </div>
                     <div class="retro-field">
                         <label for="cat-image">Category Banner / Thumbnail Image (URL or Upload)</label>
@@ -1146,6 +1197,7 @@
                                 style="padding: 4px 10px; font-size: 0.75rem; white-space: nowrap;">UPLOAD</button>
                             <input type="file" id="cat-image-file" accept="image/*" style="display: none;">
                         </div>
+                        <small class="form-hint">Image representing this category card on the customer storefront.</small>
                         <div id="cat-image-preview-box" style="margin-top: 6px; display: none;">
                             <img id="cat-image-preview-img" src=""
                                 style="height: 48px; border: 1px solid #000; border-radius: 4px; object-fit: cover;">
@@ -1332,16 +1384,19 @@
                         <div class="retro-field">
                             <label for="mat-cost-per-unit">Cost Per Unit (₹) <span style="color:red;">*</span></label>
                             <input type="number" id="mat-cost-per-unit" class="retro-input" value="2.5" min="0" step="any" required>
+                            <small class="form-hint">Cost per gram or unit used to compute dynamic 3D print pricing.</small>
                         </div>
                         <div class="retro-field">
                             <label for="mat-density">Density (g/cm³)</label>
                             <input type="number" id="mat-density" class="retro-input" value="1.24" min="0" step="0.01">
+                            <small class="form-hint">Material density for slicing weight estimates (PLA ≈ 1.24, PETG ≈ 1.27, ABS ≈ 1.04).</small>
                         </div>
                     </div>
                     <div class="admin-grid-2col" style="gap: 15px;">
                         <div class="retro-field">
                             <label for="mat-min-threshold">Low-Stock Alert Threshold</label>
                             <input type="number" id="mat-min-threshold" class="retro-input" value="500" min="0" step="any">
+                            <small class="form-hint">Triggers inventory warnings when remaining stock falls below this quantity.</small>
                         </div>
                         <div class="retro-field">
                             <label for="mat-active">Status</label>
@@ -1349,6 +1404,7 @@
                                 <option value="true">Active (In Stock & Available)</option>
                                 <option value="false">Inactive / Discontinued</option>
                             </select>
+                            <small class="form-hint">Controls whether this material option is selectable by customers on the storefront.</small>
                         </div>
                     </div>
                     <div style="display: flex; gap: 10px; margin-top: 15px;">
@@ -1670,8 +1726,9 @@
 
             <!-- TAB: REVIEWS -->
             <section id="tab-reviews" class="tab-content" style="display: none;">
-                <h2 style="font-weight: 900; margin-bottom: 25px; text-transform: uppercase;">Customer Reviews
+                <h2 style="font-weight: 900; margin-bottom: 6px; text-transform: uppercase;">Customer Reviews
                     Moderation</h2>
+                <p style="font-size: 0.85rem; color: #555; margin: 0 0 20px 0;">Moderate customer product ratings and reviews. Approved reviews are displayed publicly on the storefront product detail page.</p>
                 <div class="admin-table-container">
                     <table class="admin-table">
                         <thead>
@@ -1785,11 +1842,13 @@
                                 <label for="evt-name">Event Name <span style="color:red;">*</span></label>
                                 <input type="text" id="evt-name" class="retro-input" required
                                     placeholder="e.g. Diwali Flash Sale">
+                                <small class="form-hint">Internal promotion title used to manage this campaign.</small>
                             </div>
                             <div class="retro-field">
                                 <label for="evt-title">Banner Subtitle / Title</label>
                                 <input type="text" id="evt-title" class="retro-input"
                                     placeholder="e.g. 20% OFF All Anime & Gaming Stickers">
+                                <small class="form-hint">Promotional headline displayed on the customer storefront banner.</small>
                             </div>
                             <div class="retro-field">
                                 <label for="evt-discount-type">Discount Type <span style="color:red;">*</span></label>
@@ -1802,6 +1861,7 @@
                                 <label for="evt-discount-value">Discount Value <span style="color:red;">*</span></label>
                                 <input type="number" id="evt-discount-value" class="retro-input" value="20" required
                                     min="1">
+                                <small class="form-hint">The discount percentage or fixed amount applied to eligible event items.</small>
                             </div>
                             <div class="retro-field">
                                 <label for="evt-active">Event Active Switch <span style="color:red;">*</span></label>
@@ -1809,6 +1869,7 @@
                                     <option value="true">ON (Follows Scheduled Time)</option>
                                     <option value="false">OFF (Disabled / Suspended)</option>
                                 </select>
+                                <small class="form-hint">Controls whether this event is active during its scheduled start and end window.</small>
                             </div>
                             <div class="retro-field">
                                 <label for="evt-storefront-hero">Show Storefront Hero Promotion Banner</label>
@@ -1816,6 +1877,7 @@
                                     <option value="true">Yes (Promote on Storefront)</option>
                                     <option value="false">No (Silent Discount)</option>
                                 </select>
+                                <small class="form-hint">When enabled, renders a prominent promotional hero banner on the customer homepage.</small>
                             </div>
                         </div>
 
@@ -1823,10 +1885,12 @@
                             <div class="retro-field">
                                 <label for="evt-start">Start Time <span style="color:red;">*</span></label>
                                 <input type="datetime-local" id="evt-start" class="retro-input" required>
+                                <small class="form-hint">When the promotional event and discount become active.</small>
                             </div>
                             <div class="retro-field">
                                 <label for="evt-end">End Time <span style="color:red;">*</span></label>
                                 <input type="datetime-local" id="evt-end" class="retro-input" required>
+                                <small class="form-hint">When the promotional event expires.</small>
                             </div>
 
                             <div class="retro-field">
@@ -1900,6 +1964,7 @@
                                 <label for="cpn-code">Coupon Code <span style="color:red;">*</span></label>
                                 <input type="text" id="cpn-code" class="retro-input" placeholder="e.g. EXTRA20"
                                     required>
+                                <small class="form-hint">Code customers enter during checkout. Example: SAVE10</small>
                             </div>
                             <div class="retro-field">
                                 <label for="cpn-type">Discount Type</label>
@@ -1907,16 +1972,19 @@
                                     <option value="percent">Percentage (%)</option>
                                     <option value="fixed">Fixed Amount (₹)</option>
                                 </select>
+                                <small class="form-hint">Determines whether the discount is a percentage or fixed amount.</small>
                             </div>
                             <div class="retro-field">
                                 <label for="cpn-amount">Discount Value <span style="color:red;">*</span></label>
                                 <input type="number" id="cpn-amount" class="retro-input" required min="1">
+                                <small class="form-hint">The amount (₹) or percentage (%) deducted from the eligible order.</small>
                             </div>
                         </div>
                         <div>
                             <div class="retro-field">
                                 <label for="cpn-min">Minimum Order Required (₹)</label>
                                 <input type="number" id="cpn-min" class="retro-input" value="0">
+                                <small class="form-hint">Minimum cart/order value required before the coupon can be applied.</small>
                             </div>
                             <div class="retro-field">
                                 <label for="cpn-active">Enable Coupon</label>
@@ -1924,6 +1992,7 @@
                                     <option value="true">Active (On)</option>
                                     <option value="false">Inactive (Off)</option>
                                 </select>
+                                <small class="form-hint">Controls whether this coupon is currently redeemable by customers.</small>
                             </div>
                             <div style="display: flex; gap: 15px; margin-top: 45px;">
                                 <button class="retro-btn retro-btn-primary" id="save-coupon-btn">SAVE COUPON</button>
@@ -2100,6 +2169,7 @@
                         <div class="retro-field">
                             <label for="set-shipping-fee">Standard Flat Delivery Fee (₹) <span style="color:red;">*</span></label>
                             <input type="number" id="set-shipping-fee" class="retro-input" value="50" min="0">
+                            <small class="form-hint">The delivery fee charged when an order does not qualify for free shipping. For CHIPAKK, this is ₹50.</small>
                         </div>
                         <div class="retro-field">
                             <label for="set-free-shipping-enabled">Free Delivery Policy</label>
@@ -2107,11 +2177,13 @@
                                 <option value="true">ENABLED (Free delivery above threshold)</option>
                                 <option value="false">DISABLED (Flat fee applies to all orders)</option>
                             </select>
+                            <small class="form-hint">Controls whether orders meeting the minimum order amount qualify for free delivery.</small>
                         </div>
                     </div>
                     <div class="retro-field" id="set-free-shipping-threshold-field">
                         <label for="set-free-shipping-threshold">Free Delivery Order Threshold (₹)</label>
                         <input type="number" id="set-free-shipping-threshold" class="retro-input" value="499" min="0">
+                        <small class="form-hint">Orders at or above this amount qualify for free delivery. For CHIPAKK: Orders below ₹300 → ₹50 shipping; Orders ₹300 or above → Free delivery.</small>
                     </div>
                     <div id="set-free-shipping-note" style="display: none; padding: 10px; background: #fee2e2; border: 1.5px solid #ef4444; font-size: 0.8rem; font-weight: bold; color: #991b1b; margin-bottom: 12px;">
                         ⚠️ Free delivery is disabled for THE MARSHANS heavy 3D manufactured goods. Standard shipping fees apply to all orders.
@@ -2129,6 +2201,7 @@
                         <label for="ship-name">Rule Name <span style="color:red;">*</span></label>
                         <input type="text" id="ship-name" class="retro-input" placeholder="e.g. Express Metro Shipping"
                             required>
+                        <small class="form-hint">Descriptive name for this shipping option shown during checkout (e.g. Express Delivery).</small>
                     </div>
                     <div class="admin-grid-2col" style="gap: 15px;">
                         <div class="retro-field">
@@ -2263,7 +2336,9 @@
                     <div class="retro-field"><label>Member Name</label><input type="text" id="team-name"
                             class="retro-input" required></div>
                     <div class="retro-field"><label>Email Address</label><input type="email" id="team-email"
-                            class="retro-input" required></div>
+                            class="retro-input" placeholder="admin@chipakk.shop" required>
+                        <small class="form-hint">Email address used by the team member to log in to Admin Console.</small>
+                    </div>
                     <div class="retro-field">
                         <label>Role</label>
                         <select id="team-role" class="retro-input">
@@ -2271,6 +2346,7 @@
                             <option value="CONTENT MANAGER">CONTENT MANAGER</option>
                             <option value="STAFF">STAFF</option>
                         </select>
+                        <small class="form-hint">ADMIN: Full console access & settings. CONTENT: Products & reviews. STAFF: Orders & print queue.</small>
                     </div>
                     <div style="display: flex; gap: 10px; margin-top: 15px;">
                         <button class="retro-btn retro-btn-primary" id="save-team-btn">SAVE TEAM MEMBER</button>
@@ -2347,20 +2423,20 @@
                     <div class="retro-panel" style="background-color: #fff; display: flex; flex-direction: column;">
                         <h3 style="margin-bottom: 20px; font-weight: bold;">[BUSINESS & TAX POLICIES]</h3>
                         <div class="retro-field"><label>Store Name</label><input type="text" id="set-store-name"
-                                class="retro-input" value="CHIPAKK Stickers"></div>
+                                class="retro-input" value="CHIPAKK Stickers"><small class="form-hint">The brand name shown across the customer storefront header, emails, and receipts.</small></div>
                         <div class="retro-field"><label>Support Email</label><input type="email" id="set-support-email"
-                                class="retro-input" value="support@chipakk.shop"></div>
+                                class="retro-input" value="support@chipakk.shop"><small class="form-hint">Customer support address displayed in the storefront footer and order confirmation emails.</small></div>
                         <div class="retro-field"><label>Support Phone</label><input type="text" id="set-support-phone"
                                 class="retro-input" value="+91 98765 00000"></div>
                         <div class="retro-field"><label>GSTIN Number <small style="color:#666;">(Internal Business
                                     Setting)</small></label><input type="text" id="set-gstin" class="retro-input"
-                                value="07AAAAA0000A1Z5"></div>
+                                value="07AAAAA0000A1Z5"><small class="form-hint">15-character Goods and Services Tax Identification Number for invoicing and compliance.</small></div>
                         <div class="retro-field"><label>GST Rate (%) <span style="color:red;">*</span></label><input
-                                type="number" id="set-gst-rate" class="retro-input" value="18" min="0" max="100"></div>
+                                type="number" id="set-gst-rate" class="retro-input" value="18" min="0" max="100"><small class="form-hint">Standard GST rate percentage applied to order subtotals (e.g. 18%).</small></div>
                         <div class="retro-field"><label>Currency Symbol</label><input type="text" id="set-currency"
-                                class="retro-input" value="₹ (INR)"></div>
+                                class="retro-input" value="₹ (INR)"><small class="form-hint">Currency symbol displayed alongside prices across the storefront (e.g. ₹ for INR).</small></div>
                         <div class="retro-field"><label>Order ID Prefix</label><input type="text" id="set-order-prefix"
-                                class="retro-input" value="CHP-"></div>
+                                class="retro-input" value="CHP-"><small class="form-hint">Prefix prepended to sequential customer order numbers (e.g. CHP- for CHP-1001).</small></div>
                         <div class="retro-field"><label>Default Rating Benchmark</label><input type="number"
                                 id="set-default-rating" class="retro-input" value="4.7" step="0.1"></div>
                         <div style="margin-top: auto; padding-top: 15px;">
@@ -2382,6 +2458,7 @@
                                 <option value="MAINTENANCE">MAINTENANCE (Scheduled Maintenance)</option>
                                 <option value="TEMPORARILY CLOSED">TEMPORARILY CLOSED</option>
                             </select>
+                            <small class="form-hint">Controls whether the storefront is actively open to traffic, in maintenance mode, or temporarily closed.</small>
                         </div>
 
                         <div class="retro-field">
@@ -2390,6 +2467,7 @@
                                 <option value="false">OFF (Standard Storefront)</option>
                                 <option value="true">ON (Display Maintenance Overlay)</option>
                             </select>
+                            <small class="form-hint">When enabled, displays an overlay informing visitors of scheduled maintenance.</small>
                         </div>
 
                         <div class="retro-field">
@@ -2421,6 +2499,7 @@
                                 <option value="true">ACCEPTING NEW ORDERS</option>
                                 <option value="false">PAUSE NEW ORDERS</option>
                             </select>
+                            <small class="form-hint">Temporarily pause incoming customer orders without taking the website down.</small>
                         </div>
 
                         <div class="retro-field">
@@ -2442,6 +2521,7 @@
                         <div class="retro-field">
                             <label for="set-announcement">Announcement Ticker Text</label>
                             <input type="text" id="set-announcement" class="retro-input" value="WELCOME TO CHIPAKK!">
+                            <small class="form-hint">Top announcement bar text displayed across the storefront to promote sales or announcements.</small>
                         </div>
                         <div class="retro-field">
                             <label for="set-announcement-active">Display Announcement Banner</label>
@@ -2532,7 +2612,9 @@
                         style="font-weight: 900; border-bottom: 1px solid #ddd; padding-bottom: 6px; margin-bottom: 10px;">
                         📋 ORDER OVERVIEW</h4>
                     <div><strong>Order Status:</strong> <select id="ord-detail-status-select" class="retro-input"
-                            style="padding: 2px 6px; font-size: 0.8rem; width: 140px;"></select></div>
+                            style="padding: 2px 6px; font-size: 0.8rem; width: 140px;"></select>
+                        <small class="form-hint" style="margin-top: 4px;">Update order lifecycle state (Pending → Processing → Shipped → Delivered / Cancelled).</small>
+                    </div>
                     <div style="margin-top: 6px;"><strong>Payment Status:</strong> <span id="ord-detail-pay-status"
                             class="status-badge"></span></div>
                     <div style="margin-top: 6px;"><strong>Total Amount:</strong> <strong id="ord-detail-total"
@@ -2592,22 +2674,26 @@
                             <label for="ord-ship-courier">Courier / Shipping Provider</label>
                             <input type="text" id="ord-ship-courier" class="retro-input"
                                 placeholder="e.g. BlueDart, Delhivery, DTDC">
+                            <small class="form-hint">Delivery partner handling parcel transit (e.g. Delhivery, BlueDart, DTDC, India Post).</small>
                         </div>
                         <div class="retro-field">
                             <label for="ord-ship-tracking-no">Tracking / AWB Number</label>
                             <input type="text" id="ord-ship-tracking-no" class="retro-input"
                                 placeholder="e.g. BLU987654321">
+                            <small class="form-hint">Air Waybill (AWB) / consignment code used by customer to track package status.</small>
                         </div>
                     </div>
                     <div>
                         <div class="retro-field">
                             <label for="ord-ship-date">Dispatch / Shipping Date</label>
                             <input type="date" id="ord-ship-date" class="retro-input">
+                            <small class="form-hint">Date when parcel was handed over to the courier partner.</small>
                         </div>
                         <div class="retro-field">
                             <label for="ord-ship-notes">Shipping Notes / Instructions</label>
                             <input type="text" id="ord-ship-notes" class="retro-input"
                                 placeholder="e.g. Packed in bubble mailer">
+                            <small class="form-hint">Internal fulfillment notes (e.g. packaging type, pickup batch; not shown to customer).</small>
                         </div>
                     </div>
                 </div>
