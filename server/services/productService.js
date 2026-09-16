@@ -142,6 +142,7 @@ const getProducts = async ({
     'p.admin_product_id',
     'p.category_id',
     'c.name AS category_name',
+    'c.slug AS category_slug',
     'p.name',
     'p.sku',
     cols.short_description ? 'p.short_description' : 'NULL AS short_description',
@@ -208,8 +209,12 @@ const getProducts = async ({
   const products = rows.map(r => {
     const prodImgs = imagesByProduct[r.id] || [];
     const primaryImg = prodImgs.find(i => i.is_primary) || prodImgs[0];
+    const priceRupees = parseInt(r.price, 10) || 0;
+    const compareAtRupees = r.compare_at_price !== null && r.compare_at_price !== undefined ? (parseInt(r.compare_at_price, 10) || 0) : null;
     return {
       ...r,
+      price: priceRupees,
+      compare_at_price: compareAtRupees,
       images: prodImgs,
       primary_image_url: primaryImg ? primaryImg.image_url : r.primary_image_url,
       primary_storage_path: primaryImg ? primaryImg.storage_path : r.primary_storage_path,
@@ -290,6 +295,15 @@ const getProductById = async (productIdOrAdminId) => {
   const product = prodRows[0];
   const numProductId = product.id;
 
+  const priceRupees = parseInt(product.price, 10) || 0;
+  const compareAtRupees = product.compare_at_price !== null && product.compare_at_price !== undefined ? (parseInt(product.compare_at_price, 10) || 0) : null;
+  product.price = priceRupees;
+  product.price_paise = priceRupees * 100;
+  product.price_rupees = priceRupees;
+  product.compare_at_price = compareAtRupees;
+  product.compare_at_price_paise = compareAtRupees !== null ? compareAtRupees * 100 : null;
+  product.compare_at_price_rupees = compareAtRupees;
+
   product.experience_override = product.experience_override || null;
   product.effective_experience = product.experience_override || 'normal';
   product.is_best_seller = product.is_best_seller === 1;
@@ -332,7 +346,13 @@ const getProductById = async (productIdOrAdminId) => {
     ORDER BY pv.id ASC
   `;
   const [variantRows] = await pool.execute(variantsQuery, [numProductId]);
-  product.variants = variantRows;
+  product.variants = (variantRows || []).map(v => {
+    const vPrice = parseInt(v.price, 10) || 0;
+    return {
+      ...v,
+      price: vPrice
+    };
+  });
 
   const defaultVar = variantRows.find(v => v.variant_slug === 'default') || variantRows[0];
   product.stock = defaultVar ? defaultVar.stock : 0;

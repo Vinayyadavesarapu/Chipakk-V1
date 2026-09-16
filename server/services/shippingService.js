@@ -86,13 +86,14 @@ const getShippingRules = async ({
   const [rows] = await pool.execute(query, queryParams);
 
   const rules = rows.map(r => {
-    const thresholdPaise = parseInt(r.free_shipping_threshold, 10) || 0;
-    const standardFeePaise = parseInt(r.standard_fee, 10) || 0;
+    const isStore2 = parseInt(r.store_id, 10) === 2;
+    const thresholdVal = parseInt(r.free_shipping_threshold, 10) || 0;
+    const standardFeeVal = parseInt(r.standard_fee, 10) || 0;
 
     return {
       ...r,
-      free_shipping_threshold_rupees: Math.round(thresholdPaise / 100),
-      standard_fee_rupees: Math.round(standardFeePaise / 100),
+      free_shipping_threshold_rupees: isStore2 ? Math.round(thresholdVal / 100) : thresholdVal,
+      standard_fee_rupees: isStore2 ? Math.round(standardFeeVal / 100) : standardFeeVal,
       regional_overrides: safeJsonParse(r.regional_overrides, null)
     };
   });
@@ -151,13 +152,14 @@ const getShippingRuleById = async (ruleId, storeId = null) => {
   }
 
   const r = rows[0];
-  const thresholdPaise = parseInt(r.free_shipping_threshold, 10) || 0;
-  const standardFeePaise = parseInt(r.standard_fee, 10) || 0;
+  const isStore2 = parseInt(r.store_id, 10) === 2;
+  const thresholdVal = parseInt(r.free_shipping_threshold, 10) || 0;
+  const standardFeeVal = parseInt(r.standard_fee, 10) || 0;
 
   return {
     ...r,
-    free_shipping_threshold_rupees: Math.round(thresholdPaise / 100),
-    standard_fee_rupees: Math.round(standardFeePaise / 100),
+    free_shipping_threshold_rupees: isStore2 ? Math.round(thresholdVal / 100) : thresholdVal,
+    standard_fee_rupees: isStore2 ? Math.round(standardFeeVal / 100) : standardFeeVal,
     regional_overrides: safeJsonParse(r.regional_overrides, null)
   };
 };
@@ -354,8 +356,8 @@ const calculateShippingFee = async ({ subtotal, region, rule_id, storeId = 1 } =
     rule = {
       id: null,
       name: isMarshans ? 'Default Marshans 3D Shipping' : 'Default Standard Shipping',
-      free_shipping_threshold: isMarshans ? 99999900 : 49900,
-      standard_fee: isMarshans ? 8000 : 5000,
+      free_shipping_threshold: isMarshans ? 99999900 : 499,
+      standard_fee: isMarshans ? 8000 : 50,
       is_enabled: 1,
       regional_overrides: null
     };
@@ -401,15 +403,16 @@ const calculateShippingFee = async ({ subtotal, region, rule_id, storeId = 1 } =
 
   const isFree = parsedSubtotal >= effectiveThreshold;
   const shippingFee = isFree ? 0 : effectiveStandardFee;
+  const isStore2 = activeStoreId === 2;
 
   return {
     subtotal: parsedSubtotal,
-    subtotal_rupees: Math.round(parsedSubtotal / 100),
+    subtotal_rupees: isStore2 ? Math.round(parsedSubtotal / 100) : parsedSubtotal,
     shipping_fee: shippingFee,
-    shipping_fee_rupees: Math.round(shippingFee / 100),
+    shipping_fee_rupees: isStore2 ? Math.round(shippingFee / 100) : shippingFee,
     is_free: isFree,
     free_shipping_threshold: effectiveThreshold,
-    free_shipping_threshold_rupees: Math.round(effectiveThreshold / 100),
+    free_shipping_threshold_rupees: isStore2 ? Math.round(effectiveThreshold / 100) : effectiveThreshold,
     applied_rule: {
       id: rule.id || null,
       name: rule.name || 'Standard Shipping',
@@ -425,13 +428,18 @@ const getStoreShippingConfig = async (storeId = 1) => {
   const settingsService = require('./settingsService');
   const settings = await settingsService.getStoreSettings(storeId);
   const rulesResult = await getShippingRules({ storeId, limit: 20 });
+  const isStore2 = parseInt(storeId, 10) === 2;
+  const defaultFee = isStore2 ? 8000 : 50;
+  const defaultThreshold = isStore2 ? 99999900 : 499;
+  const rawFee = settings.shipping_fee !== undefined ? settings.shipping_fee : defaultFee;
+  const rawThreshold = settings.free_shipping_threshold !== undefined ? settings.free_shipping_threshold : defaultThreshold;
   return {
     store_id: storeId,
-    standard_fee: settings.shipping_fee !== undefined ? settings.shipping_fee : 5000,
-    standard_fee_rupees: Math.round((settings.shipping_fee !== undefined ? settings.shipping_fee : 5000) / 100),
+    standard_fee: rawFee,
+    standard_fee_rupees: isStore2 ? Math.round(rawFee / 100) : rawFee,
     free_shipping_enabled: settings.free_shipping_enabled !== false,
-    free_shipping_threshold: settings.free_shipping_threshold !== undefined ? settings.free_shipping_threshold : 49900,
-    free_shipping_threshold_rupees: Math.round((settings.free_shipping_threshold !== undefined ? settings.free_shipping_threshold : 49900) / 100),
+    free_shipping_threshold: rawThreshold,
+    free_shipping_threshold_rupees: isStore2 ? Math.round(rawThreshold / 100) : rawThreshold,
     rules: rulesResult.rules || []
   };
 };

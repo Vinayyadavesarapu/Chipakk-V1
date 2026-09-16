@@ -84,6 +84,7 @@ const getProductionQueue = async ({
       o.fulfillment_status,
       o.customer_name,
       COALESCE(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, '$.phone')), '') AS customer_phone,
+      COALESCE(o.store_id, 1) AS store_id,
       oi.created_at
     FROM order_items oi
     JOIN orders o ON oi.order_id = o.id
@@ -96,8 +97,11 @@ const getProductionQueue = async ({
   const [rows] = await pool.execute(query, queryParams);
 
   const items = rows.map(r => {
-    const unitPricePaise = parseInt(r.unit_price, 10) || 0;
-    const totalPricePaise = parseInt(r.total_price, 10) || 0;
+    const isStore2 = parseInt(r.store_id, 10) === 2;
+    const rawUnitPrice = parseInt(r.unit_price, 10) || 0;
+    const rawTotalPrice = parseInt(r.total_price, 10) || 0;
+    const unitPriceRupees = isStore2 ? Math.round(rawUnitPrice / 100) : rawUnitPrice;
+    const totalPriceRupees = isStore2 ? Math.round(rawTotalPrice / 100) : rawTotalPrice;
     return {
       order_item_id: r.order_item_id,
       order_id: r.order_id,
@@ -109,10 +113,10 @@ const getProductionQueue = async ({
       admin_product_id_snapshot: r.admin_product_id_snapshot,
       variant_options: safeJsonParse(r.variant_options, null),
       quantity: r.quantity,
-      unit_price: unitPricePaise,
-      unit_price_rupees: Math.round(unitPricePaise / 100),
-      total_price: totalPricePaise,
-      total_price_rupees: Math.round(totalPricePaise / 100),
+      unit_price: unitPriceRupees,
+      unit_price_rupees: unitPriceRupees,
+      total_price: totalPriceRupees,
+      total_price_rupees: totalPriceRupees,
       production_status: r.production_status,
       fulfillment_status: r.fulfillment_status,
       customer_name: r.customer_name,
@@ -156,6 +160,7 @@ const getProductionItemById = async (itemId) => {
       o.fulfillment_status,
       o.customer_name,
       COALESCE(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, '$.phone')), '') AS customer_phone,
+      COALESCE(o.store_id, 1) AS store_id,
       oi.created_at
     FROM order_items oi
     JOIN orders o ON oi.order_id = o.id
@@ -170,8 +175,11 @@ const getProductionItemById = async (itemId) => {
   }
 
   const r = rows[0];
-  const unitPricePaise = parseInt(r.unit_price, 10) || 0;
-  const totalPricePaise = parseInt(r.total_price, 10) || 0;
+  const isStore2 = parseInt(r.store_id, 10) === 2;
+  const rawUnitPrice = parseInt(r.unit_price, 10) || 0;
+  const rawTotalPrice = parseInt(r.total_price, 10) || 0;
+  const unitPriceRupees = isStore2 ? Math.round(rawUnitPrice / 100) : rawUnitPrice;
+  const totalPriceRupees = isStore2 ? Math.round(rawTotalPrice / 100) : rawTotalPrice;
 
   return {
     order_item_id: r.order_item_id,
@@ -184,10 +192,10 @@ const getProductionItemById = async (itemId) => {
     admin_product_id_snapshot: r.admin_product_id_snapshot,
     variant_options: safeJsonParse(r.variant_options, null),
     quantity: r.quantity,
-    unit_price: unitPricePaise,
-    unit_price_rupees: Math.round(unitPricePaise / 100),
-    total_price: totalPricePaise,
-    total_price_rupees: Math.round(totalPricePaise / 100),
+    unit_price: unitPriceRupees,
+    unit_price_rupees: unitPriceRupees,
+    total_price: totalPriceRupees,
+    total_price_rupees: totalPriceRupees,
     production_status: r.production_status,
     fulfillment_status: r.fulfillment_status,
     customer_name: r.customer_name,

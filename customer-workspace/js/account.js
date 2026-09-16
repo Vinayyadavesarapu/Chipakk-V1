@@ -461,12 +461,20 @@
 
           <!-- Items Preview Rail -->
           <div style="display: flex; gap: 10px; margin: 14px 0; overflow-x: auto; padding-bottom: 4px;">
-            ${items.map((item) => `
-              <div style="display: flex; align-items: center; gap: 8px; background: var(--white); border: 1px solid var(--black); border-radius: 6px; padding: 6px 10px; font-size: 12px; font-weight: 600; flex-shrink: 0;">
-                <span style="font-size: 18px;">${typeof item.image === 'string' && item.image.startsWith('http') ? '⚡' : (item.image || '⚡')}</span>
-                <span>${escapeHtml(item.product_title || item.name || 'Sticker')} (x${item.quantity || item.qty || 1})</span>
-              </div>
-            `).join("")}
+            ${items.map((item) => {
+              const rawImg = item.img || item.image_url || item.image;
+              const isImg = typeof rawImg === 'string' && (rawImg.startsWith('http') || rawImg.includes('/') || /\.(png|jpe?g|webp|gif|svg)/i.test(rawImg));
+              const resolved = isImg ? (window.CHIPAKK?.resolveImageUrl ? window.CHIPAKK.resolveImageUrl(rawImg) : rawImg) : null;
+              return `
+                <div style="display: flex; align-items: center; gap: 8px; background: var(--white); border: 1px solid var(--black); border-radius: 6px; padding: 6px 10px; font-size: 12px; font-weight: 600; flex-shrink: 0;">
+                  ${resolved
+                    ? `<img src="${escapeAttr(resolved)}" alt="" style="width: 20px; height: 20px; object-fit: cover; border-radius: 4px; display: block;" />`
+                    : `<span style="font-size: 18px;">${escapeHtml(rawImg || '⚡')}</span>`
+                  }
+                  <span>${escapeHtml(item.product_title || item.name || 'Sticker')} (x${item.quantity || item.qty || 1})</span>
+                </div>
+              `;
+            }).join("")}
           </div>
 
           <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 10px;">
@@ -565,10 +573,16 @@
           const variant = item.variant_name || item.material || "Standard Vinyl";
           const qty = item.quantity || item.qty || 1;
           const price = item.unit_price_inr ?? item.price ?? 0;
+          const rawImg = item.img || item.image_url || item.image;
+          const isImg = typeof rawImg === 'string' && (rawImg.startsWith('http') || rawImg.includes('/') || /\.(png|jpe?g|webp|gif|svg)/i.test(rawImg));
+          const resolved = isImg ? (window.CHIPAKK?.resolveImageUrl ? window.CHIPAKK.resolveImageUrl(rawImg) : rawImg) : null;
           return `
             <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #eee;">
               <div style="display: flex; align-items: center; gap: 10px;">
-                <span style="font-size: 24px;">${typeof item.image === 'string' && item.image.startsWith('http') ? '⚡' : (item.image || '⚡')}</span>
+                ${resolved
+                  ? `<img src="${escapeAttr(resolved)}" alt="" style="width: 28px; height: 28px; object-fit: cover; border-radius: 4px; display: block;" />`
+                  : `<span style="font-size: 24px;">${escapeHtml(rawImg || '⚡')}</span>`
+                }
                 <div>
                   <div style="font-weight: 700; font-size: 13px;">${escapeHtml(title)}</div>
                   <div style="font-size: 11px; color: #666;">${escapeHtml(variant)} • Qty: ${qty}</div>

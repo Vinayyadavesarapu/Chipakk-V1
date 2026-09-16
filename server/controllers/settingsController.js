@@ -14,8 +14,8 @@ const getSettingsHandler = async (req, res, next) => {
     const settings = await settingsService.getStoreSettings(storeId);
 
     // Look up authoritative active shipping rule from shipping_rules table if present
-    let activeShippingThreshold = settings.free_shipping_threshold !== undefined ? settings.free_shipping_threshold : (storeId === 2 ? 0 : 49900);
-    let activeShippingFee = settings.shipping_fee || (storeId === 2 ? 10000 : 5000);
+    let activeShippingThreshold = settings.free_shipping_threshold !== undefined ? settings.free_shipping_threshold : (storeId === 2 ? 0 : 499);
+    let activeShippingFee = settings.shipping_fee || (storeId === 2 ? 10000 : 50);
     let isFreeShippingEnabled = settings.free_shipping_enabled !== undefined ? Boolean(settings.free_shipping_enabled) : (storeId === 1);
 
     // If Store 2 (THE MARSHANS), strictly enforce NO free shipping
@@ -42,8 +42,8 @@ const getSettingsHandler = async (req, res, next) => {
       // Non-blocking fallback
     }
 
-    const freeShippingThresholdRupees = Math.round(activeShippingThreshold / 100);
-    const shippingFeeRupees = Math.round(activeShippingFee / 100);
+    const freeShippingThresholdRupees = storeId === 1 ? Math.round(activeShippingThreshold) : Math.round(activeShippingThreshold / 100);
+    const shippingFeeRupees = storeId === 1 ? Math.round(activeShippingFee) : Math.round(activeShippingFee / 100);
 
     // Filter to expose storefront-safe settings only
     const publicSettings = {
@@ -90,10 +90,10 @@ const getSettingsHandler = async (req, res, next) => {
         order_acceptance: 'ACCEPTING ORDERS',
         gst_pct: 18,
         gst_enabled: true,
-        shipping_fee: isMarshans ? 10000 : 5000,
+        shipping_fee: isMarshans ? 10000 : 50,
         shipping_fee_rupees: isMarshans ? 100 : 50,
         free_shipping_enabled: !isMarshans,
-        free_shipping_threshold: isMarshans ? 0 : 49900,
+        free_shipping_threshold: isMarshans ? 0 : 499,
         free_shipping_threshold_rupees: isMarshans ? 0 : 499,
         free_shipping_calculation: 'after_discounts',
         announcement_text: isMarshans ? 'PRECISION 3D PRINTING & RAPID PROTOTYPING' : 'WELCOME TO CHIPAKK!',
@@ -135,9 +135,9 @@ const getAdminSettingsHandler = async (req, res, next) => {
         store_status: 'OPEN',
         order_acceptance: 'ACCEPTING ORDERS',
         gst_pct: 18,
-        shipping_fee: isMarshans ? 10000 : 5000,
+        shipping_fee: isMarshans ? 10000 : 50,
         free_shipping_enabled: !isMarshans,
-        free_shipping_threshold: isMarshans ? 0 : 49900
+        free_shipping_threshold: isMarshans ? 0 : 499
       }
     }, 'Admin store settings fallback');
   }

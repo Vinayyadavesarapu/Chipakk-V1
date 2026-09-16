@@ -86,7 +86,7 @@ const createProductHandler = async (req, res, next) => {
     }
 
     if (productData.price === undefined || isNaN(Number(productData.price))) {
-      return sendError(res, 'Product price in paise is required', 400);
+      return sendError(res, 'Product price is required', 400);
     }
 
     const effectiveService = getEffectiveProductService(req);

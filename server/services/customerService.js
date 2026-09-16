@@ -106,7 +106,11 @@ const getCustomers = async ({
       u.updated_at,
       COUNT(o.id) AS total_orders,
       COUNT(CASE WHEN o.fulfillment_status = 'DELIVERED' THEN 1 END) AS delivered_orders,
-      COALESCE(SUM(CASE WHEN o.fulfillment_status = 'DELIVERED' THEN o.total_price ELSE 0 END), 0) AS total_spend
+      COALESCE(SUM(CASE 
+        WHEN o.fulfillment_status = 'DELIVERED' THEN 
+          CASE WHEN o.store_id = 2 THEN ROUND(o.total_price / 100) ELSE o.total_price END
+        ELSE 0 
+      END), 0) AS total_spend
     FROM users u
     LEFT JOIN orders o ON u.id = o.customer_id
     ${whereClause}
@@ -121,7 +125,7 @@ const getCustomers = async ({
   const customers = rows.map(r => {
     const totalOrders = parseInt(r.total_orders, 10) || 0;
     const deliveredOrders = parseInt(r.delivered_orders, 10) || 0;
-    const totalSpendPaise = parseInt(r.total_spend, 10) || 0;
+    const rawTotalSpend = parseInt(r.total_spend, 10) || 0;
 
     return {
       id: r.id,
@@ -133,8 +137,8 @@ const getCustomers = async ({
       updated_at: r.updated_at,
       total_orders: totalOrders,
       delivered_orders: deliveredOrders,
-      total_spend: totalSpendPaise,
-      total_spend_rupees: Math.round(totalSpendPaise / 100),
+      total_spend: rawTotalSpend,
+      total_spend_rupees: rawTotalSpend,
       loyalty_tier: calculateLoyaltyTier(deliveredOrders)
     };
   });
@@ -180,12 +184,16 @@ const getCustomerById = async (idOrUid) => {
   const customer = userRows[0];
   const numUserId = customer.id;
 
-  // 1. Fetch aggregated stats for this customer
+  // 1. Fetch aggregated stats for this customer (handling Store 1 rupees and Store 2 paise)
   const statsQuery = `
     SELECT 
       COUNT(id) AS total_orders,
       COUNT(CASE WHEN fulfillment_status = 'DELIVERED' THEN 1 END) AS delivered_orders,
-      COALESCE(SUM(CASE WHEN fulfillment_status = 'DELIVERED' THEN total_price ELSE 0 END), 0) AS total_spend
+      COALESCE(SUM(CASE 
+        WHEN fulfillment_status = 'DELIVERED' THEN 
+          CASE WHEN store_id = 2 THEN ROUND(total_price / 100) ELSE total_price END
+        ELSE 0 
+      END), 0) AS total_spend_rupees
     FROM orders
     WHERE customer_id = ?
   `;
@@ -194,7 +202,7 @@ const getCustomerById = async (idOrUid) => {
 
   const totalOrders = parseInt(statsRow.total_orders, 10) || 0;
   const deliveredOrders = parseInt(statsRow.delivered_orders, 10) || 0;
-  const totalSpendPaise = parseInt(statsRow.total_spend, 10) || 0;
+  const totalSpendRupees = parseInt(statsRow.total_spend_rupees, 10) || 0;
 
   // 2. Fetch order history for this customer
   const ordersQuery = `
@@ -209,6 +217,7 @@ const getCustomerById = async (idOrUid) => {
       shipping_charge AS shipping_fee,
       0 AS tax,
       total_price AS total,
+      COALESCE(store_id, 1) AS store_id,
       courier,
       tracking_no,
       ship_date
@@ -219,10 +228,11 @@ const getCustomerById = async (idOrUid) => {
   const [orderRows] = await pool.execute(ordersQuery, [numUserId]);
 
   const orders = orderRows.map(o => {
-    const subtotalPaise = parseInt(o.subtotal, 10) || 0;
-    const discountPaise = parseInt(o.discount, 10) || 0;
-    const shippingFeePaise = parseInt(o.shipping_fee, 10) || 0;
-    const totalPaise = parseInt(o.total, 10) || 0;
+    const isStore2 = parseInt(o.store_id, 10) === 2;
+    const rawSubtotal = parseInt(o.subtotal, 10) || 0;
+    const rawDiscount = parseInt(o.discount, 10) || 0;
+    const rawShippingFee = parseInt(o.shipping_fee, 10) || 0;
+    const rawTotal = parseInt(o.total, 10) || 0;
 
     return {
       order_id: o.order_id,
@@ -230,16 +240,16 @@ const getCustomerById = async (idOrUid) => {
       created_at: o.created_at,
       fulfillment_status: o.fulfillment_status,
       payment_status: o.payment_status,
-      subtotal: subtotalPaise,
-      subtotal_rupees: Math.round(subtotalPaise / 100),
-      discount: discountPaise,
-      discount_rupees: Math.round(discountPaise / 100),
-      shipping_fee: shippingFeePaise,
-      shipping_fee_rupees: Math.round(shippingFeePaise / 100),
+      subtotal: isStore2 ? Math.round(rawSubtotal / 100) : rawSubtotal,
+      subtotal_rupees: isStore2 ? Math.round(rawSubtotal / 100) : rawSubtotal,
+      discount: isStore2 ? Math.round(rawDiscount / 100) : rawDiscount,
+      discount_rupees: isStore2 ? Math.round(rawDiscount / 100) : rawDiscount,
+      shipping_fee: isStore2 ? Math.round(rawShippingFee / 100) : rawShippingFee,
+      shipping_fee_rupees: isStore2 ? Math.round(rawShippingFee / 100) : rawShippingFee,
       tax: 0,
       tax_rupees: 0,
-      total: totalPaise,
-      total_rupees: Math.round(totalPaise / 100),
+      total: isStore2 ? Math.round(rawTotal / 100) : rawTotal,
+      total_rupees: isStore2 ? Math.round(rawTotal / 100) : rawTotal,
       courier: o.courier || null,
       tracking_no: o.tracking_no || null,
       ship_date: o.ship_date || null
@@ -257,8 +267,8 @@ const getCustomerById = async (idOrUid) => {
     stats: {
       total_orders: totalOrders,
       delivered_orders: deliveredOrders,
-      total_spend: totalSpendPaise,
-      total_spend_rupees: Math.round(totalSpendPaise / 100),
+      total_spend: totalSpendRupees,
+      total_spend_rupees: totalSpendRupees,
       loyalty_tier: calculateLoyaltyTier(deliveredOrders)
     },
     orders

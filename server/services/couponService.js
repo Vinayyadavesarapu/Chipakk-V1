@@ -86,16 +86,17 @@ const getCoupons = async ({
   const [rows] = await pool.execute(query, queryParams);
 
   const coupons = rows.map(r => {
-    const minOrderValPaise = parseInt(r.min_order_value, 10) || 0;
-    const maxDiscountPaise = r.max_discount_amount !== null ? (parseInt(r.max_discount_amount, 10) || 0) : null;
+    const isStore2 = parseInt(r.store_id, 10) === 2;
+    const minOrderVal = parseInt(r.min_order_value, 10) || 0;
+    const maxDiscountVal = r.max_discount_amount !== null ? (parseInt(r.max_discount_amount, 10) || 0) : null;
     const discountVal = parseInt(r.discount_value, 10) || 0;
 
     return {
       ...r,
       code: String(r.code).toUpperCase(),
-      min_order_value_rupees: Math.round(minOrderValPaise / 100),
-      max_discount_amount_rupees: maxDiscountPaise !== null ? Math.round(maxDiscountPaise / 100) : null,
-      discount_value_rupees: r.discount_type === 'fixed' ? Math.round(discountVal / 100) : null
+      min_order_value_rupees: isStore2 ? Math.round(minOrderVal / 100) : minOrderVal,
+      max_discount_amount_rupees: maxDiscountVal !== null ? (isStore2 ? Math.round(maxDiscountVal / 100) : maxDiscountVal) : null,
+      discount_value_rupees: r.discount_type === 'fixed' ? (isStore2 ? Math.round(discountVal / 100) : discountVal) : null
     };
   });
 
@@ -162,13 +163,14 @@ const getCouponById = async (couponIdOrCode, store_id = null) => {
   const numCouponId = coupon.id;
   coupon.code = String(coupon.code).toUpperCase();
 
-  const minOrderValPaise = parseInt(coupon.min_order_value, 10) || 0;
-  const maxDiscountPaise = coupon.max_discount_amount !== null ? (parseInt(coupon.max_discount_amount, 10) || 0) : null;
+  const isStore2 = parseInt(coupon.store_id, 10) === 2;
+  const minOrderVal = parseInt(coupon.min_order_value, 10) || 0;
+  const maxDiscountVal = coupon.max_discount_amount !== null ? (parseInt(coupon.max_discount_amount, 10) || 0) : null;
   const discountVal = parseInt(coupon.discount_value, 10) || 0;
 
-  coupon.min_order_value_rupees = Math.round(minOrderValPaise / 100);
-  coupon.max_discount_amount_rupees = maxDiscountPaise !== null ? Math.round(maxDiscountPaise / 100) : null;
-  coupon.discount_value_rupees = coupon.discount_type === 'fixed' ? Math.round(discountVal / 100) : null;
+  coupon.min_order_value_rupees = isStore2 ? Math.round(minOrderVal / 100) : minOrderVal;
+  coupon.max_discount_amount_rupees = maxDiscountVal !== null ? (isStore2 ? Math.round(maxDiscountVal / 100) : maxDiscountVal) : null;
+  coupon.discount_value_rupees = coupon.discount_type === 'fixed' ? (isStore2 ? Math.round(discountVal / 100) : discountVal) : null;
 
   // Fetch recent usages
   const usageQuery = `
@@ -488,29 +490,34 @@ const validateCoupon = async (code, subtotalPaise = 0, store_id = null) => {
     return { valid: false, message: 'This coupon usage limit has been reached.' };
   }
 
+  const isStore2 = parseInt(store_id || coupon.store_id, 10) === 2;
   const parsedSubtotal = Math.max(parseInt(subtotalPaise, 10) || 0, 0);
-  const minPaise = parseInt(coupon.min_order_value, 10) || 0;
+  const minOrderRequired = parseInt(coupon.min_order_value, 10) || 0;
 
-  if (parsedSubtotal < minPaise) {
-    const minRupees = Math.round(minPaise / 100);
-    return { valid: false, message: `Minimum order value of ₹${minRupees} required for this coupon.` };
+  if (parsedSubtotal < minOrderRequired) {
+    const minDisplay = isStore2 ? Math.round(minOrderRequired / 100) : minOrderRequired;
+    return { valid: false, message: `Minimum order value of ₹${minDisplay} required for this coupon.` };
   }
 
-  let discountPaise = 0;
+  let discountAmount = 0;
   if (coupon.discount_type === 'percent') {
-    discountPaise = Math.round((parsedSubtotal * coupon.discount_value) / 100);
+    discountAmount = Math.round((parsedSubtotal * coupon.discount_value) / 100);
   } else {
-    discountPaise = coupon.discount_value;
+    discountAmount = parseInt(coupon.discount_value, 10) || 0;
   }
 
-  const maxDiscountPaise = coupon.max_discount_amount !== null ? parseInt(coupon.max_discount_amount, 10) : null;
-  if (maxDiscountPaise !== null && discountPaise > maxDiscountPaise) {
-    discountPaise = maxDiscountPaise;
+  const maxDiscount = coupon.max_discount_amount !== null ? parseInt(coupon.max_discount_amount, 10) : null;
+  if (maxDiscount !== null && discountAmount > maxDiscount) {
+    discountAmount = maxDiscount;
   }
 
-  if (discountPaise > parsedSubtotal) {
-    discountPaise = parsedSubtotal;
+  if (discountAmount > parsedSubtotal) {
+    discountAmount = parsedSubtotal;
   }
+
+  const discountRupees = isStore2 ? Math.round(discountAmount / 100) : discountAmount;
+  const discountPaise = isStore2 ? discountAmount : discountAmount * 100;
+  const canonicalDiscount = isStore2 ? Math.round(discountAmount / 100) : discountAmount;
 
   return {
     valid: true,
@@ -520,12 +527,12 @@ const validateCoupon = async (code, subtotalPaise = 0, store_id = null) => {
       code: coupon.code,
       discount_type: coupon.discount_type,
       discount_value: coupon.discount_value,
-      min_order_value: minPaise,
-      min_order_value_rupees: coupon.min_order_value_rupees,
-      max_discount_amount: maxDiscountPaise,
-      max_discount_amount_rupees: coupon.max_discount_amount_rupees,
+      min_order_value: minOrderRequired,
+      max_discount_amount: maxDiscount,
+      discount: canonicalDiscount,
+      discount_amount: canonicalDiscount,
       discount_paise: discountPaise,
-      discount_rupees: Math.round(discountPaise / 100)
+      discount_rupees: discountRupees
     }
   };
 };

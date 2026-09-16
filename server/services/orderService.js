@@ -198,11 +198,19 @@ const getOrders = async ({
   const [rows] = await pool.execute(query, queryParams);
 
   const orders = rows.map(r => {
-    const totalPricePaise = parseInt(r.total_price, 10) || 0;
+    const isStore2 = parseInt(r.store_id, 10) === 2;
+    const rawTotalPrice = parseInt(r.total_price, 10) || 0;
+    const rawSubtotal = parseInt(r.subtotal, 10) || 0;
+    const rawDiscount = parseInt(r.discount_total, 10) || 0;
+    const rawShipping = parseInt(r.shipping_charge, 10) || 0;
+
     return {
       ...r,
       shipping_address: safeJsonParse(r.shipping_address, null),
-      total_price_rupees: Math.round(totalPricePaise / 100)
+      total_price_rupees: isStore2 ? Math.round(rawTotalPrice / 100) : rawTotalPrice,
+      subtotal_rupees: isStore2 ? Math.round(rawSubtotal / 100) : rawSubtotal,
+      discount_total_rupees: isStore2 ? Math.round(rawDiscount / 100) : rawDiscount,
+      shipping_charge_rupees: isStore2 ? Math.round(rawShipping / 100) : rawShipping
     };
   });
 
@@ -277,15 +285,16 @@ const getOrderById = async (orderIdOrNumber, storeId = null) => {
 
   order.shipping_address = safeJsonParse(order.shipping_address, null);
 
-  const totalPricePaise = parseInt(order.total_price, 10) || 0;
-  const subtotalPaise = parseInt(order.subtotal, 10) || 0;
-  const discountPaise = parseInt(order.discount_total, 10) || 0;
-  const shippingPaise = parseInt(order.shipping_charge, 10) || 0;
+  const isStore2 = parseInt(order.store_id, 10) === 2;
+  const rawTotalPrice = parseInt(order.total_price, 10) || 0;
+  const rawSubtotal = parseInt(order.subtotal, 10) || 0;
+  const rawDiscount = parseInt(order.discount_total, 10) || 0;
+  const rawShipping = parseInt(order.shipping_charge, 10) || 0;
 
-  order.total_price_rupees = Math.round(totalPricePaise / 100);
-  order.subtotal_rupees = Math.round(subtotalPaise / 100);
-  order.discount_total_rupees = Math.round(discountPaise / 100);
-  order.shipping_charge_rupees = Math.round(shippingPaise / 100);
+  order.total_price_rupees = isStore2 ? Math.round(rawTotalPrice / 100) : rawTotalPrice;
+  order.subtotal_rupees = isStore2 ? Math.round(rawSubtotal / 100) : rawSubtotal;
+  order.discount_total_rupees = isStore2 ? Math.round(rawDiscount / 100) : rawDiscount;
+  order.shipping_charge_rupees = isStore2 ? Math.round(rawShipping / 100) : rawShipping;
 
   // Fetch Order Items with product image
   const hasMarshansProductCol = await checkHasMarshansOrderCol();
@@ -306,7 +315,7 @@ const getOrderById = async (orderIdOrNumber, storeId = null) => {
       oi.production_status,
       oi.created_at,
       COALESCE(
-        (SELECT image_url FROM product_images WHERE product_id = oi.product_id ORDER BY display_order ASC, id ASC LIMIT 1),
+        (SELECT image_url FROM product_images WHERE product_id = oi.product_id ORDER BY is_primary DESC, sort_order ASC, id ASC LIMIT 1),
         ${hasMarshansProductCol ? '(SELECT image_url FROM marshans_product_images WHERE product_id = oi.marshans_product_id ORDER BY is_primary DESC, sort_order ASC, id ASC LIMIT 1),' : ''}
         NULL
       ) AS product_image
@@ -345,8 +354,8 @@ const getOrderById = async (orderIdOrNumber, storeId = null) => {
     img: item.product_image || null,
     custom_designs: customDesignsByItem[item.id] || [],
     variant_options: safeJsonParse(item.variant_options, null),
-    unit_price_rupees: Math.round((parseInt(item.unit_price, 10) || 0) / 100),
-    total_price_rupees: Math.round((parseInt(item.total_price, 10) || 0) / 100)
+    unit_price_rupees: isStore2 ? Math.round((parseInt(item.unit_price, 10) || 0) / 100) : (parseInt(item.unit_price, 10) || 0),
+    total_price_rupees: isStore2 ? Math.round((parseInt(item.total_price, 10) || 0) / 100) : (parseInt(item.total_price, 10) || 0)
   }));
 
   // Attach status history timeline
@@ -770,7 +779,7 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
       }
 
       validatedCoupon = couponCheck.coupon;
-      discountPaise = validatedCoupon.discount_paise || 0;
+      discountPaise = activeStoreId === 2 ? (validatedCoupon.discount_paise || 0) : (validatedCoupon.discount_rupees !== undefined ? validatedCoupon.discount_rupees : (validatedCoupon.discount_value || 0));
     }
 
     // 6. Server-side shipping fee calculation (store-scoped)
@@ -1050,6 +1059,7 @@ const getCustomerOrders = async (firebaseUid, { limit = 20, offset = 0 } = {}) =
       o.tracking_no,
       o.ship_date,
       o.created_at,
+      COALESCE(o.store_id, 1) AS store_id,
       (SELECT COUNT(*) FROM order_items WHERE order_id = o.id) AS item_count
     FROM orders o
     WHERE o.customer_id = ?
@@ -1060,18 +1070,19 @@ const getCustomerOrders = async (firebaseUid, { limit = 20, offset = 0 } = {}) =
   const [rows] = await pool.execute(query, [customerId, parsedLimit, parsedOffset]);
 
   const orders = rows.map(r => {
-    const totalPricePaise = parseInt(r.total_price, 10) || 0;
-    const subtotalPaise = parseInt(r.subtotal, 10) || 0;
-    const discountPaise = parseInt(r.discount_total, 10) || 0;
-    const shippingPaise = parseInt(r.shipping_charge, 10) || 0;
+    const isStore2 = parseInt(r.store_id, 10) === 2;
+    const rawTotalPrice = parseInt(r.total_price, 10) || 0;
+    const rawSubtotal = parseInt(r.subtotal, 10) || 0;
+    const rawDiscount = parseInt(r.discount_total, 10) || 0;
+    const rawShipping = parseInt(r.shipping_charge, 10) || 0;
 
     return {
       ...r,
       shipping_address: safeJsonParse(r.shipping_address, null),
-      total_price_rupees: Math.round(totalPricePaise / 100),
-      subtotal_rupees: Math.round(subtotalPaise / 100),
-      discount_total_rupees: Math.round(discountPaise / 100),
-      shipping_charge_rupees: Math.round(shippingPaise / 100)
+      total_price_rupees: isStore2 ? Math.round(rawTotalPrice / 100) : rawTotalPrice,
+      subtotal_rupees: isStore2 ? Math.round(rawSubtotal / 100) : rawSubtotal,
+      discount_total_rupees: isStore2 ? Math.round(rawDiscount / 100) : rawDiscount,
+      shipping_charge_rupees: isStore2 ? Math.round(rawShipping / 100) : rawShipping
     };
   });
 

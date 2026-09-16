@@ -103,6 +103,17 @@
 
   const API_BASE = resolveApiBaseUrl();
 
+  function resolveCustomerImageUrl(url) {
+    if (!url || typeof url !== 'string') return '';
+    const trimmed = url.trim();
+    if (!trimmed) return '';
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('data:') || trimmed.startsWith('blob:')) {
+      return trimmed;
+    }
+    const apiOrigin = API_BASE.replace(/\/api\/?$/, '');
+    return trimmed.startsWith('/') ? `${apiOrigin}${trimmed}` : `${apiOrigin}/${trimmed}`;
+  }
+
   function getActiveStoreId() {
     if (typeof window !== 'undefined') {
       const urlParams = new URLSearchParams(window.location.search);
@@ -356,8 +367,30 @@
     const adminProductId = p.admin_product_id || p.sku || id;
     const name = p.name || p.title || "Sticker";
     const slug = p.slug || adminProductId.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-    const price = typeof p.price === "number" ? p.price : (parseFloat(p.price) || 0);
-    const compareAtPrice = p.compare_at_price ? (typeof p.compare_at_price === "number" ? p.compare_at_price : parseFloat(p.compare_at_price)) : (p.compareAtPrice || null);
+
+    // Canonical price handling: For CHIPAKK (Store 1), prices are stored in WHOLE RUPEES (₹1 = DB 1, ₹15 = DB 15).
+    // Storefront operates in whole rupees for display and cart totals.
+    let price;
+    if (p.price_rupees !== undefined && p.price_rupees !== null) {
+      price = Number(p.price_rupees);
+    } else {
+      const rawPrice = typeof p.price === "number" ? p.price : (parseFloat(p.price) || 0);
+      price = Math.round(rawPrice);
+    }
+
+    let compareAtPrice = null;
+    if (p.compare_at_price_rupees !== undefined && p.compare_at_price_rupees !== null) {
+      compareAtPrice = Number(p.compare_at_price_rupees);
+    } else if (p.compare_at_price !== undefined && p.compare_at_price !== null && p.compare_at_price !== '') {
+      const rawComp = typeof p.compare_at_price === "number" ? p.compare_at_price : (parseFloat(p.compare_at_price) || 0);
+      compareAtPrice = Math.round(rawComp);
+    } else if (p.compareAtPrice !== undefined && p.compareAtPrice !== null) {
+      compareAtPrice = typeof p.compareAtPrice === "number" ? p.compareAtPrice : (parseFloat(p.compareAtPrice) || null);
+    }
+
+    const pricePaise = typeof p.price_paise === "number" ? p.price_paise : (typeof p.price === "number" ? p.price : price * 100);
+    const compPricePaise = typeof p.compare_at_price_paise === "number" ? p.compare_at_price_paise : (compareAtPrice !== null ? compareAtPrice * 100 : null);
+
     const rating = typeof p.average_rating === "number" ? p.average_rating : (typeof p.rating === "number" ? p.rating : (parseFloat(p.rating) || 4.7));
     const ratingCount = p.review_count !== undefined ? parseInt(p.review_count, 10) : (p.ratingCount !== undefined ? parseInt(p.ratingCount, 10) : 0);
     const ratingTier = p.rating_tier || getRatingTier(rating);
@@ -367,14 +400,17 @@
     // Image resolution: primary image, images array, or fallback emoji
     let images = [];
     if (Array.isArray(p.images) && p.images.length > 0) {
-      images = p.images.map(img => typeof img === "string" ? img : (img.image_url || img.external_url || img.url || "")).filter(Boolean);
+      images = p.images.map(img => {
+        const rawUrl = typeof img === "string" ? img : (img.image_url || img.external_url || img.url || "");
+        return resolveCustomerImageUrl(rawUrl);
+      }).filter(Boolean);
     } else if (p.primary_image_url) {
-      images = [p.primary_image_url];
+      images = [resolveCustomerImageUrl(p.primary_image_url)];
     } else if (p.image && (p.image.startsWith("http") || p.image.includes("/"))) {
-      images = [p.image];
+      images = [resolveCustomerImageUrl(p.image)];
     }
 
-    const primaryImg = p.primary_image_url || (images.length > 0 ? images[0] : null) || p.image || "⚡";
+    const primaryImg = (images.length > 0 ? images[0] : null) || resolveCustomerImageUrl(p.primary_image_url) || p.image || "⚡";
 
     // Category mapping
     const categoryId = p.category_id !== undefined ? String(p.category_id) : (p.categoryId || "");
@@ -405,7 +441,12 @@
       name,
       slug,
       price,
+      price_rupees: price,
+      price_paise: pricePaise,
       compareAtPrice,
+      compare_at_price: compareAtPrice,
+      compare_at_price_rupees: compareAtPrice,
+      compare_at_price_paise: compPricePaise,
       rating,
       ratingCount,
       rating_tier: ratingTier,
@@ -431,7 +472,8 @@
     const name = c.name || "Category";
     const slug = c.slug || name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
     const active = c.active === 1 || c.active === true || c.active === undefined;
-    const imageUrl = c.image_url || (typeof c.image === "string" && (c.image.startsWith("http") || c.image.includes("/")) ? c.image : null);
+    const rawImg = c.image_url || (typeof c.image === "string" && (c.image.startsWith("http") || c.image.includes("/")) ? c.image : null);
+    const imageUrl = rawImg ? resolveCustomerImageUrl(rawImg) : null;
     const productCount = parseInt(c.product_count !== undefined ? c.product_count : (c.productCount || 0), 10) || 0;
     const icon = c.icon || c.image || "✨";
 
@@ -827,7 +869,17 @@
     load() {
       try {
         const raw = localStorage.getItem(CART_STORAGE_KEY);
-        return raw ? JSON.parse(raw) : [];
+        const parsed = raw ? JSON.parse(raw) : [];
+        if (Array.isArray(parsed)) {
+          // Self-heal any legacy items stored in paise (e.g. 1500 for a ₹15 sticker)
+          return parsed.map(item => {
+            if (item && typeof item.price === 'number' && item.price >= 1000) {
+              item.price = Math.round(item.price / 100);
+            }
+            return item;
+          });
+        }
+        return [];
       } catch (e) {
         console.warn("[CHIPAKK] Failed to load cart from localStorage", e);
         return [];
@@ -854,7 +906,10 @@
       const variantKey = `${product.id}_${material}_${size}`.toLowerCase().replace(/[^a-z0-9]/g, "_");
 
       // Robust image resolution: check images array first, then image URL or emoji
-      const resolvedImage = (product.images && product.images.length > 0 && product.images[0]) || product.image || "⚡";
+      const rawImage = (product.images && product.images.length > 0 && product.images[0]) || product.image || "⚡";
+      const resolvedImage = (typeof rawImage === "string" && (rawImage.startsWith("http") || rawImage.includes("/")))
+        ? resolveCustomerImageUrl(rawImage)
+        : rawImage;
 
       const existingIndex = this.items.findIndex(i => i.variantKey === variantKey);
       if (existingIndex > -1) {
@@ -989,7 +1044,7 @@
   const $$ = (sel, ctx) => Array.from((ctx || document).querySelectorAll(sel));
 
   function formatPrice(n) {
-    return "₹" + Number(n || 0).toLocaleString("en-IN");
+    return "₹" + Math.round(Number(n || 0)).toLocaleString("en-IN");
   }
 
   function starsMarkup(rating) {
@@ -1221,13 +1276,14 @@
 
     list.innerHTML = cart.items.map(item => {
       const isImgUrl = typeof item.image === "string" && (item.image.startsWith("http") || item.image.includes("/"));
+      const resolvedSrc = isImgUrl ? resolveCustomerImageUrl(item.image) : "";
       const lineTotal = item.price * item.qty;
 
       return `
         <div class="cart-item" data-variant-key="${item.variantKey}">
           <div class="cart-item-media" aria-hidden="true">
             ${isImgUrl 
-              ? `<img src="${escapeAttr(item.image)}" alt="${escapeAttr(item.name)}" loading="lazy" />` 
+              ? `<img src="${escapeAttr(resolvedSrc)}" alt="${escapeAttr(item.name)}" loading="lazy" />` 
               : `<span class="cart-item-emoji">${item.image || "⚡"}</span>`
             }
           </div>
@@ -1616,6 +1672,7 @@
     showToast,
     escapeHtml,
     escapeAttr,
+    resolveImageUrl: resolveCustomerImageUrl,
     openCart: () => openPanel($("#cartDrawer")),
     $,
     $$

@@ -87,16 +87,19 @@ const getCart = async ({ userId = null, storeId = 1, sessionId = null, connectio
     }
   }
 
-  let subtotalPaise = 0;
+  const isStore2 = parseInt(cart.store_id, 10) === 2;
+  let subtotalAmount = 0;
   let totalItems = 0;
 
   const items = (itemRows || []).map(row => {
     const qty = parseInt(row.quantity, 10) || 1;
-    const unitPaise = parseInt(row.unit_price, 10) || 0;
-    const lineTotalPaise = unitPaise * qty;
-
-    subtotalPaise += lineTotalPaise;
+    const rawPrice = parseInt(row.unit_price, 10) || 0;
+    const rawLineTotal = rawPrice * qty;
+    subtotalAmount += rawLineTotal;
     totalItems += qty;
+
+    const unitPrice = isStore2 ? Math.round(rawPrice / 100) : rawPrice;
+    const lineTotal = isStore2 ? Math.round(rawLineTotal / 100) : rawLineTotal;
 
     return {
       id: row.id,
@@ -108,15 +111,15 @@ const getCart = async ({ userId = null, storeId = 1, sessionId = null, connectio
       sku: row.sku,
       image_url: row.image_url,
       quantity: qty,
-      unit_price_paise: unitPaise,
-      unit_price_rupees: Math.round(unitPaise / 100),
-      total_price_paise: lineTotalPaise,
-      total_price_rupees: Math.round(lineTotalPaise / 100),
+      unit_price: unitPrice,
+      total_price: lineTotal,
       options_snapshot: safeJsonParse(row.options_snapshot, null),
       created_at: row.created_at,
       updated_at: row.updated_at
     };
   });
+
+  const subtotal = isStore2 ? Math.round(subtotalAmount / 100) : subtotalAmount;
 
   return {
     id: cart.id,
@@ -125,8 +128,7 @@ const getCart = async ({ userId = null, storeId = 1, sessionId = null, connectio
     session_id: cart.session_id,
     status: cart.status,
     total_items: totalItems,
-    subtotal_paise: subtotalPaise,
-    subtotal_rupees: Math.round(subtotalPaise / 100),
+    subtotal: subtotal,
     items,
     created_at: cart.created_at,
     updated_at: cart.updated_at
@@ -198,7 +200,7 @@ const addItem = async ({
   } else {
     // Look up in Store 1 products catalog
     const [pRows] = await conn.execute(
-      'SELECT id, name, sku, price, active, image_url, store_id FROM products WHERE id = ? AND (store_id = 1 OR store_id IS NULL) LIMIT 1',
+      'SELECT id, name, sku, price, active, store_id FROM products WHERE id = ? AND (store_id = 1 OR store_id IS NULL) LIMIT 1',
       [numProductId]
     );
 
@@ -219,7 +221,17 @@ const addItem = async ({
     productName = validatedProduct.name;
     sku = validatedProduct.sku;
     unitPricePaise = parseInt(validatedProduct.price, 10) || 0;
-    resolvedImageUrl = validatedProduct.image_url || null;
+    resolvedImageUrl = null;
+
+    try {
+      const [imgRows] = await conn.execute(
+        'SELECT image_url FROM product_images WHERE product_id = ? ORDER BY is_primary DESC, sort_order ASC, id ASC LIMIT 1',
+        [numProductId]
+      );
+      if (imgRows && imgRows.length > 0 && imgRows[0].image_url) {
+        resolvedImageUrl = imgRows[0].image_url;
+      }
+    } catch (_) {}
 
     // Variant validation
     if (variantId) {

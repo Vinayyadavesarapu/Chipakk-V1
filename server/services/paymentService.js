@@ -40,7 +40,7 @@ const createPaymentOrder = async (orderId, firebaseUser) => {
   const [orderRows] = await pool.execute(
     `SELECT id, order_number, customer_id, customer_email, customer_name,
             shipping_address, payment_method, payment_status, fulfillment_status,
-            total_price, gateway_order_id
+            total_price, gateway_order_id, COALESCE(store_id, 1) AS store_id
      FROM orders 
      WHERE id = ? 
      LIMIT 1`,
@@ -83,16 +83,22 @@ const createPaymentOrder = async (orderId, firebaseUser) => {
     throw err;
   }
 
-  const totalPricePaise = parseInt(order.total_price, 10);
-  if (isNaN(totalPricePaise) || totalPricePaise <= 0) {
+  const rawTotalPrice = parseInt(order.total_price, 10);
+  if (isNaN(rawTotalPrice) || rawTotalPrice <= 0) {
     const err = new Error('Order total must be greater than zero to initiate payment.');
     err.status = 400;
     throw err;
   }
 
-  // 4. Create Gateway Payment Order (amount in paise, 1:1 with DB total_price)
+  // 4. Create Gateway Payment Order
+  // Razorpay REST API strictly mandates amount in paise.
+  // For Store 1 (CHIPAKK), DB stores whole rupees (e.g. ₹15 = DB 15).
+  // We convert to paise ONLY when calling the Razorpay gateway (15 * 100 = 1500).
+  const isStore2 = parseInt(order.store_id, 10) === 2;
+  const amountPaiseForGateway = isStore2 ? rawTotalPrice : (rawTotalPrice * 100);
+
   const gatewayOrder = await razorpayService.createRazorpayOrder({
-    amountPaise: totalPricePaise,
+    amountPaise: amountPaiseForGateway,
     receipt: order.order_number,
     notes: {
       order_id: String(order.id),
@@ -117,7 +123,7 @@ const createPaymentOrder = async (orderId, firebaseUser) => {
         `INSERT INTO payments (
           order_id, provider, gateway_order_id, amount, currency, status, created_at
         ) VALUES (?, 'razorpay', ?, ?, ?, 'created', NOW())`,
-        [order.id, gatewayOrder.gateway_order_id, totalPricePaise, gatewayOrder.currency || 'INR']
+        [order.id, gatewayOrder.gateway_order_id, rawTotalPrice, gatewayOrder.currency || 'INR']
       );
     } catch (tblErr) {
       console.warn('[PaymentService] payments table insertion notice:', tblErr.message);
@@ -396,7 +402,7 @@ const handleWebhook = async (rawBody, signatureHeader) => {
             method = VALUES(method),
             raw_event_reference = VALUES(raw_event_reference),
             updated_at = NOW()`,
-          [order.id, gatewayOrderId, gatewayPaymentId, amountPaise || order.total_price, method, eventId]
+          [order.id, gatewayOrderId, gatewayPaymentId, order.total_price, method, eventId]
         );
       } catch (e) {}
 

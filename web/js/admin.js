@@ -14,6 +14,17 @@ const passwordInput = document.getElementById('admin-password');
 // API Base URL
 const API_BASE_URL = apiClient.getBaseUrl();
 
+function resolveAdminImageUrl(url) {
+    if (!url) return '';
+    const cleanUrl = String(url).trim();
+    if (!cleanUrl) return '';
+    if (cleanUrl.startsWith('http://') || cleanUrl.startsWith('https://') || cleanUrl.startsWith('data:') || cleanUrl.startsWith('blob:')) {
+        return cleanUrl;
+    }
+    const apiHost = apiClient.baseUrl ? apiClient.baseUrl.replace(/\/api\/?$/, '') : 'https://api.chipakk.shop';
+    return cleanUrl.startsWith('/') ? `${apiHost}${cleanUrl}` : `${apiHost}/${cleanUrl}`;
+}
+
 // =============================================================================
 // CANONICAL STATUS MAPPING ENUMS & HELPERS
 // =============================================================================
@@ -184,10 +195,10 @@ let selectedProductionItemIds = [];
 // =============================================================================
 
 function normalizeProduct(p) {
-    const pricePaise = parseInt(p.price, 10) || 0;
-    const priceRupees = p.price_rupees !== undefined ? p.price_rupees : Math.round(pricePaise / 100);
-    const compPricePaise = parseInt(p.compare_at_price, 10) || 0;
-    const compPriceRupees = Math.round(compPricePaise / 100);
+    const rawPrice = parseInt(p.price, 10) || 0;
+    const priceRupees = p.price_rupees !== undefined ? p.price_rupees : rawPrice;
+    const rawComp = p.compare_at_price !== null && p.compare_at_price !== undefined ? (parseInt(p.compare_at_price, 10) || 0) : null;
+    const compPriceRupees = p.compare_at_price_rupees !== undefined ? p.compare_at_price_rupees : rawComp;
 
     const imagesList = Array.isArray(p.images)
         ? p.images.map(img => typeof img === 'string' ? img : (img.image_url || img.url || ''))
@@ -204,9 +215,7 @@ function normalizeProduct(p) {
         short_description: p.short_description || '',
         variant: 'Standard 3x3"',
         price: priceRupees,
-        price_paise: pricePaise,
         compare_at_price: compPriceRupees,
-        compare_at_price_paise: compPricePaise,
         category: p.category_name || (categories.find(c => c.id === p.category_id)?.name) || 'Uncategorized',
         category_id: p.category_id,
         rating: p.average_rating || 4.7,
@@ -240,8 +249,10 @@ function normalizeCategory(c) {
 }
 
 function normalizeOrder(o) {
-    const totalPricePaise = parseInt(o.total_price || o.total, 10) || 0;
-    const totalPriceRupees = Math.round(totalPricePaise / 100);
+    const activeStoreId = apiClient.getActiveStoreId ? apiClient.getActiveStoreId() : 1;
+    const isStore2 = (o.store_id !== undefined && o.store_id !== null) ? (parseInt(o.store_id, 10) === 2) : (activeStoreId === 2);
+    const rawTotalPrice = parseInt(o.total_price || o.total || o.total_amount, 10) || 0;
+    const totalPriceRupees = o.total_price_rupees !== undefined ? o.total_price_rupees : (isStore2 ? Math.round(rawTotalPrice / 100) : rawTotalPrice);
 
     const rawAddress = o.shipping_address;
     let formattedAddress = '';
@@ -253,18 +264,26 @@ function normalizeOrder(o) {
         formattedAddress = o.address || 'Address not provided';
     }
 
-    const normalizedItems = (o.items || []).map((item, idx) => ({
-        item_id: item.id || item.item_id || `item-${o.id}-${idx + 1}`,
-        order_item_id: item.id || item.order_item_id,
-        admin_id: item.admin_product_id_snapshot || item.admin_id || item.sku || 'CK-001',
-        title: item.product_name || item.title || 'Custom Product',
-        variant: typeof item.variant_options === 'object' && item.variant_options ? Object.values(item.variant_options).join(' / ') : (item.variant || 'Standard 3x3"'),
-        qty: item.quantity || item.qty || 1,
-        unit_price: Math.round((parseInt(item.unit_price, 10) || 0) / 100),
-        total: Math.round((parseInt(item.total_price || item.total, 10) || 0) / 100),
-        img: item.img || "https://img.icons8.com/color/150/000000/sticker.png",
-        production_status: BACKEND_TO_UI_PROD_STATUS[item.production_status] || item.production_status || 'Ready to Print'
-    }));
+    const normalizedItems = (o.items || []).map((item, idx) => {
+        const rawUnit = parseInt(item.unit_price, 10) || 0;
+        const rawItemTotal = parseInt(item.total_price || item.total, 10) || 0;
+        const unitRupees = item.unit_price_rupees !== undefined ? item.unit_price_rupees : (isStore2 ? Math.round(rawUnit / 100) : rawUnit);
+        const itemTotalRupees = item.total_price_rupees !== undefined ? item.total_price_rupees : (isStore2 ? Math.round(rawItemTotal / 100) : rawItemTotal);
+        return {
+            item_id: item.id || item.item_id || `item-${o.id}-${idx + 1}`,
+            order_item_id: item.id || item.order_item_id,
+            admin_id: item.admin_product_id_snapshot || item.admin_id || item.sku || 'CK-001',
+            title: item.product_name || item.title || 'Custom Product',
+            variant: typeof item.variant_options === 'object' && item.variant_options ? Object.values(item.variant_options).join(' / ') : (item.variant || 'Standard 3x3"'),
+            qty: item.quantity || item.qty || 1,
+            unit_price: unitRupees,
+            unit_price_rupees: unitRupees,
+            total: itemTotalRupees,
+            total_price_rupees: itemTotalRupees,
+            img: item.img || "https://img.icons8.com/color/150/000000/sticker.png",
+            production_status: BACKEND_TO_UI_PROD_STATUS[item.production_status] || item.production_status || 'Ready to Print'
+        };
+    });
 
     const statusStr = String(o.fulfillment_status || o.status || 'NEW').toUpperCase();
     const uiStatus = BACKEND_TO_UI_ORDER_STATUS[statusStr] || 'New';
@@ -279,7 +298,8 @@ function normalizeOrder(o) {
         address: formattedAddress,
         items: normalizedItems,
         total_price: totalPriceRupees,
-        total_price_paise: totalPricePaise,
+        total_price_rupees: totalPriceRupees,
+        total_price_paise: totalPriceRupees * 100,
         payment_status: String(o.payment_status || 'paid').toLowerCase() === 'paid' ? 'Paid' : (String(o.payment_status).charAt(0).toUpperCase() + String(o.payment_status).slice(1)),
         status: uiStatus,
         raw_fulfillment_status: statusStr,
@@ -294,7 +314,8 @@ function normalizeOrder(o) {
 }
 
 function normalizeCustomer(c) {
-    const spendPaise = parseInt(c.total_spend, 10) || 0;
+    const rawSpend = parseInt(c.total_spend || c.total_spent, 10) || 0;
+    const spendRupees = c.total_spend_rupees !== undefined ? c.total_spend_rupees : rawSpend;
     const deliveredCount = parseInt(c.delivered_orders, 10) || 0;
     return {
         ...c,
@@ -304,8 +325,9 @@ function normalizeCustomer(c) {
         phone: c.phone || '',
         total_orders: c.total_orders || 0,
         delivered_orders: deliveredCount,
-        total_spent: Math.round(spendPaise / 100),
-        total_spent_paise: spendPaise,
+        total_spent: spendRupees,
+        total_spent_rupees: spendRupees,
+        total_spent_paise: spendRupees * 100,
         status: c.loyalty_tier || calculateCustomerTier(deliveredCount),
         loyalty_tier: c.loyalty_tier || calculateCustomerTier(deliveredCount),
         last_order: c.last_order || 'N/A',
@@ -450,7 +472,7 @@ async function loadAllAdminData() {
                     code: (c.code || '').toUpperCase(),
                     discount_type: c.discount_type || 'percent',
                     discount_value: c.discount_value || 0,
-                    min_spend: Math.round((parseInt(c.min_order_value || c.min_spend, 10) || 0) / 100),
+                    min_spend: c.min_order_value_rupees !== undefined ? c.min_order_value_rupees : (parseInt(c.min_order_value || c.min_spend, 10) || 0),
                     active: c.active === 1 || c.active === true
                 }));
             }
@@ -462,10 +484,10 @@ async function loadAllAdminData() {
                     ...s,
                     id: s.id,
                     rule_name: s.name || s.rule_name || '',
-                    min_order: Math.round((parseInt(s.free_shipping_threshold || s.min_order, 10) || 0) / 100),
+                    min_order: s.free_shipping_threshold_rupees !== undefined ? s.free_shipping_threshold_rupees : (parseInt(s.free_shipping_threshold || s.min_order, 10) || 0),
                     max_order: 999999,
                     region: s.region || "India (All States)",
-                    fee: Math.round((parseInt(s.standard_fee || s.fee, 10) || 0) / 100),
+                    fee: s.standard_fee_rupees !== undefined ? s.standard_fee_rupees : (parseInt(s.standard_fee || s.fee, 10) || 0),
                     active: s.is_enabled === 1 || s.is_enabled === true || s.active === true
                 }));
             }
@@ -664,7 +686,7 @@ async function refreshCouponsFromAPI() {
                 code: (c.code || '').toUpperCase(),
                 discount_type: c.discount_type || 'percent',
                 discount_value: c.discount_value || 0,
-                min_spend: Math.round((parseInt(c.min_order_value || c.min_spend, 10) || 0) / 100),
+                min_spend: c.min_order_value_rupees !== undefined ? c.min_order_value_rupees : (parseInt(c.min_order_value || c.min_spend, 10) || 0),
                 active: c.active === 1 || c.active === true
             }));
             renderCouponsTable();
@@ -682,10 +704,10 @@ async function refreshShippingRulesFromAPI() {
                 ...s,
                 id: s.id,
                 rule_name: s.name || s.rule_name || '',
-                min_order: Math.round((parseInt(s.free_shipping_threshold || s.min_order, 10) || 0) / 100),
+                min_order: s.free_shipping_threshold_rupees !== undefined ? s.free_shipping_threshold_rupees : (parseInt(s.free_shipping_threshold || s.min_order, 10) || 0),
                 max_order: 999999,
                 region: s.region || "India (All States)",
-                fee: Math.round((parseInt(s.standard_fee || s.fee, 10) || 0) / 100),
+                fee: s.standard_fee_rupees !== undefined ? s.standard_fee_rupees : (parseInt(s.standard_fee || s.fee, 10) || 0),
                 active: s.is_enabled === 1 || s.is_enabled === true || s.active === true
             }));
             renderShippingRulesTable();
@@ -1515,7 +1537,7 @@ function renderProductsTable() {
 
         return `
             <tr>
-                <td><img src="${(p.images && p.images[0]) || 'https://img.icons8.com/color/150/000000/sticker.png'}" style="width:45px; height:45px; object-fit:cover; border:1px solid #000;"></td>
+                <td><img src="${resolveAdminImageUrl((p.images && p.images[0]) || 'https://img.icons8.com/color/150/000000/sticker.png')}" style="width:45px; height:45px; object-fit:cover; border:1px solid #000;"></td>
                 <td><span class="admin-id-highlight">${p.admin_id || p.sku}</span></td>
                 <td><strong>${p.title}</strong>${p.is_best_seller ? ' <span class="status-badge" style="background:#fef08a; color:#854d0e; font-size:0.65rem; font-weight:900; border:1px solid #eab308; vertical-align:middle;">★ BEST SELLER</span>' : ''}<br><small style="color:#666;">${p.variant || 'Standard'}</small></td>
                 <td><span class="status-badge" style="background:#eee; color:#333;">${p.category}</span></td>
@@ -1675,7 +1697,7 @@ function renderProdImageGallery() {
     gallery.innerHTML = tempProdImages.map((img, idx) => `
         <div class="img-thumb-card">
             ${idx === 0 ? '<span class="primary-tag">PRIMARY</span>' : ''}
-            <img src="${img}">
+            <img src="${resolveAdminImageUrl(img)}">
             <div class="img-thumb-actions">
                 ${idx !== 0 ? `<button type="button" class="img-btn-sm set-primary-img-btn" data-idx="${idx}">PRIMARY</button>` : ''}
                 <button type="button" class="img-btn-sm rem-img-btn" data-idx="${idx}" style="color:#ef4444;">×</button>
@@ -1750,8 +1772,9 @@ async function saveProductForm() {
     const originalText = saveBtn ? saveBtn.textContent : '';
     if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = "SAVING..."; }
 
-    const priceInPaise = Math.round(price * 100);
     const activeStoreId = apiClient.getActiveStoreId ? apiClient.getActiveStoreId() : 1;
+    // For Store 1 (CHIPAKK), whole rupees: ₹15 = DB 15. Store 2 (THE MARSHANS) uses paise.
+    const priceVal = activeStoreId === 1 ? Math.round(price) : Math.round(price * 100);
     const isLumo = activeStoreId === 2 && (category || '').trim().toUpperCase() === 'LUMO';
 
     if (isLumo) {
@@ -1779,7 +1802,7 @@ async function saveProductForm() {
         admin_product_id: adminId,
         sku: skuVal,
         description: descVal,
-        price: priceInPaise,
+        price: priceVal,
         category_name: category,
         tags: document.getElementById('prod-tags').value.split(',').map(t => t.trim()).filter(Boolean),
         images: [...tempProdImages],
@@ -2404,8 +2427,8 @@ async function openOrderDetailModal(orderId) {
                         title: it.product_name,
                         variant: variantStr,
                         qty: it.quantity,
-                        unit_price: it.unit_price_rupees || Math.round((parseInt(it.unit_price, 10) || 0) / 100),
-                        total_price: it.total_price_rupees || Math.round((parseInt(it.total_price, 10) || 0) / 100),
+                        unit_price: (apiClient.getActiveStoreId ? apiClient.getActiveStoreId() : 1) === 2 ? Math.round((parseInt(it.unit_price, 10) || 0) / 100) : (parseInt(it.unit_price, 10) || 0),
+                        total_price: (apiClient.getActiveStoreId ? apiClient.getActiveStoreId() : 1) === 2 ? Math.round((parseInt(it.total_price, 10) || 0) / 100) : (parseInt(it.total_price, 10) || 0),
                         production_status: BACKEND_TO_UI_PROD_STATUS[it.production_status] || it.production_status || 'Ready to Print',
                         img: itemImg,
                         custom_designs: it.custom_designs || []
@@ -2916,12 +2939,14 @@ async function saveCouponForm() {
     const originalText = saveBtn ? saveBtn.textContent : '';
     if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = "SAVING..."; }
 
-    const minSpendPaise = Math.round((Number(document.getElementById('cpn-min').value) || 0) * 100);
+    const activeStoreId = apiClient.getActiveStoreId ? apiClient.getActiveStoreId() : 1;
+    const minSpendInput = Number(document.getElementById('cpn-min').value) || 0;
+    const minOrderVal = activeStoreId === 1 ? Math.round(minSpendInput) : Math.round(minSpendInput * 100);
     const payload = {
         code,
         discount_type: document.getElementById('cpn-type').value,
         discount_value: value,
-        min_order_value: minSpendPaise,
+        min_order_value: minOrderVal,
         active: document.getElementById('cpn-active').value === 'true' ? 1 : 0
     };
 
@@ -3043,10 +3068,11 @@ async function saveShippingRuleForm() {
     const originalText = saveBtn ? saveBtn.textContent : '';
     if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = "SAVING..."; }
 
+    const activeStoreId = apiClient.getActiveStoreId ? apiClient.getActiveStoreId() : 1;
     const payload = {
         name,
-        standard_fee: Math.round(fee * 100),
-        free_shipping_threshold: Math.round(minVal * 100),
+        standard_fee: activeStoreId === 1 ? Math.round(fee) : Math.round(fee * 100),
+        free_shipping_threshold: activeStoreId === 1 ? Math.round(minVal) : Math.round(minVal * 100),
         is_enabled: document.getElementById('ship-active').value === 'true' ? 1 : 0,
         regional_overrides: { region: document.getElementById('ship-region').value }
     };
@@ -4372,7 +4398,7 @@ function loadSystemSettings() {
     const shippingFeeInput = document.getElementById('set-shipping-fee');
     if (shippingFeeInput) {
         shippingFeeInput.value = siteSettings.shipping_fee !== undefined
-            ? Math.round(Number(siteSettings.shipping_fee) / 100)
+            ? (activeStoreId === 1 ? Math.round(Number(siteSettings.shipping_fee)) : Math.round(Number(siteSettings.shipping_fee) / 100))
             : (isMarshans ? 100 : 50);
     }
 
@@ -4394,7 +4420,7 @@ function loadSystemSettings() {
             if (freeShippingNote) freeShippingNote.style.display = 'none';
             if (freeShippingThresholdInput) {
                 freeShippingThresholdInput.value = siteSettings.free_shipping_threshold !== undefined
-                    ? Math.round(Number(siteSettings.free_shipping_threshold) / 100)
+                    ? (activeStoreId === 1 ? Math.round(Number(siteSettings.free_shipping_threshold)) : Math.round(Number(siteSettings.free_shipping_threshold) / 100))
                     : 499;
             }
         }
@@ -4881,15 +4907,27 @@ function setupEventListeners() {
         }
     });
 
-    document.getElementById('prod-image-file-input')?.addEventListener('change', (e) => {
-        const file = e.target.files[0];
-        if (file) {
-            const reader = new FileReader();
-            reader.onload = (evt) => {
-                tempProdImages.push(evt.target.result);
+    document.getElementById('prod-image-file-input')?.addEventListener('change', async (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+
+        showToast('Uploading product image...');
+        try {
+            const formData = new FormData();
+            formData.append('image', file);
+            const res = await apiClient.upload('/admin/upload', formData);
+            const uploadedUrl = res?.data?.url || res?.url;
+            if (uploadedUrl) {
+                tempProdImages.push(uploadedUrl);
                 renderProdImageGallery();
-            };
-            reader.readAsDataURL(file);
+                showToast('Product image uploaded successfully');
+            } else {
+                showToast('Upload returned empty file path', 'error');
+            }
+        } catch (err) {
+            showToast(`Image upload failed: ${err.message}`, 'error');
+        } finally {
+            e.target.value = '';
         }
     });
 
@@ -5151,9 +5189,9 @@ function setupEventListeners() {
         const thresholdRupees = Math.max(Number(document.getElementById('set-free-shipping-threshold')?.value) || 0, 0);
 
         const payload = {
-            shipping_fee: feeRupees * 100, // paise
+            shipping_fee: activeStoreId === 1 ? feeRupees : (feeRupees * 100),
             free_shipping_enabled: freeEnabled,
-            free_shipping_threshold: freeEnabled ? (thresholdRupees * 100) : 0
+            free_shipping_threshold: freeEnabled ? (activeStoreId === 1 ? thresholdRupees : (thresholdRupees * 100)) : 0
         };
 
         try {

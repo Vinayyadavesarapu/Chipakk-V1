@@ -193,8 +193,16 @@ const getProducts = async ({
   const products = rows.map(r => {
     const prodImgs = imagesByProduct[r.id] || [];
     const primaryImg = prodImgs.find(i => i.is_primary) || prodImgs[0];
+    const pricePaise = parseInt(r.price, 10) || 0;
+    const compareAtPaise = r.compare_at_price !== null && r.compare_at_price !== undefined ? (parseInt(r.compare_at_price, 10) || 0) : null;
     return {
       ...r,
+      price: pricePaise,
+      price_paise: pricePaise,
+      price_rupees: Math.round(pricePaise / 100),
+      compare_at_price: compareAtPaise,
+      compare_at_price_paise: compareAtPaise,
+      compare_at_price_rupees: compareAtPaise !== null ? Math.round(compareAtPaise / 100) : null,
       images: prodImgs,
       primary_image_url: primaryImg ? primaryImg.image_url : r.primary_image_url,
       primary_storage_path: primaryImg ? primaryImg.storage_path : r.primary_storage_path,
@@ -273,6 +281,15 @@ const getProductById = async (productIdOrAdminId) => {
 
   const product = prodRows[0];
   const numProductId = product.id;
+
+  const pricePaise = parseInt(product.price, 10) || 0;
+  const compareAtPaise = product.compare_at_price !== null && product.compare_at_price !== undefined ? (parseInt(product.compare_at_price, 10) || 0) : null;
+  product.price = pricePaise;
+  product.price_paise = pricePaise;
+  product.price_rupees = Math.round(pricePaise / 100);
+  product.compare_at_price = compareAtPaise;
+  product.compare_at_price_paise = compareAtPaise;
+  product.compare_at_price_rupees = compareAtPaise !== null ? Math.round(compareAtPaise / 100) : null;
 
   product.experience_override = product.experience_override || null;
   product.effective_experience = product.experience_override || 'normal';
