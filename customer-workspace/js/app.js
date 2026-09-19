@@ -1,7 +1,7 @@
 /* =========================================================
    CHIPAKK — Customer Storefront
    Core Shared Engine — js/app.js
-   
+
    BACKEND-FIRST ARCHITECTURE:
    - Centralized data store (CHIPAKK_DATA) structured to match
      future Admin API responses (GET /api/products, /api/categories,
@@ -23,7 +23,8 @@
     settings: {
       storeName: "CHIPAKK",
       storeOpen: true,
-      freeShippingThreshold: 0,
+      freeShippingThreshold: 300,
+      shippingFee: 50,
       currencySymbol: "₹",
       announcementActive: false,
       announcementText: ""
@@ -107,6 +108,15 @@
     if (!url || typeof url !== 'string') return '';
     const trimmed = url.trim();
     if (!trimmed) return '';
+
+    // Handle Google Drive links to direct view URLs
+    if (trimmed.includes('drive.google.com')) {
+      const fileIdMatch = trimmed.match(/\/file\/d\/([a-zA-Z0-9_-]+)/) || trimmed.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+      if (fileIdMatch && fileIdMatch[1]) {
+        return `https://drive.google.com/uc?export=view&id=${fileIdMatch[1]}`;
+      }
+    }
+
     if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('data:') || trimmed.startsWith('blob:')) {
       return trimmed;
     }
@@ -131,44 +141,97 @@
 
   // In-memory session cache to avoid duplicate API requests during a single page visit
   const apiCache = new Map();
+  const inflightRequests = new Map();
+
+  function extractApiErrorMessage(errJson, fallback = "An unexpected error occurred") {
+    if (!errJson) return fallback;
+    if (typeof errJson === "string") return errJson;
+    if (typeof errJson === "object") {
+      if (errJson.error) {
+        if (typeof errJson.error === "string") return errJson.error;
+        if (typeof errJson.error === "object" && errJson.error.message) {
+          return String(errJson.error.message);
+        }
+      }
+      if (errJson.message) {
+        if (typeof errJson.message === "string") return errJson.message;
+        if (typeof errJson.message === "object" && errJson.message.message) {
+          return String(errJson.message.message);
+        }
+      }
+    }
+    return fallback;
+  }
 
   async function fetchApi(endpoint, options = {}) {
     const url = endpoint.startsWith("http") ? endpoint : `${API_BASE}${endpoint.startsWith("/") ? "" : "/"}${endpoint}`;
-    const cacheKey = `${options.method || "GET"}:${url}`;
+    const cleanEndpoint = endpoint.replace(/^\/?api\//i, '').replace(/^\//, '');
+    const isPrivateEndpoint = /^(orders|payments|addresses|cart|admin|users|auth)(\/|$)/i.test(cleanEndpoint);
+    const hasAuthHeader = Boolean(options.headers && (options.headers['Authorization'] || options.headers['authorization']));
+    const isAuthOrCustomerPrivate = isPrivateEndpoint || hasAuthHeader || /^customer(\/|$)/i.test(cleanEndpoint);
+    const storeId = options.storeId || (options.headers && (options.headers['X-Store-ID'] || options.headers['x-store-id'])) || getActiveStoreId();
+    const isGet = !options.method || options.method === "GET";
+    const cacheKey = `${options.method || "GET"}:store${storeId}:${url}`;
 
-    if (!options.refresh && options.method !== "POST" && options.method !== "PUT" && apiCache.has(cacheKey)) {
-      return apiCache.get(cacheKey);
-    }
-
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 6000);
-      const storeId = options.storeId || (options.headers && (options.headers['X-Store-ID'] || options.headers['x-store-id'])) || getActiveStoreId();
-
-      const res = await fetch(url, {
-        headers: {
-          "Accept": "application/json",
-          "X-Store-ID": String(storeId),
-          ...(options.headers || {})
-        },
-        signal: controller.signal,
-        ...options
-      });
-
-      clearTimeout(timeoutId);
-
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+    if (!options.refresh && !isPrivateEndpoint && !isAuthOrCustomerPrivate && isGet) {
+      if (apiCache.has(cacheKey)) {
+        return apiCache.get(cacheKey);
       }
-
-      const json = await res.json();
-      const payload = json && typeof json === "object" && "data" in json ? json.data : json;
-      apiCache.set(cacheKey, payload);
-      return payload;
-    } catch (err) {
-      console.warn(`[CHIPAKK API] Failed to fetch ${endpoint}:`, err.message);
-      throw err;
+      if (inflightRequests.has(cacheKey)) {
+        return inflightRequests.get(cacheKey);
+      }
     }
+
+    const controller = (typeof AbortController !== "undefined" && !options.signal) ? new AbortController() : null;
+    const timeoutMs = options.timeout !== undefined ? options.timeout : (options.method === "POST" ? 45000 : 15000);
+    const timeoutId = (controller && timeoutMs > 0) ? setTimeout(() => controller.abort(), timeoutMs) : null;
+
+    const requestPromise = (async () => {
+      try {
+        const fetchSignal = options.signal || (controller ? controller.signal : undefined);
+        const res = await fetch(url, {
+          headers: {
+            "Accept": "application/json",
+            "X-Store-ID": String(storeId),
+            ...(options.headers || {})
+          },
+          signal: fetchSignal,
+          ...options
+        });
+
+        if (timeoutId) clearTimeout(timeoutId);
+
+        if (!res.ok) {
+          let errMsg = `HTTP ${res.status}: ${res.statusText}`;
+          try {
+            const errJson = await res.json();
+            errMsg = extractApiErrorMessage(errJson, errMsg);
+          } catch (_) {}
+          const errorObj = new Error(errMsg);
+          errorObj.status = res.status;
+          throw errorObj;
+        }
+
+        const json = await res.json();
+        const payload = json && typeof json === "object" && "data" in json ? json.data : json;
+        if (!isPrivateEndpoint && !isAuthOrCustomerPrivate && isGet) {
+          apiCache.set(cacheKey, payload);
+        }
+        return payload;
+      } catch (err) {
+        if (timeoutId) clearTimeout(timeoutId);
+        console.warn(`[CHIPAKK API] Failed to fetch ${endpoint}:`, err.message);
+        throw err;
+      } finally {
+        inflightRequests.delete(cacheKey);
+      }
+    })();
+
+    if (!isPrivateEndpoint && !isAuthOrCustomerPrivate && isGet) {
+      inflightRequests.set(cacheKey, requestPromise);
+    }
+
+    return requestPromise;
   }
 
   /**
@@ -218,7 +281,8 @@
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Accept": "application/json"
+          "Accept": "application/json",
+          "X-Store-ID": String(getActiveStoreId() || 1)
         },
         body: JSON.stringify({
           code: cleanCode,
@@ -231,7 +295,7 @@
       if (!res.ok || !json.success) {
         return {
           valid: false,
-          message: json.error || json.message || "Invalid or inactive coupon code."
+          message: extractApiErrorMessage(json, "Invalid or inactive coupon code.")
         };
       }
 
@@ -462,7 +526,9 @@
       materials,
       sizes,
       inStock,
-      stock: p.stock !== undefined ? p.stock : 100
+      stock: p.stock !== undefined ? p.stock : 100,
+      is_best_seller: p.is_best_seller === 1 || p.is_best_seller === true,
+      isBestSeller: p.is_best_seller === 1 || p.is_best_seller === true
     };
   }
 
@@ -500,12 +566,13 @@
     const storeOpen = !maintenanceActive && !storeClosed;
     const maintenanceMessage = s.maintenance_message || s.maintenance_msg || (storeClosed ? "Storefront is temporarily closed." : "We are currently down for scheduled maintenance.");
 
-    let freeShippingThreshold = 0;
+    let freeShippingThreshold = 300;
     if (s.free_shipping_threshold_rupees !== undefined && s.free_shipping_threshold_rupees !== null) {
       freeShippingThreshold = Number(s.free_shipping_threshold_rupees);
     } else if (s.free_shipping_threshold !== undefined && s.free_shipping_threshold !== null) {
       const raw = Number(s.free_shipping_threshold);
-      freeShippingThreshold = raw > 1000 ? Math.round(raw / 100) : raw;
+      // For Store 1, values are whole rupees (e.g. 300). Only legacy paise > 10000 might need scaling.
+      freeShippingThreshold = raw >= 10000 ? Math.round(raw / 100) : raw;
     } else if (s.freeShippingThreshold !== undefined && s.freeShippingThreshold !== null) {
       freeShippingThreshold = Number(s.freeShippingThreshold);
     }
@@ -515,7 +582,7 @@
       shippingFee = Number(s.shipping_fee_rupees);
     } else if (s.shipping_fee !== undefined && s.shipping_fee !== null) {
       const raw = Number(s.shipping_fee);
-      shippingFee = raw > 100 ? Math.round(raw / 100) : raw;
+      shippingFee = raw >= 1000 ? Math.round(raw / 100) : raw;
     }
 
     const gstRate = s.gst_pct !== undefined ? Number(s.gst_pct) : (s.gst_rate !== undefined ? Number(s.gst_rate) : 18);
@@ -719,7 +786,9 @@
   }
 
   function syncShippingThresholdUi(settings) {
-    const thresh = settings.freeShippingThreshold !== undefined ? Number(settings.freeShippingThreshold) : 0;
+    const thresh = (settings && settings.freeShippingThreshold !== undefined && settings.freeShippingThreshold !== null)
+      ? Number(settings.freeShippingThreshold)
+      : 300;
     const formatted = formatPrice(thresh);
 
     const trustEl = $("#trustFreeShippingSub");
@@ -752,14 +821,91 @@
 
   async function getProducts(options = {}) {
     try {
-      const data = await fetchApi("/products?limit=100", options);
-      const rawList = Array.isArray(data) ? data : (data && Array.isArray(data.products) ? data.products : null);
-      if (rawList !== null) {
-        const normalized = rawList.map(normalizeProduct).filter(Boolean);
-        CHIPAKK_DATA.products = normalized;
-        return normalized;
+      const params = new URLSearchParams();
+      if (options.category_id !== undefined && options.category_id !== null && options.category_id !== '') {
+        params.set('category_id', options.category_id);
       }
-      return [];
+      if (options.search) params.set('search', options.search);
+      if (options.active !== undefined && options.active !== null) params.set('active', options.active);
+      if (options.featured !== undefined && options.featured !== null) params.set('featured', options.featured);
+      if (options.is_best_seller !== undefined && options.is_best_seller !== null) params.set('is_best_seller', options.is_best_seller);
+      if (options.drop_status) params.set('drop_status', options.drop_status);
+
+      // If single-page pagination is explicitly requested
+      if (options.offset !== undefined || options.page !== undefined) {
+        const limit = Math.min(Math.max(parseInt(options.limit, 10) || 50, 1), 100);
+        const offset = options.offset !== undefined
+          ? Math.max(parseInt(options.offset, 10) || 0, 0)
+          : Math.max(((parseInt(options.page, 10) || 1) - 1) * limit, 0);
+
+        params.set('limit', limit);
+        params.set('offset', offset);
+
+        const data = await fetchApi(`/products?${params.toString()}`, options.fetchOptions || {});
+        const rawList = Array.isArray(data) ? data : (data && Array.isArray(data.products) ? data.products : []);
+        const total = (data && typeof data.total === 'number') ? data.total : rawList.length;
+        const normalized = rawList.map(normalizeProduct).filter(Boolean);
+        const hasMore = offset + rawList.length < total;
+
+        return {
+          products: normalized,
+          total,
+          limit,
+          offset,
+          hasMore
+        };
+      }
+
+      // Check if this is a general un-filtered catalog query and we already have products cached in session
+      const isPlainCatalogQuery = (options.category_id === undefined || options.category_id === null || options.category_id === '') &&
+        !options.search && options.active === undefined && options.featured === undefined &&
+        options.is_best_seller === undefined && !options.drop_status &&
+        options.offset === undefined && options.page === undefined;
+
+      if (isPlainCatalogQuery && !options.refresh && Array.isArray(CHIPAKK_DATA.products) && CHIPAKK_DATA.products.length > 0) {
+        return CHIPAKK_DATA.products;
+      }
+
+      // Default: fetch the complete catalog for this query via safe server pagination (limit=100 per page)
+      const PAGE_CHUNK = 100;
+      let currentOffset = 0;
+      let allFetched = [];
+      let total = 0;
+      const seenIds = new Set();
+      const MAX_PAGES = 20; // Safe termination ceiling: prevents infinite loops under all circumstances
+      let pageCount = 0;
+
+      while (pageCount < MAX_PAGES) {
+        pageCount++;
+        params.set('limit', PAGE_CHUNK);
+        params.set('offset', currentOffset);
+
+        const data = await fetchApi(`/products?${params.toString()}`, options.fetchOptions || {});
+        const rawList = Array.isArray(data) ? data : (data && Array.isArray(data.products) ? data.products : []);
+        total = (data && typeof data.total === 'number') ? data.total : (total || rawList.length);
+
+        if (!rawList || rawList.length === 0) {
+          break; // Empty page, completed
+        }
+
+        for (const item of rawList) {
+          const norm = normalizeProduct(item);
+          if (norm && !seenIds.has(norm.id)) {
+            seenIds.add(norm.id);
+            allFetched.push(norm);
+          }
+        }
+
+        currentOffset += rawList.length;
+
+        // Termination condition: reached total or returned fewer items than requested
+        if (currentOffset >= total || rawList.length < PAGE_CHUNK) {
+          break;
+        }
+      }
+
+      CHIPAKK_DATA.products = allFetched;
+      return allFetched;
     } catch (err) {
       console.warn("[CHIPAKK] Falling back to local products repository:", err.message);
       return CHIPAKK_DATA.products.map(normalizeProduct).filter(Boolean);
@@ -870,16 +1016,14 @@
       try {
         const raw = localStorage.getItem(CART_STORAGE_KEY);
         const parsed = raw ? JSON.parse(raw) : [];
-        if (Array.isArray(parsed)) {
-          // Self-heal any legacy items stored in paise (e.g. 1500 for a ₹15 sticker)
-          return parsed.map(item => {
-            if (item && typeof item.price === 'number' && item.price >= 1000) {
-              item.price = Math.round(item.price / 100);
-            }
-            return item;
-          });
-        }
-        return [];
+        // NOTE: do not "self-heal" cart item prices by dividing values >= 1000 by 100.
+        // CHIPAKK legitimately prices products at and above ₹1000 (e.g. ₹1500, ₹9999),
+        // and that heuristic cannot distinguish a real high-value rupee price from stale
+        // pre-migration paise data, silently corrupting the former. Cart items only ever
+        // carry `product_id`/`quantity` to the backend at checkout (see checkout.js), which
+        // recomputes the authoritative price server-side, so displaying a stored price as-is
+        // here is safe; any genuinely stale cached price is harmless once re-added to cart.
+        return Array.isArray(parsed) ? parsed : [];
       } catch (e) {
         console.warn("[CHIPAKK] Failed to load cart from localStorage", e);
         return [];
@@ -903,7 +1047,11 @@
     addItem(product, qty = 1, options = {}) {
       const material = options.material || (product.materials && product.materials[0]) || "Glossy";
       const size = options.size || (product.sizes && product.sizes[0]) || '3"';
-      const variantKey = `${product.id}_${material}_${size}`.toLowerCase().replace(/[^a-z0-9]/g, "_");
+      const isCustom = Boolean(product.is_custom || (!product.id && product.name) || String(product.id || '').startsWith('custom_'));
+      const variantId = options.variantId || product.variantId || product.variant_id || null;
+      const variantKey = isCustom
+        ? `custom_${product.id || Date.now()}_${material}_${size}`.toLowerCase().replace(/[^a-z0-9]/g, "_")
+        : (variantId ? `${product.id}_v${variantId}` : `${product.id}_${material}_${size}`).toLowerCase().replace(/[^a-z0-9]/g, "_");
 
       // Robust image resolution: check images array first, then image URL or emoji
       const rawImage = (product.images && product.images.length > 0 && product.images[0]) || product.image || "⚡";
@@ -914,15 +1062,23 @@
       const existingIndex = this.items.findIndex(i => i.variantKey === variantKey);
       if (existingIndex > -1) {
         this.items[existingIndex].qty += qty;
+        if (product.custom_design_data) {
+          this.items[existingIndex].custom_design_data = product.custom_design_data;
+        }
       } else {
         this.items.push({
           id: product.id,
+          variantId: variantId,
           variantKey,
           name: product.name,
           price: product.price,
           image: resolvedImage,
           material,
           size,
+          materials: product.materials || (material ? [material] : []),
+          sizes: product.sizes || (size ? [size] : []),
+          is_custom: isCustom,
+          custom_design_data: product.custom_design_data || null,
           qty
         });
       }
@@ -959,14 +1115,14 @@
       if (s && s.freeShippingThreshold !== undefined && s.freeShippingThreshold !== null) {
         return Number(s.freeShippingThreshold);
       }
-      return 0;
+      return 300;
     }
 
     getShippingFee() {
       const subtotal = this.getSubtotal();
       if (subtotal === 0) return 0;
       const thresh = this.getShippingThreshold();
-      if (thresh <= 0 || subtotal >= thresh) return 0;
+      if (thresh > 0 && subtotal >= thresh) return 0;
       const s = window.CHIPAKK?.DATA?.settings;
       return (s && s.shippingFee !== undefined && s.shippingFee !== null) ? Number(s.shippingFee) : 50;
     }
@@ -1105,8 +1261,8 @@
             </button>
           ` : ""}
           <a href="product.html?id=${encodeURIComponent(p.id)}" class="product-media-link" aria-label="${escapeAttr(p.name)}">
-            ${isImgUrl 
-              ? `<img src="${escapeAttr(imgSrc)}" alt="${escapeAttr(p.name)}" loading="lazy" />` 
+            ${isImgUrl
+              ? `<img src="${escapeAttr(imgSrc)}" alt="${escapeAttr(p.name)}" width="300" height="300" loading="lazy" decoding="async" onerror="if(!this.dataset.failed){this.dataset.failed='true';this.src='assets/images/logo.png';}" />`
               : `<div class="product-media-art"><span class="product-media-emoji">${p.image || "⚡"}</span></div>`
             }
           </a>
@@ -1132,7 +1288,7 @@
           <!-- 4. PRICE / COMPARE-AT PRICE -->
           <div class="product-pricing">
             <span class="product-price">${formatPrice(p.price)}</span>
-            ${p.compareAtPrice ? `<span class="product-price-orig">${formatPrice(p.compareAtPrice)}</span>` : ""}
+            ${(p.compareAtPrice && p.compareAtPrice > p.price) ? `<span class="product-price-orig">${formatPrice(p.compareAtPrice)}</span>` : ""}
           </div>
 
           <!-- 5. ADD TO CART / ACTIONS -->
@@ -1282,8 +1438,8 @@
       return `
         <div class="cart-item" data-variant-key="${item.variantKey}">
           <div class="cart-item-media" aria-hidden="true">
-            ${isImgUrl 
-              ? `<img src="${escapeAttr(resolvedSrc)}" alt="${escapeAttr(item.name)}" loading="lazy" />` 
+            ${isImgUrl
+              ? `<img src="${escapeAttr(resolvedSrc)}" alt="${escapeAttr(item.name)}" loading="lazy" />`
               : `<span class="cart-item-emoji">${item.image || "⚡"}</span>`
             }
           </div>
@@ -1566,18 +1722,15 @@
       overlay.setAttribute("aria-hidden", "true");
       setTimeout(() => {
         overlay.style.display = "none";
-      }, 500);
+      }, 300);
     }
 
-    const minTimer = setTimeout(hideOverlay, 750);
-    if (document.readyState === "complete") {
+    if (document.readyState === "complete" || document.readyState === "interactive") {
       hideOverlay();
     } else {
-      window.addEventListener("load", () => {
-        clearTimeout(minTimer);
-        setTimeout(hideOverlay, 250);
-      });
-      setTimeout(hideOverlay, 3000);
+      document.addEventListener("DOMContentLoaded", hideOverlay, { once: true });
+      window.addEventListener("load", hideOverlay, { once: true });
+      setTimeout(hideOverlay, 1200);
     }
   }
 

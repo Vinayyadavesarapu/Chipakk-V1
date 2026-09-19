@@ -17,12 +17,16 @@ router.post('/validate', async (req, res, next) => {
       return sendError(res, 'Coupon code is required.', 400);
     }
 
-    let subtotalPaise = parseInt(subtotal, 10) || 0;
+    const activeStoreId = req.storeId ? parseInt(req.storeId, 10) : 1;
+    let subtotalAmount = 0;
     if (subtotal_in_rupees !== undefined) {
-      subtotalPaise = Math.round(Number(subtotal_in_rupees) * 100);
+      const rupees = Math.max(0, Math.round(Number(subtotal_in_rupees)));
+      subtotalAmount = activeStoreId === 2 ? (rupees * 100) : rupees;
+    } else if (subtotal !== undefined) {
+      subtotalAmount = parseInt(subtotal, 10) || 0;
     }
 
-    const result = await couponService.validateCoupon(code, subtotalPaise, req.storeId || 1);
+    const result = await couponService.validateCoupon(code, subtotalAmount, activeStoreId);
 
     if (!result.valid) {
       return sendError(res, result.message, 400);

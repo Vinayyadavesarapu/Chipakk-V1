@@ -1,7 +1,7 @@
 /* =========================================================
    CHIPAKK — Custom Stickers Studio Module
    js/custom-stickers.js
-   
+
    CUSTOM STICKER BUILDER ENGINE:
    - Step 1: Artwork file upload dropzone & image preview
    - Step 2: Cut style selector (Die Cut, Kiss Cut, Holographic, Clear)
@@ -198,11 +198,19 @@
     addBtn.addEventListener("click", () => {
       const customItem = {
         id: "custom_pack_" + Date.now(),
+        is_custom: true,
         name: `Custom ${customState.cutType} (${customState.quantity} pcs)`,
         price: customState.price,
         image: customState.uploadedPreviewUrl || "🎨",
         materials: [customState.finish],
-        sizes: [customState.size]
+        sizes: [customState.size],
+        custom_design_data: {
+          cutType: customState.cutType,
+          finish: customState.finish,
+          size: customState.size,
+          quantity: customState.quantity,
+          uploadedPreviewUrl: customState.uploadedPreviewUrl || null
+        }
       };
 
       cart.addItem(customItem, 1, { material: customState.finish, size: customState.size });

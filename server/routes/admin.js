@@ -26,7 +26,8 @@ const {
   getProductByIdHandler,
   createProductHandler,
   updateProductHandler,
-  deleteProductHandler
+  deleteProductHandler,
+  deleteProductImageHandler
 } = require('../controllers/productController');
 const { getAdminSettingsHandler, updateSettingsHandler } = require('../controllers/settingsController');
 const { getAuditLogsHandler } = require('../controllers/auditController');
@@ -273,6 +274,7 @@ router.get('/products/:id', getProductByIdHandler);
 router.post('/products', uploadProductImage.single('image'), createProductHandler);
 router.put('/products/:id', uploadProductImage.single('image'), updateProductHandler);
 router.delete('/products/:id', deleteProductHandler);
+router.delete('/products/:productId/images/:imageId', deleteProductImageHandler);
 
 // Site Settings Management
 router.get('/settings', getAdminSettingsHandler);

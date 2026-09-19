@@ -42,7 +42,7 @@ const getStoreBuilderAdminData = async () => {
   // 1. Announcement Bar
   const announcement_bar = await getSettingByKey('store_builder_announcement_bar', {
     enabled: true,
-    text: 'WELCOME TO CHIPAKK! FREE SHIPPING OVER ₹499',
+    text: 'WELCOME TO CHIPAKK! FREE SHIPPING OVER ₹300',
     mode: 'MARQUEE',
     marquee_speed: 'normal'
   });
@@ -290,7 +290,7 @@ const getPublicStoreBuilderData = async () => {
     return {
       announcement_bar: {
         enabled: true,
-        text: 'WELCOME TO CHIPAKK! FREE SHIPPING OVER ₹499',
+        text: 'WELCOME TO CHIPAKK! FREE SHIPPING OVER ₹300',
         mode: 'MARQUEE',
         marquee_speed: 'normal'
       },

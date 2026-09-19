@@ -17,11 +17,15 @@ const getAdminDashboardHandler = async (req, res, next) => {
     const [catRows] = await pool.execute('SELECT COUNT(*) AS total FROM categories');
     const totalCategories = catRows[0].total || 0;
 
-    // 3. Total Orders Count & Revenue Sum (in paise)
-    const [orderRows] = await pool.execute('SELECT COUNT(*) AS total, COALESCE(SUM(total_price), 0) AS total_revenue FROM orders');
+    // 3. Total Orders Count & Revenue Sum (Store 1 whole rupees, Store 2 paise)
+    const [orderRows] = await pool.execute(`
+      SELECT
+        COUNT(*) AS total,
+        COALESCE(SUM(CASE WHEN store_id = 2 THEN ROUND(total_price / 100) ELSE total_price END), 0) AS total_revenue_rupees
+      FROM orders
+    `);
     const totalOrders = orderRows[0].total || 0;
-    const totalRevenuePaise = parseInt(orderRows[0].total_revenue, 10) || 0;
-    const totalRevenueRupees = Math.round(totalRevenuePaise / 100);
+    const totalRevenueRupees = parseInt(orderRows[0].total_revenue_rupees, 10) || 0;
     const averageOrderValueRupees = totalOrders > 0 ? Math.round(totalRevenueRupees / totalOrders) : 0;
 
     // 4. Total Registered Users Count
@@ -54,9 +58,13 @@ const getAdminDashboardHandler = async (req, res, next) => {
 
     try {
       const [monthlyRows] = await pool.execute(`
-        SELECT 
+        SELECT
           DATE_FORMAT(created_at, '%Y-%m') AS month_key,
-          COALESCE(SUM(CASE WHEN fulfillment_status != 'cancelled' THEN total_price ELSE 0 END), 0) AS revenue_paise,
+          COALESCE(SUM(CASE
+            WHEN fulfillment_status != 'cancelled' THEN
+              CASE WHEN store_id = 2 THEN ROUND(total_price / 100) ELSE total_price END
+            ELSE 0
+          END), 0) AS revenue_rupees,
           COUNT(CASE WHEN fulfillment_status != 'cancelled' THEN 1 ELSE NULL END) AS order_count
         FROM orders
         WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
@@ -67,8 +75,7 @@ const getAdminDashboardHandler = async (req, res, next) => {
       monthlyRows.forEach(row => {
         const match = monthlyStats.find(s => s.monthKey === row.month_key);
         if (match) {
-          const revPaise = parseInt(row.revenue_paise, 10) || 0;
-          match.revenue = Math.round(revPaise / 100);
+          match.revenue = parseInt(row.revenue_rupees, 10) || 0;
           match.orders = parseInt(row.order_count, 10) || 0;
         }
       });
@@ -557,7 +564,7 @@ const getActiveSessionsHandler = async (req, res, next) => {
 
     // Query all active database sessions
     const [rows] = await pool.execute(`
-      SELECT 
+      SELECT
         id, session_id, firebase_uid, email, admin_name, role, ip_address, user_agent,
         login_time, last_activity, status, expires_at, created_at
       FROM admin_sessions

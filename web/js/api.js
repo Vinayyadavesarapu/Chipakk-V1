@@ -211,6 +211,10 @@ export const apiClient = {
     return request(endpoint, { method: 'DELETE' });
   },
 
+  deleteProductImage: (productId, imageId) => {
+    return request(`/admin/products/${productId}/images/${imageId}`, { method: 'DELETE' });
+  },
+
   upload: (endpoint, formData) => {
     return request(endpoint, {
       method: 'POST',

@@ -1,12 +1,12 @@
-const pool = require('../config/database');
+const { pool } = require('../config/database');
 const razorpayService = require('./razorpayService');
 
 /**
  * CHIPAKK — Payment Service Layer
- * 
+ *
  * Handles order payment eligibility, Razorpay payment order initiation,
  * server-side signature verification, and idempotent webhook reconciliation.
- * 
+ *
  * CORE PRINCIPLE: The browser is NEVER authoritative for payment success.
  */
 
@@ -23,8 +23,59 @@ const findUserByFirebaseUid = async (firebaseUid, connection = pool) => {
 };
 
 /**
+ * Helper: Convert store-specific order total to paise for gateway and payments table.
+ * Store 1 (CHIPAKK): total_price is in whole INR rupees -> total_price * 100 paise.
+ * Store 2 (THE MARSHANS): total_price is in integer paise -> total_price paise.
+ */
+const toGatewayPaise = (rawTotalPrice, storeId) => {
+  const isStore2 = parseInt(storeId, 10) === 2;
+  const num = parseInt(rawTotalPrice, 10) || 0;
+  return isStore2 ? num : (num * 100);
+};
+
+/**
+ * Promote reserved coupon redemption to consumed upon successful payment verification.
+ */
+const promoteCouponReservation = async (orderId, connection = pool) => {
+  try {
+    const [usageRows] = await connection.execute(
+      "SELECT id, coupon_id FROM coupon_usage WHERE order_id = ? AND status = 'reserved'",
+      [orderId]
+    );
+    if (usageRows && usageRows.length > 0) {
+      await connection.execute(
+        "UPDATE coupon_usage SET status = 'consumed' WHERE order_id = ? AND status = 'reserved'",
+        [orderId]
+      );
+      for (const row of usageRows) {
+        await connection.execute(
+          'UPDATE coupons SET usage_count = usage_count + 1 WHERE id = ?',
+          [row.coupon_id]
+        );
+      }
+    }
+  } catch (err) {
+    // If status column doesn't exist or table missing, fail gracefully
+  }
+};
+
+/**
+ * Release reserved coupon redemption upon payment failure or order cancellation.
+ */
+const releaseCouponReservation = async (orderId, connection = pool) => {
+  try {
+    await connection.execute(
+      "UPDATE coupon_usage SET status = 'released' WHERE order_id = ? AND status = 'reserved'",
+      [orderId]
+    );
+  } catch (err) {
+    // fail gracefully
+  }
+};
+
+/**
  * Create a Gateway Payment Order for an eligible CHIPAKK order
- * 
+ *
  * @param {number|string} orderId - Internal CHIPAKK order ID
  * @param {Object} firebaseUser - Verified customer Firebase auth token payload
  */
@@ -41,8 +92,8 @@ const createPaymentOrder = async (orderId, firebaseUser) => {
     `SELECT id, order_number, customer_id, customer_email, customer_name,
             shipping_address, payment_method, payment_status, fulfillment_status,
             total_price, gateway_order_id, COALESCE(store_id, 1) AS store_id
-     FROM orders 
-     WHERE id = ? 
+     FROM orders
+     WHERE id = ?
      LIMIT 1`,
     [numId]
   );
@@ -58,7 +109,7 @@ const createPaymentOrder = async (orderId, firebaseUser) => {
   // 2. Verify order ownership
   const user = await findUserByFirebaseUid(firebaseUser.uid);
   const isOwner = (user && order.customer_id && Number(user.id) === Number(order.customer_id)) ||
-                  (order.customer_email && firebaseUser.email && order.customer_email.toLowerCase() === firebaseUser.email.toLowerCase());
+                  (order.customer_email && firebaseUser.email && Boolean(firebaseUser.email_verified) && order.customer_email.toLowerCase() === firebaseUser.email.toLowerCase());
 
   if (!isOwner) {
     const err = new Error('Access denied. You do not have permission to pay for this order.');
@@ -90,58 +141,68 @@ const createPaymentOrder = async (orderId, firebaseUser) => {
     throw err;
   }
 
-  // 4. Create Gateway Payment Order
+  // 4. Create or reuse Gateway Payment Order
   // Razorpay REST API strictly mandates amount in paise.
   // For Store 1 (CHIPAKK), DB stores whole rupees (e.g. ₹15 = DB 15).
   // We convert to paise ONLY when calling the Razorpay gateway (15 * 100 = 1500).
   const isStore2 = parseInt(order.store_id, 10) === 2;
   const amountPaiseForGateway = isStore2 ? rawTotalPrice : (rawTotalPrice * 100);
 
-  const gatewayOrder = await razorpayService.createRazorpayOrder({
-    amountPaise: amountPaiseForGateway,
-    receipt: order.order_number,
-    notes: {
-      order_id: String(order.id),
-      order_number: order.order_number,
-      customer_id: String(order.customer_id || '')
-    }
-  });
+  let gatewayOrder;
+  if (order.gateway_order_id) {
+    // Reuse existing gateway order for this pending order to avoid orphan orders at gateway
+    gatewayOrder = {
+      gateway_order_id: order.gateway_order_id,
+      amount: amountPaiseForGateway,
+      currency: 'INR'
+    };
+  } else {
+    gatewayOrder = await razorpayService.createRazorpayOrder({
+      amountPaise: amountPaiseForGateway,
+      receipt: order.order_number,
+      notes: {
+        order_id: String(order.id),
+        order_number: order.order_number,
+        customer_id: String(order.customer_id || '')
+      }
+    });
 
-  // 5. Record gateway order ID on the order and create payment attempt record
-  const connection = await pool.getConnection();
-  try {
-    await connection.beginTransaction();
-
-    await connection.execute(
-      'UPDATE orders SET gateway_order_id = ?, updated_at = NOW() WHERE id = ?',
-      [gatewayOrder.gateway_order_id, order.id]
-    );
-
-    // Insert payment record (safe check in case payments table exists)
+    // 5. Record gateway order ID on the order and create payment attempt record
+    const connection = await pool.getConnection();
     try {
-      await connection.execute(
-        `INSERT INTO payments (
-          order_id, provider, gateway_order_id, amount, currency, status, created_at
-        ) VALUES (?, 'razorpay', ?, ?, ?, 'created', NOW())`,
-        [order.id, gatewayOrder.gateway_order_id, rawTotalPrice, gatewayOrder.currency || 'INR']
-      );
-    } catch (tblErr) {
-      console.warn('[PaymentService] payments table insertion notice:', tblErr.message);
-    }
+      await connection.beginTransaction();
 
-    await connection.commit();
-  } catch (dbErr) {
-    await connection.rollback();
-    throw dbErr;
-  } finally {
-    connection.release();
+      await connection.execute(
+        'UPDATE orders SET gateway_order_id = ?, updated_at = NOW() WHERE id = ?',
+        [gatewayOrder.gateway_order_id, order.id]
+      );
+
+      // Insert payment record (safe check in case payments table exists)
+      try {
+        await connection.execute(
+          `INSERT INTO payments (
+            order_id, provider, gateway_order_id, amount, currency, status, created_at
+          ) VALUES (?, 'razorpay', ?, ?, ?, 'created', NOW())`,
+          [order.id, gatewayOrder.gateway_order_id, amountPaiseForGateway, gatewayOrder.currency || 'INR']
+        );
+      } catch (tblErr) {
+        console.warn('[PaymentService] payments table insertion notice:', tblErr.message);
+      }
+
+      await connection.commit();
+    } catch (dbErr) {
+      await connection.rollback();
+      throw dbErr;
+    } finally {
+      connection.release();
+    }
   }
 
   // Parse phone from shipping address if available
   let phone = '';
   try {
-    const addr = typeof order.shipping_address === 'string' 
-      ? JSON.parse(order.shipping_address) 
+    const addr = typeof order.shipping_address === 'string'
+      ? JSON.parse(order.shipping_address)
       : order.shipping_address;
     phone = addr?.phone || '';
   } catch (e) {}
@@ -163,7 +224,7 @@ const createPaymentOrder = async (orderId, firebaseUser) => {
 
 /**
  * Verify Customer Payment Signature (Called by browser on successful checkout popup completion)
- * 
+ *
  * @param {Object} params
  * @param {number|string} params.order_id - Internal CHIPAKK order ID
  * @param {string} params.razorpay_order_id
@@ -190,9 +251,9 @@ const verifyPayment = async (params, firebaseUser) => {
   // 1. Load order from MySQL
   const [orderRows] = await pool.execute(
     `SELECT id, order_number, customer_id, customer_email, total_price,
-            payment_status, fulfillment_status, gateway_order_id
-     FROM orders 
-     WHERE id = ? 
+            payment_status, fulfillment_status, gateway_order_id, COALESCE(store_id, 1) AS store_id
+     FROM orders
+     WHERE id = ?
      LIMIT 1`,
     [numId]
   );
@@ -204,11 +265,12 @@ const verifyPayment = async (params, firebaseUser) => {
   }
 
   const order = orderRows[0];
+  const amountPaise = toGatewayPaise(order.total_price, order.store_id);
 
   // 2. Verify order ownership
   const user = await findUserByFirebaseUid(firebaseUser.uid);
   const isOwner = (user && order.customer_id && Number(user.id) === Number(order.customer_id)) ||
-                  (order.customer_email && firebaseUser.email && order.customer_email.toLowerCase() === firebaseUser.email.toLowerCase());
+                  (order.customer_email && firebaseUser.email && Boolean(firebaseUser.email_verified) && order.customer_email.toLowerCase() === firebaseUser.email.toLowerCase());
 
   if (!isOwner) {
     const err = new Error('Access denied. You cannot verify payment for this order.');
@@ -239,9 +301,12 @@ const verifyPayment = async (params, firebaseUser) => {
           amount, currency, status, error_code, error_description, created_at
         ) VALUES (?, 'razorpay', ?, ?, ?, ?, 'INR', 'failed', 'INVALID_SIGNATURE', 'Cryptographic signature mismatch', NOW())
         ON DUPLICATE KEY UPDATE status = 'failed', error_code = 'INVALID_SIGNATURE', updated_at = NOW()`,
-        [order.id, razorpay_order_id, razorpay_payment_id, razorpay_signature, order.total_price]
+        [order.id, razorpay_order_id, razorpay_payment_id, razorpay_signature, amountPaise]
       );
     } catch (e) {}
+
+    // Release coupon reservation on failure
+    await releaseCouponReservation(order.id);
 
     const err = new Error('Payment signature verification failed. The payment could not be validated.');
     err.status = 400;
@@ -254,7 +319,7 @@ const verifyPayment = async (params, firebaseUser) => {
     await connection.beginTransaction();
 
     await connection.execute(
-      `UPDATE orders 
+      `UPDATE orders
        SET payment_status = 'paid',
            payment_method = 'RAZORPAY',
            fulfillment_status = CASE WHEN fulfillment_status = 'pending' THEN 'processing' ELSE fulfillment_status END,
@@ -269,13 +334,16 @@ const verifyPayment = async (params, firebaseUser) => {
           order_id, provider, gateway_order_id, gateway_payment_id, gateway_signature,
           amount, currency, status, created_at
         ) VALUES (?, 'razorpay', ?, ?, ?, ?, 'INR', 'captured', NOW())
-        ON DUPLICATE KEY UPDATE 
+        ON DUPLICATE KEY UPDATE
           status = 'captured',
           gateway_signature = VALUES(gateway_signature),
           updated_at = NOW()`,
-        [order.id, razorpay_order_id, razorpay_payment_id, razorpay_signature, order.total_price]
+        [order.id, razorpay_order_id, razorpay_payment_id, razorpay_signature, amountPaise]
       );
     } catch (e) {}
+
+    // Promote reserved coupon to consumed and increment usage
+    await promoteCouponReservation(order.id, connection);
 
     await connection.commit();
   } catch (dbErr) {
@@ -295,7 +363,7 @@ const verifyPayment = async (params, firebaseUser) => {
 
 /**
  * Handle Gateway Webhook Asynchronously with Cryptographic Verification and Idempotency
- * 
+ *
  * @param {string} rawBody - Unparsed request body string
  * @param {string} signatureHeader - Value of 'x-razorpay-signature'
  */
@@ -357,7 +425,7 @@ const handleWebhook = async (rawBody, signatureHeader) => {
     // Lookup order by gateway_order_id or notes.order_id
     let order = null;
     const [orderRows] = await pool.execute(
-      'SELECT id, order_number, total_price, payment_status, fulfillment_status FROM orders WHERE gateway_order_id = ? LIMIT 1',
+      'SELECT id, order_number, store_id, total_price, payment_status, fulfillment_status FROM orders WHERE gateway_order_id = ? LIMIT 1',
       [gatewayOrderId]
     );
 
@@ -365,7 +433,7 @@ const handleWebhook = async (rawBody, signatureHeader) => {
       order = orderRows[0];
     } else if (paymentEntity.notes?.order_id) {
       const [orderById] = await pool.execute(
-        'SELECT id, order_number, total_price, payment_status, fulfillment_status FROM orders WHERE id = ? LIMIT 1',
+        'SELECT id, order_number, store_id, total_price, payment_status, fulfillment_status FROM orders WHERE id = ? LIMIT 1',
         [parseInt(paymentEntity.notes.order_id, 10)]
       );
       if (orderById && orderById.length > 0) order = orderById[0];
@@ -376,13 +444,28 @@ const handleWebhook = async (rawBody, signatureHeader) => {
       return { status: 'order_not_found', gateway_order_id: gatewayOrderId };
     }
 
+    if (order.payment_status === 'paid') {
+      console.log(`[Payment Webhook] Order #${order.order_number} already marked paid.`);
+      return { status: 'already_paid', order_number: order.order_number };
+    }
+
+    // Verify captured amount in paise matches expected gateway amount
+    const rawTotalPrice = parseInt(order.total_price, 10) || 0;
+    const isStore2 = parseInt(order.store_id, 10) === 2;
+    const expectedPaise = isStore2 ? rawTotalPrice : (rawTotalPrice * 100);
+
+    if (amountPaise < expectedPaise) {
+      console.warn(`[Payment Webhook] Underpaid amount for order #${order.order_number}: captured ${amountPaise} < expected ${expectedPaise}`);
+      return { status: 'amount_mismatch', reason: 'underpaid', order_id: order.id };
+    }
+
     // Atomic update
     const connection = await pool.getConnection();
     try {
       await connection.beginTransaction();
 
       await connection.execute(
-        `UPDATE orders 
+        `UPDATE orders
          SET payment_status = 'paid',
              payment_method = 'RAZORPAY',
              fulfillment_status = CASE WHEN fulfillment_status = 'pending' THEN 'processing' ELSE fulfillment_status END,
@@ -397,14 +480,17 @@ const handleWebhook = async (rawBody, signatureHeader) => {
             order_id, provider, gateway_order_id, gateway_payment_id,
             amount, currency, status, method, raw_event_reference, created_at
           ) VALUES (?, 'razorpay', ?, ?, ?, 'INR', 'captured', ?, ?, NOW())
-          ON DUPLICATE KEY UPDATE 
+          ON DUPLICATE KEY UPDATE
             status = 'captured',
             method = VALUES(method),
             raw_event_reference = VALUES(raw_event_reference),
             updated_at = NOW()`,
-          [order.id, gatewayOrderId, gatewayPaymentId, order.total_price, method, eventId]
+          [order.id, gatewayOrderId, gatewayPaymentId, expectedPaise, method, eventId]
         );
       } catch (e) {}
+
+      // Promote reserved coupon to consumed and increment usage
+      await promoteCouponReservation(order.id, connection);
 
       await connection.commit();
       console.log(`[Payment Webhook] Successfully reconciled order #${order.order_number} to PAID.`);
@@ -438,7 +524,7 @@ const handleWebhook = async (rawBody, signatureHeader) => {
               order_id, provider, gateway_order_id, gateway_payment_id,
               amount, currency, status, error_code, error_description, raw_event_reference, created_at
             ) VALUES (?, 'razorpay', ?, ?, ?, 'INR', 'failed', ?, ?, ?, NOW())
-            ON DUPLICATE KEY UPDATE 
+            ON DUPLICATE KEY UPDATE
               status = 'failed',
               error_code = VALUES(error_code),
               error_description = VALUES(error_description),
@@ -446,6 +532,9 @@ const handleWebhook = async (rawBody, signatureHeader) => {
               updated_at = NOW()`,
             [ord.id, gatewayOrderId, gatewayPaymentId, paymentEntity.amount || 0, errorCode, errorDesc, eventId]
           );
+
+          // Release coupon reservation on payment failure
+          await releaseCouponReservation(ord.id);
         }
       } catch (e) {}
     }
@@ -458,7 +547,7 @@ const handleWebhook = async (rawBody, signatureHeader) => {
 
 /**
  * Get Authoritative Payment Status for an Order
- * 
+ *
  * @param {number|string} orderId
  * @param {Object} firebaseUser
  */
@@ -471,10 +560,10 @@ const getPaymentStatus = async (orderId, firebaseUser) => {
   }
 
   const [rows] = await pool.execute(
-    `SELECT id, order_number, customer_id, customer_email, payment_method, 
+    `SELECT id, order_number, customer_id, customer_email, payment_method,
             payment_status, fulfillment_status, total_price, gateway_order_id
-     FROM orders 
-     WHERE id = ? 
+     FROM orders
+     WHERE id = ?
      LIMIT 1`,
     [numId]
   );
@@ -489,7 +578,7 @@ const getPaymentStatus = async (orderId, firebaseUser) => {
 
   const user = await findUserByFirebaseUid(firebaseUser.uid);
   const isOwner = (user && order.customer_id && Number(user.id) === Number(order.customer_id)) ||
-                  (order.customer_email && firebaseUser.email && order.customer_email.toLowerCase() === firebaseUser.email.toLowerCase());
+                  (order.customer_email && firebaseUser.email && Boolean(firebaseUser.email_verified) && order.customer_email.toLowerCase() === firebaseUser.email.toLowerCase());
 
   if (!isOwner) {
     const err = new Error('Access denied.');
@@ -512,5 +601,8 @@ module.exports = {
   createPaymentOrder,
   verifyPayment,
   handleWebhook,
-  getPaymentStatus
+  getPaymentStatus,
+  promoteCouponReservation,
+  releaseCouponReservation,
+  toGatewayPaise
 };

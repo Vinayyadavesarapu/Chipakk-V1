@@ -1,7 +1,7 @@
 /* =========================================================
    CHIPAKK — Customer Authentication Module
    js/auth.js
-   
+
    CENTRALIZED AUTHENTICATION LAYER:
    - Shared customer identity with THE MARSHANS (chipakk-77b99)
    - Browser-compatible Firebase Web Auth SDK
@@ -45,9 +45,9 @@
       }
       authInstance = window.firebase.auth();
 
-      // Enforce browser-session persistence (closing tab/window ends browser session)
+      // Enforce local persistence (persists across tab closures and browser restarts)
       if (authInstance && authInstance.setPersistence && window.firebase.auth.Auth && window.firebase.auth.Auth.Persistence) {
-        authInstance.setPersistence(window.firebase.auth.Auth.Persistence.SESSION)
+        authInstance.setPersistence(window.firebase.auth.Auth.Persistence.LOCAL)
           .catch((err) => {
             console.warn("[CHIPAKK Auth] Persistence setting notice:", err.message);
           });

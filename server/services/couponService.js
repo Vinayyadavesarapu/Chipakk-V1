@@ -13,6 +13,18 @@ const checkHasStoreId = async () => {
   return hasStoreIdCol;
 };
 
+let hasPerCustomerLimitCol = null;
+const checkHasPerCustomerLimit = async () => {
+  if (hasPerCustomerLimitCol !== null) return hasPerCustomerLimitCol;
+  try {
+    const [cols] = await pool.execute("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'coupons' AND COLUMN_NAME = 'per_customer_limit'");
+    hasPerCustomerLimitCol = cols && cols.length > 0;
+  } catch (e) {
+    hasPerCustomerLimitCol = false;
+  }
+  return hasPerCustomerLimitCol;
+};
+
 /**
  * Fetch list of coupons with pagination and filtering
  */
@@ -24,6 +36,7 @@ const getCoupons = async ({
   offset = 0
 } = {}) => {
   const hasStoreId = await checkHasStoreId();
+  const hasPerCust = await checkHasPerCustomerLimit();
   const conditions = [];
   const params = [];
 
@@ -61,9 +74,10 @@ const getCoupons = async ({
   const total = countRows[0].total || 0;
 
   const query = `
-    SELECT 
+    SELECT
       c.id,
       ${hasStoreId ? 'COALESCE(c.store_id, 1) AS store_id,' : '1 AS store_id,'}
+      ${hasPerCust ? 'COALESCE(c.per_customer_limit, 1) AS per_customer_limit,' : '1 AS per_customer_limit,'}
       c.code,
       c.discount_type,
       c.discount_value,
@@ -94,6 +108,7 @@ const getCoupons = async ({
     return {
       ...r,
       code: String(r.code).toUpperCase(),
+      per_customer_limit: r.per_customer_limit !== undefined ? (parseInt(r.per_customer_limit, 10) || 1) : 1,
       min_order_value_rupees: isStore2 ? Math.round(minOrderVal / 100) : minOrderVal,
       max_discount_amount_rupees: maxDiscountVal !== null ? (isStore2 ? Math.round(maxDiscountVal / 100) : maxDiscountVal) : null,
       discount_value_rupees: r.discount_type === 'fixed' ? (isStore2 ? Math.round(discountVal / 100) : discountVal) : null
@@ -117,6 +132,7 @@ const getCouponById = async (couponIdOrCode, store_id = null) => {
   const numId = parseInt(couponIdOrCode, 10);
   const isNumeric = !isNaN(numId) && String(numId) === String(couponIdOrCode);
   const hasStoreId = await checkHasStoreId();
+  const hasPerCust = await checkHasPerCustomerLimit();
 
   const params = [isNumeric ? numId : String(couponIdOrCode).trim().toUpperCase()];
   let storeCond = '';
@@ -133,9 +149,10 @@ const getCouponById = async (couponIdOrCode, store_id = null) => {
   }
 
   const couponQuery = `
-    SELECT 
+    SELECT
       c.id,
       ${hasStoreId ? 'COALESCE(c.store_id, 1) AS store_id,' : '1 AS store_id,'}
+      ${hasPerCust ? 'COALESCE(c.per_customer_limit, 1) AS per_customer_limit,' : '1 AS per_customer_limit,'}
       c.code,
       c.discount_type,
       c.discount_value,
@@ -162,6 +179,7 @@ const getCouponById = async (couponIdOrCode, store_id = null) => {
   const coupon = couponRows[0];
   const numCouponId = coupon.id;
   coupon.code = String(coupon.code).toUpperCase();
+  coupon.per_customer_limit = coupon.per_customer_limit !== undefined ? (parseInt(coupon.per_customer_limit, 10) || 1) : 1;
 
   const isStore2 = parseInt(coupon.store_id, 10) === 2;
   const minOrderVal = parseInt(coupon.min_order_value, 10) || 0;
@@ -174,7 +192,7 @@ const getCouponById = async (couponIdOrCode, store_id = null) => {
 
   // Fetch recent usages
   const usageQuery = `
-    SELECT 
+    SELECT
       cu.id AS usage_id,
       cu.order_id,
       o.order_number,
@@ -214,11 +232,13 @@ const createCoupon = async (couponData) => {
     start_date = null,
     end_date = null,
     usage_limit = null,
+    per_customer_limit = 1,
     active = 1,
     store_id = 1
   } = couponData;
 
   const hasStoreId = await checkHasStoreId();
+  const hasPerCust = await checkHasPerCustomerLimit();
   const activeStoreId = parseInt(store_id, 10) === 2 ? 2 : 1;
 
   if (!code || typeof code !== 'string' || !code.trim()) {
@@ -232,13 +252,24 @@ const createCoupon = async (couponData) => {
     throw new Error("Discount type must be either 'percent' or 'fixed'.");
   }
 
-  const parsedVal = parseInt(discount_value, 10);
+  let parsedVal = parseInt(discount_value, 10);
   if (isNaN(parsedVal) || parsedVal < 0) {
     throw new Error('Discount value is required and must be non-negative.');
   }
 
   if (type === 'percent' && (parsedVal < 1 || parsedVal > 100)) {
     throw new Error('Percentage discount value must be between 1 and 100.');
+  }
+
+  // Store 2 fixed discount unit normalization (preserves paise internally while supporting rupees input):
+  if (activeStoreId === 2 && type === 'fixed') {
+    if (couponData.discount_value_rupees !== undefined) {
+      parsedVal = Math.round(Number(couponData.discount_value_rupees) * 100);
+    } else if (couponData.is_paise === true) {
+      parsedVal = Math.round(parsedVal);
+    } else {
+      parsedVal = Math.round(parsedVal * 100);
+    }
   }
 
   let safeStartDate = null;
@@ -274,19 +305,25 @@ const createCoupon = async (couponData) => {
     throw new Error(`A coupon with code '${normalizedCode}' already exists.`);
   }
 
-  const query = hasStoreId ? `
-    INSERT INTO coupons (
-      code, store_id, discount_type, discount_value, min_order_value, max_discount_amount, start_date, end_date, usage_limit, active
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  ` : `
-    INSERT INTO coupons (
-      code, discount_type, discount_value, min_order_value, max_discount_amount, start_date, end_date, usage_limit, active
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `;
+  const columns = ['code'];
+  const valuesPlaceholders = ['?'];
+  const params = [normalizedCode];
 
-  const params = hasStoreId ? [
-    normalizedCode,
-    activeStoreId,
+  if (hasStoreId) {
+    columns.push('store_id');
+    valuesPlaceholders.push('?');
+    params.push(activeStoreId);
+  }
+
+  if (hasPerCust) {
+    columns.push('per_customer_limit');
+    valuesPlaceholders.push('?');
+    params.push(Math.max(parseInt(per_customer_limit, 10) || 1, 1));
+  }
+
+  columns.push('discount_type', 'discount_value', 'min_order_value', 'max_discount_amount', 'start_date', 'end_date', 'usage_limit', 'active');
+  valuesPlaceholders.push('?', '?', '?', '?', '?', '?', '?', '?');
+  params.push(
     type,
     parsedVal,
     parseInt(min_order_value, 10) || 0,
@@ -295,18 +332,9 @@ const createCoupon = async (couponData) => {
     safeEndDate,
     usage_limit !== null && usage_limit !== undefined ? (parseInt(usage_limit, 10) || null) : null,
     active ? 1 : 0
-  ] : [
-    normalizedCode,
-    type,
-    parsedVal,
-    parseInt(min_order_value, 10) || 0,
-    max_discount_amount !== null && max_discount_amount !== undefined ? (parseInt(max_discount_amount, 10) || null) : null,
-    safeStartDate,
-    safeEndDate,
-    usage_limit !== null && usage_limit !== undefined ? (parseInt(usage_limit, 10) || null) : null,
-    active ? 1 : 0
-  ];
+  );
 
+  const query = `INSERT INTO coupons (${columns.join(', ')}) VALUES (${valuesPlaceholders.join(', ')})`;
   const [result] = await pool.execute(query, params);
   return getCouponById(result.insertId, activeStoreId);
 };
@@ -326,6 +354,7 @@ const updateCoupon = async (id, couponData, store_id = null) => {
   }
 
   const hasStoreId = await checkHasStoreId();
+  const hasPerCust = await checkHasPerCustomerLimit();
 
   const {
     code,
@@ -336,6 +365,7 @@ const updateCoupon = async (id, couponData, store_id = null) => {
     start_date,
     end_date,
     usage_limit,
+    per_customer_limit,
     active
   } = couponData;
 
@@ -373,12 +403,22 @@ const updateCoupon = async (id, couponData, store_id = null) => {
   }
 
   if (discount_value !== undefined) {
-    const parsedVal = parseInt(discount_value, 10);
+    let parsedVal = parseInt(discount_value, 10);
     if (isNaN(parsedVal) || parsedVal < 0) {
       throw new Error('Discount value must be non-negative.');
     }
     if (type === 'percent' && (parsedVal < 1 || parsedVal > 100)) {
       throw new Error('Percentage discount value must be between 1 and 100.');
+    }
+    const effStoreId = parseInt(store_id || existing.store_id, 10) === 2 ? 2 : 1;
+    if (effStoreId === 2 && type === 'fixed') {
+      if (couponData.discount_value_rupees !== undefined) {
+        parsedVal = Math.round(Number(couponData.discount_value_rupees) * 100);
+      } else if (couponData.is_paise === true) {
+        parsedVal = Math.round(parsedVal);
+      } else {
+        parsedVal = Math.round(parsedVal * 100);
+      }
     }
     updates.push('discount_value = ?');
     params.push(parsedVal);
@@ -430,6 +470,11 @@ const updateCoupon = async (id, couponData, store_id = null) => {
     params.push(usage_limit !== null && usage_limit !== '' ? (parseInt(usage_limit, 10) || null) : null);
   }
 
+  if (per_customer_limit !== undefined && hasPerCust) {
+    updates.push('per_customer_limit = ?');
+    params.push(Math.max(parseInt(per_customer_limit, 10) || 1, 1));
+  }
+
   if (active !== undefined) {
     updates.push('active = ?');
     params.push(active ? 1 : 0);
@@ -465,13 +510,13 @@ const deleteCoupon = async (id, store_id = null) => {
 /**
  * Validate coupon code against subtotal for customer checkout
  */
-const validateCoupon = async (code, subtotalPaise = 0, store_id = null) => {
+const validateCoupon = async (code, subtotalPaise = 0, store_id = null, customer_id = null, current_order_id = null, preloadedCoupon = null) => {
   if (!code || typeof code !== 'string' || !code.trim()) {
     return { valid: false, message: 'Coupon code is required.' };
   }
 
   const normalizedCode = code.trim().toUpperCase();
-  const coupon = await getCouponById(normalizedCode, store_id);
+  const coupon = preloadedCoupon || await getCouponById(normalizedCode, store_id);
 
   if (!coupon || !coupon.active) {
     return { valid: false, message: 'Invalid or inactive coupon code.' };
@@ -486,8 +531,47 @@ const validateCoupon = async (code, subtotalPaise = 0, store_id = null) => {
     return { valid: false, message: 'This coupon has expired.' };
   }
 
-  if (coupon.usage_limit && coupon.usage_count >= coupon.usage_limit) {
+  // Active reservations within the last 15 minutes hold spots against global usage limit
+  let activeReservedCount = 0;
+  try {
+    const [resRows] = await pool.execute(
+      "SELECT COUNT(*) AS cnt FROM coupon_usage WHERE coupon_id = ? AND status = 'reserved' AND reserved_at > DATE_SUB(NOW(), INTERVAL 15 MINUTE) AND (? IS NULL OR order_id != ?)",
+      [coupon.id, current_order_id, current_order_id]
+    );
+    activeReservedCount = resRows[0]?.cnt || 0;
+  } catch (_) {}
+
+  const effectiveGlobalUsage = (parseInt(coupon.usage_count, 10) || 0) + activeReservedCount;
+  if (coupon.usage_limit && effectiveGlobalUsage >= coupon.usage_limit) {
     return { valid: false, message: 'This coupon usage limit has been reached.' };
+  }
+
+  // Per-customer redemption limit check
+  const custLimit = coupon.per_customer_limit !== undefined && coupon.per_customer_limit !== null
+    ? parseInt(coupon.per_customer_limit, 10)
+    : 1;
+
+  if (customer_id && custLimit > 0) {
+    let customerUsageCount = 0;
+    try {
+      const [custRows] = await pool.execute(
+        "SELECT COUNT(*) AS cnt FROM coupon_usage WHERE coupon_id = ? AND customer_id = ? AND (status = 'consumed' OR (status = 'reserved' AND reserved_at > DATE_SUB(NOW(), INTERVAL 15 MINUTE) AND (? IS NULL OR order_id != ?)))",
+        [coupon.id, customer_id, current_order_id, current_order_id]
+      );
+      customerUsageCount = custRows[0]?.cnt || 0;
+    } catch (_) {
+      try {
+        const [custRowsLegacy] = await pool.execute(
+          "SELECT COUNT(*) AS cnt FROM coupon_usage WHERE coupon_id = ? AND customer_id = ?",
+          [coupon.id, customer_id]
+        );
+        customerUsageCount = custRowsLegacy[0]?.cnt || 0;
+      } catch (_) {}
+    }
+
+    if (customerUsageCount >= custLimit) {
+      return { valid: false, message: 'You have already reached the redemption limit for this coupon.' };
+    }
   }
 
   const isStore2 = parseInt(store_id || coupon.store_id, 10) === 2;
@@ -529,6 +613,7 @@ const validateCoupon = async (code, subtotalPaise = 0, store_id = null) => {
       discount_value: coupon.discount_value,
       min_order_value: minOrderRequired,
       max_discount_amount: maxDiscount,
+      per_customer_limit: custLimit,
       discount: canonicalDiscount,
       discount_amount: canonicalDiscount,
       discount_paise: discountPaise,

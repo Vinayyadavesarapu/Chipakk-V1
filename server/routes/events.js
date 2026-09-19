@@ -16,6 +16,7 @@ router.get('/', async (req, res, next) => {
     const result = await eventService.getEvents({
       active: 1,
       status: status,
+      store_id: req.storeId,
       limit: parseInt(limit, 10) || 20
     });
 

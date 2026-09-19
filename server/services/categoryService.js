@@ -248,7 +248,7 @@ const getCategories = async ({ activeOnly = true, storeId = null } = {}) => {
     let query = '';
     if (hasExpCol && hasExpTable) {
       query = `
-        SELECT 
+        SELECT
           c.*,
           COUNT(p.id) AS product_count,
           ce.id AS exp_id,
@@ -263,7 +263,7 @@ const getCategories = async ({ activeOnly = true, storeId = null } = {}) => {
       `;
     } else {
       query = `
-        SELECT 
+        SELECT
           c.*,
           COUNT(p.id) AS product_count
         FROM categories c
@@ -355,7 +355,7 @@ const setCategoryMedia = async (categoryId, mediaType, imageUrl, metadata = null
   const query = `
     INSERT INTO category_media (category_id, media_type, image_url, metadata)
     VALUES (?, ?, ?, ?)
-    ON DUPLICATE KEY UPDATE 
+    ON DUPLICATE KEY UPDATE
       image_url = VALUES(image_url),
       metadata = VALUES(metadata),
       updated_at = CURRENT_TIMESTAMP
@@ -415,24 +415,36 @@ const getCategoryExperience = async (identifier, storeId = null) => {
   const hasExpTable = await checkHasCategoryExperiencesTable();
 
   let query = '';
-  if (hasExpCol && hasExpTable) {
-    query = `
-      SELECT 
-        c.id, c.name, c.slug, c.store_id,
-        ce.id AS exp_id,
-        ce.experience_code AS exp_code,
-        ce.name AS exp_name,
-        ce.settings AS exp_settings
-      FROM categories c
-      LEFT JOIN category_experiences ce ON c.experience_id = ce.id
-      WHERE ${whereCol} = ?
-      LIMIT 1
-    `;
-  } else {
-    query = `SELECT c.id, c.name, c.slug, c.store_id FROM categories c WHERE ${whereCol} = ? LIMIT 1`;
-  }
+    let storeCondition = '';
+    const queryParams = [val];
+    if (storeId) {
+      const sId = parseInt(storeId, 10);
+      if (sId === 1) {
+        storeCondition = ' AND (c.store_id = 1 OR c.store_id IS NULL)';
+      } else {
+        storeCondition = ' AND c.store_id = ?';
+        queryParams.push(sId);
+      }
+    }
 
-  const [rows] = await pool.execute(query, [val]);
+    if (hasExpCol && hasExpTable) {
+      query = `
+        SELECT
+          c.id, c.name, c.slug, c.store_id,
+          ce.id AS exp_id,
+          ce.experience_code AS exp_code,
+          ce.name AS exp_name,
+          ce.settings AS exp_settings
+        FROM categories c
+        LEFT JOIN category_experiences ce ON c.experience_id = ce.id
+        WHERE ${whereCol} = ?${storeCondition}
+        LIMIT 1
+      `;
+    } else {
+      query = `SELECT c.id, c.name, c.slug, c.store_id FROM categories c WHERE ${whereCol} = ?${storeCondition} LIMIT 1`;
+    }
+
+    const [rows] = await pool.execute(query, queryParams);
   if (!rows || rows.length === 0) return null;
 
   const r = rows[0];
@@ -481,7 +493,7 @@ const getCategoryBySlug = async (slug, storeId = null) => {
     let catQuery = '';
     if (hasExpCol && hasExpTable) {
       catQuery = `
-        SELECT 
+        SELECT
           c.*,
           ce.id AS exp_id,
           ce.experience_code AS exp_code,
@@ -558,7 +570,7 @@ const getCategoryBySlug = async (slug, storeId = null) => {
   // Fetch products in this category
   const selectExpOverride = hasExpOverride ? 'p.experience_override,' : 'NULL AS experience_override,';
   const prodQuery = `
-    SELECT 
+    SELECT
       p.id,
       p.store_id,
       p.name,
@@ -755,7 +767,7 @@ const updateCategory = async (id, {
   media,
   hero_light,
   hero_dark
-}) => {
+}, storeId = null) => {
   const numId = parseInt(id, 10);
   if (isNaN(numId)) {
     throw new Error('Invalid category ID');
@@ -763,6 +775,23 @@ const updateCategory = async (id, {
 
   const hasImage = await checkHasImageUrl();
   const hasExpId = await checkHasExperienceId();
+  const hasStoreId = await checkHasStoreId();
+
+  if (hasStoreId && storeId !== null && storeId !== undefined) {
+    const [ownerRows] = await pool.execute('SELECT store_id FROM categories WHERE id = ? LIMIT 1', [numId]);
+    if (!ownerRows || ownerRows.length === 0) {
+      return null;
+    }
+    const ownerStoreId = ownerRows[0].store_id;
+    const sId = parseInt(storeId, 10);
+    const matchesStore = sId === 1
+      ? (ownerStoreId === 1 || ownerStoreId === null)
+      : (ownerStoreId === sId);
+    if (!matchesStore) {
+      return null;
+    }
+  }
+
   const updates = [];
   const params = [];
 
@@ -863,7 +892,7 @@ const updateCategory = async (id, {
 
   try {
     const [rows] = await pool.execute(`
-      SELECT 
+      SELECT
         c.*,
         COUNT(p.id) AS product_count
       FROM categories c
@@ -906,13 +935,26 @@ const updateCategory = async (id, {
 /**
  * Delete a category
  */
-const deleteCategory = async (id) => {
+const deleteCategory = async (id, storeId = null) => {
   const numId = parseInt(id, 10);
   if (isNaN(numId)) {
     throw new Error('Invalid category ID');
   }
 
-  const [result] = await pool.execute('DELETE FROM categories WHERE id = ?', [numId]);
+  const hasStoreId = await checkHasStoreId();
+  const params = [numId];
+  let storeCondition = '';
+  if (hasStoreId && storeId !== null && storeId !== undefined) {
+    const sId = parseInt(storeId, 10);
+    if (sId === 1) {
+      storeCondition = ' AND (store_id = 1 OR store_id IS NULL)';
+    } else {
+      storeCondition = ' AND store_id = ?';
+      params.push(sId);
+    }
+  }
+
+  const [result] = await pool.execute(`DELETE FROM categories WHERE id = ?${storeCondition}`, params);
   return result.affectedRows > 0;
 };
 

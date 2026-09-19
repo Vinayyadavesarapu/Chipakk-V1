@@ -656,18 +656,19 @@ async function refreshCustomersFromAPI() {
 async function refreshEventsFromAPI() {
     try {
         const res = await apiClient.get('/admin/events');
-        if (res && res.events) {
-            events = res.events.map(e => ({
+        const rawEvents = res?.data?.events || res?.events || (Array.isArray(res?.data) ? res.data : []) || (Array.isArray(res) ? res : []);
+        if (Array.isArray(rawEvents)) {
+            events = rawEvents.map(e => ({
                 ...e,
                 id: e.id,
                 event_name: e.name || e.event_name || '',
                 subtitle: e.subtitle || e.description || '',
                 discount_type: e.discount_type || 'percent',
-                discount_value: e.discount_value || 0,
+                discount_value: e.discount_percent !== undefined ? e.discount_percent : (e.discount_value || 0),
                 start_time: e.start_time || e.start_date || new Date().toISOString().slice(0, 16),
                 end_time: e.end_time || e.end_date || new Date().toISOString().slice(0, 16),
-                target_product_ids: Array.isArray(e.target_product_ids) ? e.target_product_ids : [],
-                active: e.active === 1 || e.active === true
+                target_product_ids: Array.isArray(e.target_products) ? e.target_products : (Array.isArray(e.target_product_ids) ? e.target_product_ids : []),
+                active: e.active === 1 || e.active === true || e.is_active === 1 || e.is_active === true
             }));
             renderEventsTable();
         }
@@ -679,15 +680,16 @@ async function refreshEventsFromAPI() {
 async function refreshCouponsFromAPI() {
     try {
         const res = await apiClient.get('/admin/coupons');
-        if (res && res.coupons) {
-            coupons = res.coupons.map(c => ({
+        const rawCoupons = res?.data?.coupons || res?.coupons || (Array.isArray(res?.data) ? res.data : []) || (Array.isArray(res) ? res : []);
+        if (Array.isArray(rawCoupons)) {
+            coupons = rawCoupons.map(c => ({
                 ...c,
                 id: c.id,
                 code: (c.code || '').toUpperCase(),
                 discount_type: c.discount_type || 'percent',
                 discount_value: c.discount_value || 0,
                 min_spend: c.min_order_value_rupees !== undefined ? c.min_order_value_rupees : (parseInt(c.min_order_value || c.min_spend, 10) || 0),
-                active: c.active === 1 || c.active === true
+                active: c.active === 1 || c.active === true || c.is_active === 1 || c.is_active === true
             }));
             renderCouponsTable();
         }
@@ -699,8 +701,9 @@ async function refreshCouponsFromAPI() {
 async function refreshShippingRulesFromAPI() {
     try {
         const res = await apiClient.get('/admin/shipping-rules');
-        if (res && res.rules) {
-            shippingRules = res.rules.map(s => ({
+        const rawRules = res?.data?.rules || res?.rules || (Array.isArray(res?.data) ? res.data : []) || (Array.isArray(res) ? res : []);
+        if (Array.isArray(rawRules)) {
+            shippingRules = rawRules.map(s => ({
                 ...s,
                 id: s.id,
                 rule_name: s.name || s.rule_name || '',
@@ -721,12 +724,11 @@ async function refreshShippingRulesFromAPI() {
 async function refreshStoreBuilderFromAPI() {
     try {
         const res = await apiClient.get('/admin/store-builder');
-        if (res) {
-            if (Array.isArray(res.heroGroups)) heroGroups = res.heroGroups;
-            if (Array.isArray(res.promoBanners)) promoBanners = res.promoBanners;
-            if (Array.isArray(res.storeSections)) storeSections = res.storeSections;
-            renderStoreBuilder();
-        }
+        const data = res?.data || res || {};
+        if (Array.isArray(data.heroGroups)) heroGroups = data.heroGroups;
+        if (Array.isArray(data.promoBanners)) promoBanners = data.promoBanners;
+        if (Array.isArray(data.storeSections)) storeSections = data.storeSections;
+        renderStoreBuilder();
     } catch (err) {
         console.error('[refreshStoreBuilderFromAPI]', err.message);
     }
@@ -735,8 +737,9 @@ async function refreshStoreBuilderFromAPI() {
 async function refreshReviewsFromAPI() {
     try {
         const res = await apiClient.get('/admin/reviews');
-        if (res && res.reviews) {
-            reviews = res.reviews.map(r => ({
+        const rawReviews = res?.data?.reviews || res?.reviews || (Array.isArray(res?.data) ? res.data : []) || (Array.isArray(res) ? res : []);
+        if (Array.isArray(rawReviews)) {
+            reviews = rawReviews.map(r => ({
                 ...r,
                 id: r.id,
                 admin_id: r.admin_product_id || `CK-${r.product_id}`,
@@ -757,8 +760,9 @@ async function refreshReviewsFromAPI() {
 async function refreshSettingsFromAPI() {
     try {
         const res = await apiClient.get('/admin/settings');
-        if (res && res.settings) {
-            siteSettings = { ...siteSettings, ...res.settings };
+        const rawSettings = res?.data?.settings || res?.settings || res?.data || (typeof res === 'object' ? res : null);
+        if (rawSettings && typeof rawSettings === 'object') {
+            siteSettings = { ...siteSettings, ...rawSettings };
             loadSystemSettings();
         }
     } catch (err) {
@@ -1176,8 +1180,16 @@ function setupNavigation() {
 
 function renderDashboardMetrics() {
     const totalOrders = orders.length;
-    const cancelledOrders = orders.filter(o => o.status === 'Cancelled' || o.status === 'CANCELLED').length;
-    const totalRevenue = orders.reduce((sum, o) => sum + (o.total_price || 0), 0);
+    const cancelledOrders = orders.filter(o => o.status === 'Cancelled' || o.status === 'CANCELLED' || String(o.fulfillment_status).toUpperCase() === 'CANCELLED').length;
+
+    // Strict Commercial Rule: Revenue KPI excludes unpaid, pending, cancelled, and failed orders
+    const isPaidOrder = (o) => {
+        const payStatus = String(o.payment_status || '').toLowerCase();
+        const fulStatus = String(o.fulfillment_status || o.status || '').toUpperCase();
+        return payStatus === 'paid' && fulStatus !== 'CANCELLED' && fulStatus !== 'FAILED';
+    };
+
+    const totalRevenue = orders.filter(isPaidOrder).reduce((sum, o) => sum + (o.total_price || 0), 0);
     const totalProducts = products.length;
     const totalCustomers = customers.length;
 
@@ -1188,7 +1200,7 @@ function renderDashboardMetrics() {
         const d = new Date(o.created_at);
         return d.getFullYear() === currentYear && d.getMonth() === currentMonth;
     });
-    const monthRevenue = monthOrders.reduce((sum, o) => sum + (o.total_price || 0), 0);
+    const monthRevenue = monthOrders.filter(isPaidOrder).reduce((sum, o) => sum + (o.total_price || 0), 0);
 
     const todayStr = now.toISOString().slice(0, 10);
     const ordersToday = orders.filter(o => o.created_at && String(o.created_at).slice(0, 10) === todayStr).length;
@@ -1303,8 +1315,9 @@ function renderSalesChart(filterMode = currentChartFilter) {
     if (Array.isArray(orders) && orders.length > 0) {
         orders.forEach(o => {
             if (!o.created_at) return;
-            const st = String(o.status || '').toLowerCase();
-            if (st === 'cancelled' || st === 'failed') return;
+            const st = String(o.status || o.fulfillment_status || '').toLowerCase();
+            const paySt = String(o.payment_status || '').toLowerCase();
+            if (st === 'cancelled' || st === 'failed' || paySt !== 'paid') return;
             const d = new Date(o.created_at);
             const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
             const match = stats.find(s => s.monthKey === key);
@@ -1610,8 +1623,13 @@ function openProductForm(product = null) {
     document.getElementById('prod-admin-id').value = product ? product.admin_id : `${defaultPrefix}-${String(products.length + 1).padStart(3, '0')}`;
     if (document.getElementById('prod-sku')) document.getElementById('prod-sku').value = product ? (product.sku || '') : '';
     document.getElementById('prod-title').value = product ? product.title : '';
-    if (document.getElementById('prod-desc')) document.getElementById('prod-desc').value = product ? (product.description || '') : '';
+    if (document.getElementById('prod-desc')) {
+        document.getElementById('prod-desc').value = product ? (product.description || '') : '';
+    }
     document.getElementById('prod-price').value = product ? product.price : '';
+    if (document.getElementById('prod-compare-at-price')) {
+        document.getElementById('prod-compare-at-price').value = product && product.compare_at_price ? product.compare_at_price : '';
+    }
     document.getElementById('prod-category').value = product ? product.category : (categories[0]?.name || '');
     document.getElementById('prod-tags').value = product ? (product.tags || []).join(', ') : '';
     if (document.getElementById('prod-is-best-seller')) {
@@ -1675,14 +1693,19 @@ function openProductForm(product = null) {
     if (product && Array.isArray(product.images) && product.images.length > 0) {
         tempProdImages = product.images.map(img => {
             if (typeof img === 'object' && img !== null) {
-                return img.image_url || img.external_url || img.url || '';
+                return {
+                    id: img.id || null,
+                    url: img.image_url || img.external_url || img.url || '',
+                    storage_path: img.storage_path || null,
+                    is_primary: !!img.is_primary
+                };
             }
-            return String(img || '');
-        }).filter(Boolean);
+            return { id: null, url: String(img || ''), is_primary: false };
+        }).filter(item => Boolean(item.url));
     } else if (product && product.primary_image_url) {
-        tempProdImages = [product.primary_image_url];
+        tempProdImages = [{ id: null, url: product.primary_image_url, is_primary: true }];
     } else {
-        tempProdImages = ["https://img.icons8.com/color/150/000000/sticker.png"];
+        tempProdImages = [];
     }
     renderProdImageGallery();
 
@@ -1694,21 +1717,30 @@ function renderProdImageGallery() {
     const gallery = document.getElementById('prod-images-gallery');
     if (!gallery) return;
 
-    gallery.innerHTML = tempProdImages.map((img, idx) => `
+    gallery.innerHTML = tempProdImages.map((imgItem, idx) => {
+        const url = typeof imgItem === 'object' ? (imgItem.url || '') : String(imgItem || '');
+        const isPrimary = idx === 0 || (typeof imgItem === 'object' && imgItem.is_primary);
+        const imgId = (typeof imgItem === 'object' && imgItem.id) ? imgItem.id : '';
+        return `
         <div class="img-thumb-card">
-            ${idx === 0 ? '<span class="primary-tag">PRIMARY</span>' : ''}
-            <img src="${resolveAdminImageUrl(img)}">
+            ${isPrimary ? '<span class="primary-tag">PRIMARY</span>' : ''}
+            <img src="${resolveAdminImageUrl(url)}">
             <div class="img-thumb-actions">
-                ${idx !== 0 ? `<button type="button" class="img-btn-sm set-primary-img-btn" data-idx="${idx}">PRIMARY</button>` : ''}
-                <button type="button" class="img-btn-sm rem-img-btn" data-idx="${idx}" style="color:#ef4444;">×</button>
+                ${!isPrimary ? `<button type="button" class="img-btn-sm set-primary-img-btn" data-idx="${idx}">PRIMARY</button>` : ''}
+                <button type="button" class="img-btn-sm rem-img-btn" data-idx="${idx}" data-id="${imgId}" style="color:#ef4444;" title="Delete image">×</button>
             </div>
         </div>
-    `).join('');
+        `;
+    }).join('');
 
     gallery.querySelectorAll('.set-primary-img-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             const idx = Number(btn.getAttribute('data-idx'));
             const [moved] = tempProdImages.splice(idx, 1);
+            if (typeof moved === 'object') moved.is_primary = true;
+            tempProdImages.forEach((im, i) => {
+                if (typeof im === 'object') im.is_primary = (i === 0);
+            });
             tempProdImages.unshift(moved);
             renderProdImageGallery();
         });
@@ -1717,8 +1749,36 @@ function renderProdImageGallery() {
     gallery.querySelectorAll('.rem-img-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             const idx = Number(btn.getAttribute('data-idx'));
-            tempProdImages.splice(idx, 1);
-            renderProdImageGallery();
+            const imgId = btn.getAttribute('data-id');
+
+            const doLocalRemove = () => {
+                tempProdImages.splice(idx, 1);
+                if (tempProdImages.length > 0 && typeof tempProdImages[0] === 'object') {
+                    tempProdImages[0].is_primary = true;
+                }
+                renderProdImageGallery();
+            };
+
+            if (imgId && editingProductId) {
+                showConfirmModal("DELETE PRODUCT IMAGE", "Are you sure you want to permanently delete this product image?", async () => {
+                    try {
+                        await apiClient.deleteProductImage(editingProductId, imgId);
+                        doLocalRemove();
+                        showToast("Product image deleted successfully");
+                        // Refresh cached product in products list if present
+                        const p = products.find(prod => String(prod.id) === String(editingProductId));
+                        if (p && Array.isArray(p.images)) {
+                            p.images = p.images.filter(im => String(im.id) !== String(imgId));
+                            p.primary_image_url = p.images.length > 0 ? (p.images[0].image_url || p.images[0].url) : null;
+                            renderProductsTable();
+                        }
+                    } catch (err) {
+                        showToast(`Failed to delete image: ${err.message}`, 'error');
+                    }
+                });
+            } else {
+                doLocalRemove();
+            }
         });
     });
 }
@@ -1764,8 +1824,16 @@ async function saveProductForm() {
         return;
     }
 
-    if (tempProdImages.length === 0) {
-        tempProdImages = ["https://img.icons8.com/color/150/000000/sticker.png"];
+    const cleanImagePayload = tempProdImages.map(item => {
+        if (typeof item === 'object' && item !== null) {
+            return item.url;
+        }
+        return String(item || '');
+    }).filter(Boolean);
+
+    if (cleanImagePayload.length === 0 && !editingProductId) {
+        showToast("Please provide at least one product image.", "error");
+        return;
     }
 
     const saveBtn = document.getElementById('save-prod-btn');
@@ -1793,9 +1861,18 @@ async function saveProductForm() {
         }
     }
 
-    const skuVal = document.getElementById('prod-sku')?.value.trim() || `SKU-${adminId}`;
-    const descVal = document.getElementById('prod-desc')?.value.trim() || null;
-    const isBestSeller = document.getElementById('prod-is-best-seller')?.checked ? 1 : 0;
+    const compareAtVal = document.getElementById('prod-compare-at-price')?.value;
+    const compareAtPriceNum = (compareAtVal !== undefined && compareAtVal !== null && compareAtVal.trim() !== '') ? Number(compareAtVal) : null;
+    const compareAtPriceVal = compareAtPriceNum !== null && !isNaN(compareAtPriceNum)
+        ? (activeStoreId === 1 ? Math.round(compareAtPriceNum) : Math.round(compareAtPriceNum * 100))
+        : null;
+
+    const skuVal = document.getElementById('prod-sku')?.value.trim() || '';
+    const descVal = document.getElementById('prod-desc')?.value.trim() || '';
+    const isBestSeller = Boolean(
+        document.getElementById('prod-is-best-seller')?.checked ||
+        document.getElementById('prod-best-seller')?.checked
+    );
 
     const payload = {
         name: title,
@@ -1803,9 +1880,10 @@ async function saveProductForm() {
         sku: skuVal,
         description: descVal,
         price: priceVal,
+        compare_at_price: compareAtPriceVal,
         category_name: category,
         tags: document.getElementById('prod-tags').value.split(',').map(t => t.trim()).filter(Boolean),
-        images: [...tempProdImages],
+        images: cleanImagePayload,
         scheduled_drop_time: document.getElementById('prod-release-date').value || null,
         active: document.getElementById('prod-active').value === 'true' ? 1 : 0,
         is_best_seller: isBestSeller
@@ -2450,18 +2528,30 @@ function renderOrderDetailModalContent(o) {
     document.getElementById('ord-detail-cust-email').textContent = o.email;
     document.getElementById('ord-detail-cust-phone').textContent = o.phone;
     document.getElementById('ord-detail-cust-address').textContent = o.address;
-    
+
     // Detailed price breakdown
     const subtotal = o.subtotal_rupees !== undefined ? o.subtotal_rupees : o.total_price;
     const shipping = o.shipping_charge_rupees !== undefined ? o.shipping_charge_rupees : 0;
     const discount = o.discount_total_rupees !== undefined ? o.discount_total_rupees : 0;
     const couponInfo = o.coupon_code ? ` [Coupon: ${o.coupon_code}]` : '';
-    
+
+    // Inclusive GST breakdown
+    const tax = o.tax_amount_rupees !== undefined ? o.tax_amount_rupees : (o.tax_amount ? Math.round(o.tax_amount / 100) : 0);
+    const cgst = o.cgst_amount_rupees !== undefined ? o.cgst_amount_rupees : (o.cgst_amount ? Math.round(o.cgst_amount / 100) : 0);
+    const sgst = o.sgst_amount_rupees !== undefined ? o.sgst_amount_rupees : (o.sgst_amount ? Math.round(o.sgst_amount / 100) : 0);
+    const igst = o.igst_amount_rupees !== undefined ? o.igst_amount_rupees : (o.igst_amount ? Math.round(o.igst_amount / 100) : 0);
+    const shipMethod = o.shipping_method ? ` (${o.shipping_method})` : '';
+    const taxText = igst > 0 ? `IGST: ₹${igst}` : `CGST: ₹${cgst} + SGST: ₹${sgst}`;
+
     document.getElementById('ord-detail-total').innerHTML = `
         ₹${o.total_price}
         <div style="font-size:0.75rem; color:#555; font-weight:normal; margin-top:3px;">
-            Subtotal: ₹${subtotal} | Shipping: ₹${shipping} | Discount: -₹${discount}${couponInfo}
+            Subtotal: ₹${subtotal} | Shipping: ₹${shipping}${shipMethod} | Discount: -₹${discount}${couponInfo}
         </div>
+        ${tax > 0 ? `
+        <div style="font-size:0.75rem; color:#047857; font-weight:600; margin-top:3px;">
+            Included 18% GST: ₹${tax} (${taxText})
+        </div>` : ''}
     `;
 
     const payBadge = document.getElementById('ord-detail-pay-status');
@@ -2824,11 +2914,13 @@ async function saveEventForm() {
         subtitle: document.getElementById('evt-title').value.trim(),
         discount_type: document.getElementById('evt-discount-type').value,
         discount_value: value,
+        discount_percent: value,
         start_time: document.getElementById('evt-start').value,
         end_time: document.getElementById('evt-end').value,
         active: document.getElementById('evt-active').value === 'true' ? 1 : 0,
         hero_banner: document.getElementById('evt-storefront-hero').value === 'true' ? 1 : 0,
-        target_product_ids: [...selectedEvtProductIds]
+        target_product_ids: [...selectedEvtProductIds],
+        target_products: [...selectedEvtProductIds]
     };
 
     try {
@@ -2921,6 +3013,10 @@ function openCouponForm(cpn = null) {
     document.getElementById('cpn-amount').value = cpn ? cpn.discount_value : 10;
     document.getElementById('cpn-min').value = cpn ? cpn.min_spend : 200;
     document.getElementById('cpn-active').value = cpn ? String(cpn.active) : 'true';
+    const custLimitEl = document.getElementById('cpn-per-customer-limit');
+    if (custLimitEl) {
+        custLimitEl.value = cpn ? (cpn.per_customer_limit || 1) : 1;
+    }
 
     container.style.display = 'block';
     container.scrollIntoView({ behavior: 'smooth' });
@@ -2942,11 +3038,14 @@ async function saveCouponForm() {
     const activeStoreId = apiClient.getActiveStoreId ? apiClient.getActiveStoreId() : 1;
     const minSpendInput = Number(document.getElementById('cpn-min').value) || 0;
     const minOrderVal = activeStoreId === 1 ? Math.round(minSpendInput) : Math.round(minSpendInput * 100);
+    const custLimitEl = document.getElementById('cpn-per-customer-limit');
+    const perCustomerLimit = custLimitEl ? (parseInt(custLimitEl.value, 10) || 1) : 1;
     const payload = {
         code,
         discount_type: document.getElementById('cpn-type').value,
         discount_value: value,
         min_order_value: minOrderVal,
+        per_customer_limit: perCustomerLimit,
         active: document.getElementById('cpn-active').value === 'true' ? 1 : 0
     };
 
@@ -4213,7 +4312,7 @@ function renderActiveSessionsTable() {
             const sid = btn.getAttribute('data-id');
             const email = btn.getAttribute('data-email');
             const isSelf = btn.textContent.includes('LOGOUT') && !btn.textContent.includes('FORCE');
-            
+
             showConfirmModal(
                 'TERMINATE ADMIN SESSION',
                 `Are you sure you want to terminate session #${sid} for ${email}?`,
@@ -4421,7 +4520,7 @@ function loadSystemSettings() {
             if (freeShippingThresholdInput) {
                 freeShippingThresholdInput.value = siteSettings.free_shipping_threshold !== undefined
                     ? (activeStoreId === 1 ? Math.round(Number(siteSettings.free_shipping_threshold)) : Math.round(Number(siteSettings.free_shipping_threshold) / 100))
-                    : 499;
+                    : 300;
             }
         }
     }
@@ -4846,7 +4945,7 @@ function setupEventListeners() {
     });
 
     document.getElementById('prod-queue-search')?.addEventListener('input', renderProductionQueueTable);
-    
+
     document.getElementById('prod-queue-chk-header')?.addEventListener('change', (e) => {
         const checked = e.target.checked;
         const allChks = document.querySelectorAll('.prod-queue-item-chk');
@@ -4901,7 +5000,14 @@ function setupEventListeners() {
     document.getElementById('add-image-url-btn')?.addEventListener('click', () => {
         const urlInput = document.getElementById('prod-image-url');
         if (urlInput && urlInput.value.trim()) {
-            tempProdImages.push(urlInput.value.trim());
+            let inputUrl = urlInput.value.trim();
+            if (inputUrl.includes('drive.google.com')) {
+                const fileIdMatch = inputUrl.match(/\/file\/d\/([a-zA-Z0-9_-]+)/) || inputUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+                if (fileIdMatch && fileIdMatch[1]) {
+                    inputUrl = `https://drive.google.com/uc?export=view&id=${fileIdMatch[1]}`;
+                }
+            }
+            tempProdImages.push({ id: null, url: inputUrl, is_primary: tempProdImages.length === 0 });
             urlInput.value = '';
             renderProdImageGallery();
         }
@@ -4918,7 +5024,7 @@ function setupEventListeners() {
             const res = await apiClient.upload('/admin/upload', formData);
             const uploadedUrl = res?.data?.url || res?.url;
             if (uploadedUrl) {
-                tempProdImages.push(uploadedUrl);
+                tempProdImages.push({ id: null, url: uploadedUrl, is_primary: tempProdImages.length === 0 });
                 renderProdImageGallery();
                 showToast('Product image uploaded successfully');
             } else {

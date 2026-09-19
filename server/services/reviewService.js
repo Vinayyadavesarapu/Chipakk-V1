@@ -103,7 +103,7 @@ const getReviews = async ({
   const total = countRows[0].total || 0;
 
   const query = `
-    SELECT 
+    SELECT
       r.id,
       r.store_id,
       r.product_id,
@@ -174,7 +174,7 @@ const getReviewById = async (reviewId, store_id = null) => {
   }
 
   const query = `
-    SELECT 
+    SELECT
       r.id,
       r.store_id,
       r.product_id,
@@ -301,13 +301,13 @@ const createReview = async ({
 /**
  * Update review status, rating, and/or comment
  */
-const updateReview = async (id, updateData = {}) => {
+const updateReview = async (id, updateData = {}, store_id = null) => {
   const numId = parseInt(id, 10);
   if (isNaN(numId)) {
     throw new Error('Invalid review ID format.');
   }
 
-  const existing = await getReviewById(numId);
+  const existing = await getReviewById(numId, store_id);
   if (!existing) {
     return null;
   }
@@ -346,7 +346,7 @@ const updateReview = async (id, updateData = {}) => {
     await pool.execute(query, params);
   }
 
-  return getReviewById(numId);
+  return getReviewById(numId, store_id);
 };
 
 module.exports = {

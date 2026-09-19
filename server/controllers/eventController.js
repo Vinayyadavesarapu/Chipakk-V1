@@ -15,6 +15,7 @@ const getEventsHandler = async (req, res, next) => {
       active,
       event_type,
       status,
+      store_id: req.storeId,
       limit,
       offset
     });
@@ -39,7 +40,7 @@ const getEventByIdHandler = async (req, res, next) => {
       return sendError(res, 'Invalid event ID format. Expected numeric BIGINT ID.', 400);
     }
 
-    const event = await eventService.getEventById(numId);
+    const event = await eventService.getEventById(numId, req.storeId);
 
     if (!event) {
       return sendError(res, `Event '${id}' not found`, 404);
@@ -78,7 +79,10 @@ const createEventHandler = async (req, res, next) => {
       return sendError(res, 'End time cannot be earlier than start time.', 400);
     }
 
-    const event = await eventService.createEvent(eventData);
+    const event = await eventService.createEvent({
+      ...eventData,
+      store_id: req.storeId || eventData.store_id || 1
+    });
 
     // Write audit log if request is from an authenticated admin
     if (req.user && req.user.uid) {
@@ -118,7 +122,7 @@ const updateEventHandler = async (req, res, next) => {
       return sendError(res, 'Invalid event ID format. Expected numeric BIGINT ID.', 400);
     }
 
-    const updatedEvent = await eventService.updateEvent(numId, eventData);
+    const updatedEvent = await eventService.updateEvent(numId, eventData, req.storeId);
 
     if (!updatedEvent) {
       return sendError(res, `Event with ID ${id} not found`, 404);
@@ -159,7 +163,7 @@ const deleteEventHandler = async (req, res, next) => {
       return sendError(res, 'Invalid event ID format. Expected numeric BIGINT ID.', 400);
     }
 
-    const success = await eventService.deleteEvent(numId);
+    const success = await eventService.deleteEvent(numId, req.storeId);
 
     if (!success) {
       return sendError(res, `Event with ID ${id} not found`, 404);

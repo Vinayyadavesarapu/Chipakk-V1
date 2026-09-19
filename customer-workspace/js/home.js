@@ -1,7 +1,7 @@
 /* =========================================================
    CHIPAKK — Home Page Module
    js/home.js
-   
+
    BACKEND-DRIVEN HERO & HOMEPAGE SECTIONS:
    - renderHero(heroData) mounts the editorial hero from data
    - renderCategoriesPreview()
@@ -22,6 +22,7 @@
     formatPrice,
     starsMarkup,
     renderProductCard,
+    resolveCustomerImageUrl,
     escapeHtml,
     escapeAttr,
     showToast,
@@ -73,7 +74,8 @@
       const sBtnLink = escapeAttr(slideData.secondaryButtonLink || "custom-stickers.html");
 
       const hasImg = Boolean(slideData.image_url || slideData.image);
-      const imgSrc = slideData.image_url || slideData.image || "assets/images/logo.png";
+      const rawImg = slideData.image_url || slideData.image || "assets/images/logo.png";
+      const imgSrc = typeof resolveCustomerImageUrl === "function" ? resolveCustomerImageUrl(rawImg) : rawImg;
       const imgAlt = escapeAttr(slideData.imageAlt || slideData.title || "CHIPAKK Sticker Culture");
 
       const stats = Array.isArray(slideData.stats) ? slideData.stats : (hero.stats || [
@@ -153,7 +155,7 @@
 
               <!-- Main Artwork Photo Frame -->
               <div class="hero-photo-frame">
-                <img src="${escapeAttr(imgSrc || 'assets/images/hero-fallback.svg')}" alt="${imgAlt}" data-hero-img onerror="if(!this.dataset.failed){this.dataset.failed='true';this.src='assets/images/hero-fallback.svg';}" style="width:100%;height:100%;max-width:100%;max-height:100%;object-fit:cover;display:block;border-radius:inherit;" />
+                <img src="${escapeAttr(imgSrc || 'assets/images/hero-fallback.svg')}" alt="${imgAlt}" data-hero-img fetchpriority="high" decoding="async" width="600" height="600" onerror="if(!this.dataset.failed){this.dataset.failed='true';this.src='assets/images/hero-fallback.svg';}" style="width:100%;height:100%;max-width:100%;max-height:100%;object-fit:cover;display:block;border-radius:inherit;" />
               </div>
 
               <!-- Hand-Drawn Stickers, Speech Bubbles & Accents -->

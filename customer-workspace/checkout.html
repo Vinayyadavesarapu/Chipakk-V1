@@ -23,9 +23,10 @@
   <meta name="twitter:image" content="https://chipakk.shop/assets/images/logo.png" />
 
   <link rel="icon" type="image/png" href="assets/images/logo.png" />
-  <link rel="stylesheet" href="css/style.css" />
+  <link rel="stylesheet" href="css/style.css?v=1.1.0" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="preconnect" href="https://api.chipakk.shop" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700;800&family=Archivo+Black&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 </head>
 <body>
@@ -35,7 +36,8 @@
   <!-- Loading Overlay -->
   <div class="loading-overlay" id="loadingOverlay" data-hidden="false" aria-hidden="true">
     <div class="loader-circle">
-      <video src="assets/video/loading_01.mp4" autoplay muted loop playsinline aria-hidden="true"></video>
+      <div class="loader-badge" aria-hidden="true">⚡</div>
+      <video src="assets/video/loading_01.mp4" preload="none" muted loop playsinline aria-hidden="true"></video>
     </div>
     <p class="loader-text">Securing checkout<span class="dots"></span></p>
   </div>
@@ -157,21 +159,10 @@
                   <input type="radio" name="shippingMethod" id="shipStandard" value="standard" checked />
                   <div>
                     <strong style="font-size: 14px;">Standard Tracked Delivery (3-5 days)</strong>
-                    <div style="font-size: 12px; color: #555;">Rigid stay-flat cardboard mailer</div>
+                    <div style="font-size: 12px; color: #555;">Rigid stay-flat cardboard mailer • Free on orders ₹300+</div>
                   </div>
                 </div>
-                <strong id="checkoutShippingRuleBadge" style="font-size: 14px; color: #166534;">FREE on eligible orders</strong>
-              </label>
-
-              <label style="display: flex; align-items: center; justify-content: space-between; border: 2px solid var(--black); border-radius: var(--radius-sm); padding: 14px 16px; background: var(--white); cursor: pointer;">
-                <div style="display: flex; align-items: center; gap: 10px;">
-                  <input type="radio" name="shippingMethod" id="shipExpress" value="express" />
-                  <div>
-                    <strong style="font-size: 14px;">Express Priority Air (1-2 days)</strong>
-                    <div style="font-size: 12px; color: #555;">Priority dispatch with dedicated air courier</div>
-                  </div>
-                </div>
-                <strong style="font-size: 14px;">₹99</strong>
+                <strong id="checkoutShippingRuleBadge" style="font-size: 14px; color: #166534;">₹50 / FREE</strong>
               </label>
             </div>
           </div>
@@ -341,8 +332,8 @@
   <!-- Scripts -->
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
-  <script src="js/auth.js"></script>
-  <script src="js/app.js"></script>
-  <script src="js/checkout.js"></script>
+  <script src="js/auth.js?v=1.1.0"></script>
+  <script src="js/app.js?v=1.1.0"></script>
+  <script src="js/checkout.js?v=1.1.0"></script>
 </body>
 </html>

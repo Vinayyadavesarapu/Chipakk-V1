@@ -262,7 +262,7 @@ const updateCategoryHandler = async (req, res, next) => {
       media,
       hero_light,
       hero_dark
-    });
+    }, req.storeId || 1);
 
     if (!updatedCategory) {
       return sendError(res, `Category with ID ${id} not found`, 404);
@@ -302,7 +302,7 @@ const deleteCategoryHandler = async (req, res, next) => {
     }
 
     const effectiveService = getEffectiveCategoryService(req);
-    const success = await effectiveService.deleteCategory(numId);
+    const success = await effectiveService.deleteCategory(numId, req.storeId || 1);
 
     if (!success) {
       return sendError(res, `Category with ID ${id} not found`, 404);

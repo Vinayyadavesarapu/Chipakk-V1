@@ -1,4 +1,5 @@
 const { pool } = require('../config/database');
+const { sanitizeProductImageUrl, safelyDeleteUploadedFile } = require('../utils/imageUtils');
 
 /**
  * Cache available columns in products table for backward-compatible queries
@@ -214,7 +215,9 @@ const getProducts = async ({
     return {
       ...r,
       price: priceRupees,
+      price_rupees: priceRupees,
       compare_at_price: compareAtRupees,
+      compare_at_price_rupees: compareAtRupees,
       images: prodImgs,
       primary_image_url: primaryImg ? primaryImg.image_url : r.primary_image_url,
       primary_storage_path: primaryImg ? primaryImg.storage_path : r.primary_storage_path,
@@ -242,7 +245,7 @@ const getProducts = async ({
 /**
  * Fetch a single product by numeric BIGINT ID or admin_product_id string with full relationships
  */
-const getProductById = async (productIdOrAdminId) => {
+const getProductById = async (productIdOrAdminId, storeId = null) => {
   if (!productIdOrAdminId) return null;
 
   const numId = parseInt(productIdOrAdminId, 10);
@@ -281,15 +284,27 @@ const getProductById = async (productIdOrAdminId) => {
     'p.updated_at'
   ].join(', ');
 
+  const idCondition = isNumeric ? 'p.id = ?' : 'p.admin_product_id = ?';
+  const queryParams = [isNumeric ? numId : String(productIdOrAdminId)];
+
+  // Enforce store isolation: a product belonging to another store's store_id must
+  // never be readable/writable through this legacy CHIPAKK service (prevents Store 1
+  // requests from leaking or mutating Store 2 legacy-table rows preserved by migration 012).
+  let storeCondition = '';
+  if (cols.store_id && storeId !== null && storeId !== undefined) {
+    storeCondition = ' AND (p.store_id = ? OR p.store_id IS NULL)';
+    queryParams.push(storeId);
+  }
+
   const productQuery = `
     SELECT ${selectCols}
     FROM products p
     LEFT JOIN categories c ON p.category_id = c.id
-    WHERE ${isNumeric ? 'p.id = ?' : 'p.admin_product_id = ?'}
+    WHERE ${idCondition}${storeCondition}
     LIMIT 1
   `;
 
-  const [prodRows] = await pool.execute(productQuery, [isNumeric ? numId : String(productIdOrAdminId)]);
+  const [prodRows] = await pool.execute(productQuery, queryParams);
   if (!prodRows || prodRows.length === 0) return null;
 
   const product = prodRows[0];
@@ -331,7 +346,7 @@ const getProductById = async (productIdOrAdminId) => {
 
   // 2. Fetch variants and inventory
   const variantsQuery = `
-    SELECT 
+    SELECT
       pv.id AS variant_id,
       pv.variant_slug,
       pv.sku,
@@ -360,15 +375,15 @@ const getProductById = async (productIdOrAdminId) => {
   // 3. Fetch mapped materials (product_materials)
   try {
     const [matRows] = await pool.execute(`
-      SELECT 
-        pm.material_id, 
-        pm.is_default, 
-        pm.price_modifier, 
-        m.name, 
-        m.type, 
-        m.color, 
-        m.color_hex, 
-        m.unit, 
+      SELECT
+        pm.material_id,
+        pm.is_default,
+        pm.price_modifier,
+        m.name,
+        m.type,
+        m.color,
+        m.color_hex,
+        m.unit,
         m.cost
       FROM product_materials pm
       JOIN materials m ON pm.material_id = m.id
@@ -382,11 +397,11 @@ const getProductById = async (productIdOrAdminId) => {
   // 4. Fetch mapped finishing options (product_finishing_options)
   try {
     const [finishRows] = await pool.execute(`
-      SELECT 
-        pfo.finishing_option_id, 
-        pfo.is_default, 
-        fo.name, 
-        fo.price_modifier, 
+      SELECT
+        pfo.finishing_option_id,
+        pfo.is_default,
+        fo.name,
+        fo.price_modifier,
         fo.lead_time_days
       FROM product_finishing_options pfo
       JOIN finishing_options fo ON pfo.finishing_option_id = fo.id
@@ -399,7 +414,7 @@ const getProductById = async (productIdOrAdminId) => {
 
   // 5. Fetch review rating stats
   const ratingQuery = `
-    SELECT 
+    SELECT
       COALESCE(AVG(rating), 0) AS average_rating,
       COUNT(id) AS review_count
     FROM reviews
@@ -565,7 +580,8 @@ const createProduct = async (productData) => {
     if (Array.isArray(images) && images.length > 0) {
       for (let i = 0; i < images.length; i++) {
         const img = typeof images[i] === 'string' ? { image_url: images[i] } : images[i];
-        const imgUrl = img.image_url || img.url || '';
+        const rawUrl = img.image_url || img.url || '';
+        const imgUrl = sanitizeProductImageUrl(rawUrl);
         if (imgUrl) {
           await connection.execute(
             `INSERT INTO product_images (product_id, image_url, storage_path, external_url, sort_order, is_primary) VALUES (?, ?, ?, ?, ?, ?)`,
@@ -649,11 +665,11 @@ const createProduct = async (productData) => {
 /**
  * Update an existing product
  */
-const updateProduct = async (id, updateData) => {
+const updateProduct = async (id, updateData, storeId = null) => {
   const numId = parseInt(id, 10);
   if (isNaN(numId)) throw new Error('Invalid product ID');
 
-  const existing = await getProductById(numId);
+  const existing = await getProductById(numId, storeId);
   if (!existing) throw new Error(`Product #${id} not found`);
 
   const {
@@ -782,7 +798,8 @@ const updateProduct = async (id, updateData) => {
       await connection.execute('DELETE FROM product_images WHERE product_id = ?', [numId]);
       for (let i = 0; i < images.length; i++) {
         const img = typeof images[i] === 'string' ? { image_url: images[i] } : images[i];
-        const imgUrl = img.image_url || img.url || '';
+        const rawUrl = img.image_url || img.url || '';
+        const imgUrl = sanitizeProductImageUrl(rawUrl);
         if (imgUrl) {
           await connection.execute(
             `INSERT INTO product_images (product_id, image_url, storage_path, external_url, sort_order, is_primary) VALUES (?, ?, ?, ?, ?, ?)`,
@@ -861,7 +878,7 @@ const updateProduct = async (id, updateData) => {
     await connection.commit();
     connection.release();
 
-    return getProductById(numId);
+    return getProductById(numId, storeId);
   } catch (error) {
     await connection.rollback();
     connection.release();
@@ -872,12 +889,107 @@ const updateProduct = async (id, updateData) => {
 /**
  * Soft Deactivate a product by BIGINT ID
  */
-const deleteProduct = async (id) => {
+const deleteProduct = async (id, storeId = null) => {
   const numId = parseInt(id, 10);
   if (isNaN(numId)) throw new Error('Invalid product ID');
 
-  const [result] = await pool.execute('UPDATE products SET active = 0 WHERE id = ?', [numId]);
+  const cols = await checkProductColumns();
+  const params = [numId];
+  let storeCondition = '';
+  if (cols.store_id && storeId !== null && storeId !== undefined) {
+    storeCondition = ' AND (store_id = ? OR store_id IS NULL)';
+    params.push(storeId);
+  }
+
+  const [result] = await pool.execute(`UPDATE products SET active = 0 WHERE id = ?${storeCondition}`, params);
   return result.affectedRows > 0;
+};
+
+/**
+ * Delete a product image from the database and remove local physical file safely.
+ * Enforces Store 1 ownership and handles primary image re-assignment.
+ *
+ * @param {number|string} productId Product ID
+ * @param {number|string} imageId Image ID in product_images
+ * @param {number} [storeId=1] Store ID scope (defaults to Store 1 for CHIPAKK)
+ * @returns {Promise<{deletedImageId: number, remainingImages: Array}>}
+ */
+const deleteProductImage = async (productId, imageId, storeId = 1) => {
+  const numProductId = parseInt(productId, 10);
+  const numImageId = parseInt(imageId, 10);
+  if (isNaN(numProductId) || isNaN(numImageId)) {
+    const err = new Error('Invalid product ID or image ID format');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const cols = await checkProductColumns();
+
+  // 1. Verify product existence and enforce store ownership
+  let prodQuery = 'SELECT id';
+  if (cols.store_id) prodQuery += ', store_id';
+  prodQuery += ' FROM products WHERE id = ?';
+
+  const [productRows] = await pool.execute(prodQuery, [numProductId]);
+  if (productRows.length === 0) {
+    const err = new Error(`Product ${numProductId} not found`);
+    err.statusCode = 404;
+    throw err;
+  }
+
+  const product = productRows[0];
+  if (cols.store_id && storeId !== null && storeId !== undefined) {
+    const effectiveStoreId = product.store_id || 1;
+    if (effectiveStoreId !== Number(storeId)) {
+      const err = new Error(`Access denied. Product belongs to Store ${effectiveStoreId}, not Store ${storeId}`);
+      err.statusCode = 403;
+      throw err;
+    }
+  }
+
+  // 2. Fetch target image to delete
+  const [imgRows] = await pool.execute(
+    'SELECT id, product_id, image_url, storage_path, sort_order, is_primary FROM product_images WHERE id = ? AND product_id = ?',
+    [numImageId, numProductId]
+  );
+  if (imgRows.length === 0) {
+    const err = new Error(`Image ${numImageId} not found on product ${numProductId}`);
+    err.statusCode = 404;
+    throw err;
+  }
+
+  const imageToDelete = imgRows[0];
+
+  // 3. Remove DB record safely
+  await pool.execute('DELETE FROM product_images WHERE id = ? AND product_id = ?', [numImageId, numProductId]);
+
+  // 4. Safely delete physical file if local upload
+  safelyDeleteUploadedFile(imageToDelete.image_url, imageToDelete.storage_path);
+
+  // 5. Handle primary image deletion safely: promote next image to primary if deleted was primary
+  if (imageToDelete.is_primary === 1) {
+    const [remainingRows] = await pool.execute(
+      'SELECT id FROM product_images WHERE product_id = ? ORDER BY sort_order ASC, id ASC LIMIT 1',
+      [numProductId]
+    );
+    if (remainingRows.length > 0) {
+      await pool.execute(
+        'UPDATE product_images SET is_primary = 1 WHERE id = ?',
+        [remainingRows[0].id]
+      );
+    }
+  }
+
+  // 6. Fetch and return remaining images
+  const [remainingImages] = await pool.execute(
+    'SELECT id, product_id, image_url, storage_path, external_url, sort_order, is_primary FROM product_images WHERE product_id = ? ORDER BY sort_order ASC, id ASC',
+    [numProductId]
+  );
+
+  return {
+    deletedImageId: numImageId,
+    remainingImages
+  };
 };
 
 module.exports = {
@@ -888,5 +1000,6 @@ module.exports = {
   getProductById,
   createProduct,
   updateProduct,
-  deleteProduct
+  deleteProduct,
+  deleteProductImage
 };

@@ -77,6 +77,9 @@ const getCart = async ({ userId = null, storeId = 1, sessionId = null, connectio
     [cart.id]
   );
 
+  const isStore2 = parseInt(cart.store_id, 10) === 2;
+  let anyPriceChanged = false;
+
   for (const item of itemRows || []) {
     const hasChipakkProduct = item.product_id !== null && item.product_id !== undefined;
     const hasMarshansProduct = item.marshans_product_id !== null && item.marshans_product_id !== undefined;
@@ -85,9 +88,60 @@ const getCart = async ({ userId = null, storeId = 1, sessionId = null, connectio
       err.statusCode = 500;
       throw err;
     }
+
+    // Revalidate live catalog price
+    let livePrice = null;
+    if (hasMarshansProduct) {
+      try {
+        const [mpRows] = await conn.execute(
+          'SELECT price FROM marshans_products WHERE id = ? LIMIT 1',
+          [item.marshans_product_id]
+        );
+        if (mpRows && mpRows.length > 0 && mpRows[0].price !== null && mpRows[0].price !== undefined) {
+          livePrice = parseInt(mpRows[0].price, 10);
+        }
+      } catch (_) {}
+    } else if (hasChipakkProduct) {
+      try {
+        if (item.variant_id) {
+          const [vRows] = await conn.execute(
+            'SELECT price FROM product_variants WHERE id = ? AND product_id = ? LIMIT 1',
+            [item.variant_id, item.product_id]
+          );
+          if (vRows && vRows.length > 0 && vRows[0].price !== null && vRows[0].price !== undefined) {
+            livePrice = parseInt(vRows[0].price, 10);
+          }
+        }
+        if (livePrice === null) {
+          const [pRows] = await conn.execute(
+            'SELECT price FROM products WHERE id = ? LIMIT 1',
+            [item.product_id]
+          );
+          if (pRows && pRows.length > 0 && pRows[0].price !== null && pRows[0].price !== undefined) {
+            livePrice = parseInt(pRows[0].price, 10);
+          }
+        }
+      } catch (_) {}
+    }
+
+    const currentPrice = parseInt(item.unit_price, 10) || 0;
+    if (livePrice !== null && !isNaN(livePrice) && livePrice !== currentPrice) {
+      anyPriceChanged = true;
+      item.price_changed = true;
+      item.old_price = isStore2 ? Math.round(currentPrice / 100) : currentPrice;
+      item.new_price = isStore2 ? Math.round(livePrice / 100) : livePrice;
+      item.unit_price = livePrice;
+      try {
+        await conn.execute(
+          'UPDATE cart_items SET unit_price = ?, updated_at = NOW() WHERE id = ?',
+          [livePrice, item.id]
+        );
+      } catch (_) {}
+    } else {
+      item.price_changed = false;
+    }
   }
 
-  const isStore2 = parseInt(cart.store_id, 10) === 2;
   let subtotalAmount = 0;
   let totalItems = 0;
 
@@ -114,6 +168,8 @@ const getCart = async ({ userId = null, storeId = 1, sessionId = null, connectio
       unit_price: unitPrice,
       total_price: lineTotal,
       options_snapshot: safeJsonParse(row.options_snapshot, null),
+      price_changed: row.price_changed || false,
+      ...(row.price_changed ? { old_price: row.old_price, new_price: row.new_price } : {}),
       created_at: row.created_at,
       updated_at: row.updated_at
     };
@@ -129,6 +185,7 @@ const getCart = async ({ userId = null, storeId = 1, sessionId = null, connectio
     status: cart.status,
     total_items: totalItems,
     subtotal: subtotal,
+    price_change_notice: anyPriceChanged ? 'Some item prices have changed since being added to your cart.' : null,
     items,
     created_at: cart.created_at,
     updated_at: cart.updated_at

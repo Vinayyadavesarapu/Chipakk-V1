@@ -1,7 +1,7 @@
 /* =========================================================
    CHIPAKK — Product Details Module
    js/product.js
-   
+
    PRODUCT PAGE ENGINE:
    - URL parameter parsing (?id=...)
    - Image gallery & thumbnail switching
@@ -102,7 +102,9 @@
     const isImgUrl = (currentProduct.image && (currentProduct.image.startsWith("http") || currentProduct.image.includes("/"))) ||
                      (currentProduct.images && currentProduct.images.length && (currentProduct.images[0].startsWith("http") || currentProduct.images[0].includes("/")));
     const imgSrc = (currentProduct.image && (currentProduct.image.startsWith("http") || currentProduct.image.includes("/"))) ? currentProduct.image : (currentProduct.images && currentProduct.images[0]);
-    const absoluteImgUrl = isImgUrl ? (imgSrc.startsWith("http") ? imgSrc : `https://chipakk.shop/${imgSrc.replace(/^\/+/, "")}`) : "https://chipakk.shop/assets/images/logo.png";
+    const resolveImg = window.CHIPAKK?.resolveImageUrl || (u => (u && u.startsWith('/') ? `https://api.chipakk.shop${u}` : u));
+    const resolvedImg = imgSrc ? resolveImg(imgSrc) : "";
+    const absoluteImgUrl = isImgUrl ? (resolvedImg.startsWith("http") ? resolvedImg : `https://chipakk.shop/${resolvedImg.replace(/^\/+/, "")}`) : "https://chipakk.shop/assets/images/logo.png";
 
     const ogImg = $("#ogImage") || document.querySelector('meta[property="og:image"]');
     if (ogImg) ogImg.setAttribute("content", absoluteImgUrl);
@@ -164,7 +166,7 @@
               "@type": "ListItem",
               "position": 2,
               "name": currentProduct.categoryName || "Shop",
-              "item": "https://chipakk.shop/shop.html"
+              "item": currentProduct.categorySlug ? `https://chipakk.shop/shop.html?category=${encodeURIComponent(currentProduct.categorySlug)}` : "https://chipakk.shop/shop.html"
             },
             {
               "@type": "ListItem",
@@ -219,7 +221,7 @@
     if (stageEl) {
       const tier = currentProduct.rating_tier || getRatingTier(currentProduct.rating);
       stageEl.innerHTML = `
-        ${isImgUrl 
+        ${isImgUrl
           ? `<img src="${escapeAttr(imgSrc)}" alt="${escapeAttr(currentProduct.name)} sticker" class="product-stage-img" style="width: 100%; height: 100%; object-fit: contain; display: block;" />`
           : `<span class="product-stage-emoji">${currentProduct.image || "⚡"}</span>`
         }

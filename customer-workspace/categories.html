@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Sticker Categories — CHIPAKK</title>
-  <meta name="description" content="Browse CHIPAKK sticker collections by aesthetic: Gaming, Anime, Memes, Tech, JDM, Retro, and Nature. Find the perfect vinyl decals for your setup." />
+  <meta name="description" content="Browse CHIPAKK sticker collections for every style: Anime, Toons, Sports, God Mode, Gaming, and custom vinyl decals. Find the perfect stickers for your setup." />
   <link rel="canonical" href="https://chipakk.shop/categories.html" />
   <meta name="robots" content="index, follow" />
 
@@ -12,14 +12,14 @@
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://chipakk.shop/categories.html" />
   <meta property="og:title" content="Sticker Categories — CHIPAKK" />
-  <meta property="og:description" content="Browse CHIPAKK sticker collections by aesthetic: Gaming, Anime, Memes, Tech, JDM, Retro, and Nature. Find the perfect vinyl decals for your setup." />
+  <meta property="og:description" content="Browse CHIPAKK sticker collections for every style: Anime, Toons, Sports, God Mode, Gaming, and custom vinyl decals. Find the perfect stickers for your setup." />
   <meta property="og:image" content="https://chipakk.shop/assets/images/logo.png" />
   <meta property="og:site_name" content="CHIPAKK" />
 
   <!-- Twitter -->
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Sticker Categories — CHIPAKK" />
-  <meta name="twitter:description" content="Browse CHIPAKK sticker collections by aesthetic: Gaming, Anime, Memes, Tech, JDM, Retro, and Nature. Find the perfect vinyl decals for your setup." />
+  <meta name="twitter:description" content="Browse CHIPAKK sticker collections for every style: Anime, Toons, Sports, God Mode, Gaming, and custom vinyl decals. Find the perfect stickers for your setup." />
   <meta name="twitter:image" content="https://chipakk.shop/assets/images/logo.png" />
 
   <!-- JSON-LD Structured Data -->
@@ -29,7 +29,7 @@
     "@type": "CollectionPage",
     "name": "Sticker Categories — CHIPAKK",
     "url": "https://chipakk.shop/categories.html",
-    "description": "Browse CHIPAKK sticker collections by aesthetic: Gaming, Anime, Memes, Tech, JDM, Retro, and Nature. Find the perfect vinyl decals for your setup.",
+    "description": "Browse CHIPAKK sticker collections for every style: Anime, Toons, Sports, God Mode, Gaming, and custom vinyl decals. Find the perfect stickers for your setup.",
     "isPartOf": {
       "@type": "WebSite",
       "name": "CHIPAKK",
@@ -39,9 +39,10 @@
   </script>
 
   <link rel="icon" type="image/png" href="assets/images/logo.png" />
-  <link rel="stylesheet" href="css/style.css" />
+  <link rel="stylesheet" href="css/style.css?v=1.1.0" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="preconnect" href="https://api.chipakk.shop" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700;800&family=Archivo+Black&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 </head>
 <body>
@@ -51,7 +52,8 @@
   <!-- Loading Overlay -->
   <div class="loading-overlay" id="loadingOverlay" data-hidden="false" aria-hidden="true">
     <div class="loader-circle">
-      <video src="assets/video/loading_01.mp4" autoplay muted loop playsinline aria-hidden="true"></video>
+      <div class="loader-badge" aria-hidden="true">⚡</div>
+      <video src="assets/video/loading_01.mp4" preload="none" muted loop playsinline aria-hidden="true"></video>
     </div>
     <p class="loader-text">Loading categories<span class="dots"></span></p>
   </div>
@@ -166,7 +168,7 @@
         <span class="eyebrow">Collections</span>
         <h1 class="section-title">Sticker Categories</h1>
         <p class="section-sub" style="margin-top: 6px;">
-          Find your personal aesthetic across our curated niches. From retro arcade synthwave to deep-space tech.
+          Find your personal aesthetic across our curated styles. From bold anime and cartoon icons to gaming and sports legends.
         </p>
       </div>
 
@@ -260,8 +262,8 @@
 
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
-  <script src="js/auth.js"></script>
-  <script src="js/app.js"></script>
-  <script src="js/categories.js"></script>
+  <script src="js/auth.js?v=1.1.0"></script>
+  <script src="js/app.js?v=1.1.0"></script>
+  <script src="js/categories.js?v=1.1.0"></script>
 </body>
 </html>

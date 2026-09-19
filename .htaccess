@@ -99,9 +99,37 @@ RewriteRule ^reset-password\.html$ customer-workspace/reset-password.html [L]
 # 7. ROOT CUSTOMER HOMEPAGE
 # ---------------------------------------------------------
 
-# / 
+# /
 # /index.html
 #        ↓
 # /customer-workspace/index.html
 RewriteRule ^$ customer-workspace/index.html [L]
 RewriteRule ^index\.html$ customer-workspace/index.html [L]
+
+# ---------------------------------------------------------
+# 8. CACHE CONTROL POLICIES (Production Freshness Enforcement)
+# ---------------------------------------------------------
+<IfModule mod_headers.c>
+    # 1. HTML Documents: Never cache in browser or intermediate proxies
+    <FilesMatch "\.(html|htm)$">
+        Header set Cache-Control "no-cache, no-store, must-revalidate, max-age=0"
+        Header set Pragma "no-cache"
+        Header set Expires "0"
+    </FilesMatch>
+
+    # 2. Static CSS, JS: Cache for 7 days (version query string ?v=1.1.0 forces immediate refresh)
+    <FilesMatch "\.(js|css)$">
+        Header set Cache-Control "public, max-age=604800, stale-while-revalidate=86400"
+    </FilesMatch>
+
+    # 3. Static Media Assets (Images, WebP, SVGs, Fonts)
+    <FilesMatch "\.(jpg|jpeg|png|gif|webp|svg|ico|woff|woff2|ttf|eot)$">
+        Header set Cache-Control "public, max-age=2592000"
+    </FilesMatch>
+
+    # 4. API Endpoints: Strictly no-store, no-cache
+    <LocationMatch "^/api/">
+        Header set Cache-Control "no-store, no-cache, must-revalidate, max-age=0"
+        Header set Pragma "no-cache"
+    </LocationMatch>
+</IfModule>

@@ -363,10 +363,28 @@ input:focus-visible {
   border-radius: 50%;
   border: var(--border-w-lg) solid var(--black);
   overflow: hidden;
-  background: var(--black);
+  background: var(--yellow);
   box-shadow: var(--shadow-hard);
   position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   animation: loader-pulse 1.8s ease-in-out infinite;
+}
+
+.loader-badge {
+  font-size: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+  animation: loader-badge-spin 2.4s ease-in-out infinite;
+}
+
+@keyframes loader-badge-spin {
+  0% { transform: rotate(0deg) scale(1); }
+  50% { transform: rotate(18deg) scale(1.1); }
+  100% { transform: rotate(0deg) scale(1); }
 }
 
 .loader-circle video {
@@ -374,6 +392,8 @@ input:focus-visible {
   height: 100%;
   object-fit: cover;
   object-position: center;
+  position: absolute;
+  inset: 0;
 }
 
 @keyframes loader-pulse {
@@ -2484,9 +2504,9 @@ input:focus-visible {
 @media (max-width: 480px) {
   .container, .hero-inner, .drop-inner,
   .footer-top, .footer-bottom-inner, .search-panel-inner, .search-hint,
-  .header-inner { 
-    padding-left: max(16px, env(safe-area-inset-left)); 
-    padding-right: max(16px, env(safe-area-inset-right)); 
+  .header-inner {
+    padding-left: max(16px, env(safe-area-inset-left));
+    padding-right: max(16px, env(safe-area-inset-right));
   }
 
   .custom-banner { margin: 0 16px; padding: 22px 18px; }

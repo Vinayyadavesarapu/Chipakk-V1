@@ -60,7 +60,7 @@ const getProductByIdHandler = async (req, res, next) => {
     }
 
     const effectiveService = getEffectiveProductService(req);
-    let product = await effectiveService.getProductById(String(id).trim());
+    let product = await effectiveService.getProductById(String(id).trim(), req.storeId || 1);
 
     if (!product) {
       return sendError(res, `Product '${id}' not found`, 404);
@@ -135,7 +135,7 @@ const updateProductHandler = async (req, res, next) => {
     }
 
     const effectiveService = getEffectiveProductService(req);
-    const updatedProduct = await effectiveService.updateProduct(numId, productData);
+    const updatedProduct = await effectiveService.updateProduct(numId, productData, req.storeId || 1);
 
     if (!updatedProduct) {
       return sendError(res, `Product with ID ${id} not found`, 404);
@@ -182,7 +182,7 @@ const deleteProductHandler = async (req, res, next) => {
     }
 
     const effectiveService = getEffectiveProductService(req);
-    const success = await effectiveService.deleteProduct(numId);
+    const success = await effectiveService.deleteProduct(numId, req.storeId || 1);
 
     if (!success) {
       return sendError(res, `Product with ID ${id} not found`, 404);
@@ -206,11 +206,50 @@ const deleteProductHandler = async (req, res, next) => {
   }
 };
 
+/**
+ * Delete Product Image Handler
+ * DELETE /api/admin/products/:productId/images/:imageId
+ */
+const deleteProductImageHandler = async (req, res, next) => {
+  try {
+    const { productId, imageId } = req.params;
+
+    const numProductId = parseInt(productId, 10);
+    const numImageId = parseInt(imageId, 10);
+    if (isNaN(numProductId) || isNaN(numImageId)) {
+      return sendError(res, 'Invalid product ID or image ID format.', 400);
+    }
+
+    const effectiveService = getEffectiveProductService(req);
+    const result = await effectiveService.deleteProductImage(numProductId, numImageId, req.storeId || 1);
+
+    // Write audit log if request is authenticated admin
+    if (req.user && req.user.uid) {
+      await writeAuditLog(
+        req.user.uid,
+        req.user.email || null,
+        'product.image_deleted',
+        'product_images',
+        numImageId,
+        { product_id: numProductId, deleted_image_id: numImageId }
+      ).catch(err => console.error('[Audit Log Error]', err.message));
+    }
+
+    return sendSuccess(res, result, 'Product image deleted successfully');
+  } catch (error) {
+    if (error.statusCode) {
+      return sendError(res, error.message, error.statusCode);
+    }
+    return next(error);
+  }
+};
+
 module.exports = {
   getEffectiveProductService,
   getProductsHandler,
   getProductByIdHandler,
   createProductHandler,
   updateProductHandler,
-  deleteProductHandler
+  deleteProductHandler,
+  deleteProductImageHandler
 };

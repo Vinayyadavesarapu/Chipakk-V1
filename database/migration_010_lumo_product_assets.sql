@@ -16,9 +16,13 @@ SET @exist := (
   SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'products' AND COLUMN_NAME = 'lumo_light_image'
 );
+SET @has_anchor := (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'products' AND COLUMN_NAME = 'view_360_url'
+);
+SET @after_anchor := IF(@has_anchor > 0, ' AFTER `view_360_url`', '');
 SET @sql := IF(@exist = 0,
-  'ALTER TABLE `products` 
-     ADD COLUMN `lumo_light_image` VARCHAR(1000) DEFAULT NULL COMMENT "LUMO Light Mode (daytime) primary product image URL" AFTER `view_360_url`;',
+  CONCAT('ALTER TABLE `products` ADD COLUMN `lumo_light_image` VARCHAR(1000) DEFAULT NULL COMMENT "LUMO Light Mode (daytime) primary product image URL"', @after_anchor, ';'),
   'SELECT "Column lumo_light_image already exists in products" AS msg;'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
@@ -31,7 +35,7 @@ SET @exist := (
   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'products' AND COLUMN_NAME = 'lumo_dark_image'
 );
 SET @sql := IF(@exist = 0,
-  'ALTER TABLE `products` 
+  'ALTER TABLE `products`
      ADD COLUMN `lumo_dark_image` VARCHAR(1000) DEFAULT NULL COMMENT "LUMO Dark Mode (nighttime/glowing) primary product image URL" AFTER `lumo_light_image`;',
   'SELECT "Column lumo_dark_image already exists in products" AS msg;'
 );
@@ -45,7 +49,7 @@ SET @exist := (
   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'products' AND COLUMN_NAME = 'lumo_light_360_url'
 );
 SET @sql := IF(@exist = 0,
-  'ALTER TABLE `products` 
+  'ALTER TABLE `products`
      ADD COLUMN `lumo_light_360_url` VARCHAR(1000) DEFAULT NULL COMMENT "LUMO Light Mode interactive 360 view URL" AFTER `lumo_dark_image`;',
   'SELECT "Column lumo_light_360_url already exists in products" AS msg;'
 );
@@ -59,7 +63,7 @@ SET @exist := (
   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'products' AND COLUMN_NAME = 'lumo_dark_360_url'
 );
 SET @sql := IF(@exist = 0,
-  'ALTER TABLE `products` 
+  'ALTER TABLE `products`
      ADD COLUMN `lumo_dark_360_url` VARCHAR(1000) DEFAULT NULL COMMENT "LUMO Dark Mode interactive 360 view URL" AFTER `lumo_light_360_url`;',
   'SELECT "Column lumo_dark_360_url already exists in products" AS msg;'
 );

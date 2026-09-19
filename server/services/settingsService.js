@@ -2,7 +2,7 @@ const { pool } = require('../config/database');
 
 /**
  * Store 1 (CHIPAKK) Default Settings Profile
- * Low shipping fee, free shipping enabled for merchandise orders >= ₹499
+ * Low shipping fee, free shipping enabled for merchandise orders >= ₹300
  */
 const STORE_1_DEFAULTS = {
   store_name: 'CHIPAKK Stickers',
@@ -14,7 +14,7 @@ const STORE_1_DEFAULTS = {
   gstin: '07AAAAA0000A1Z5',
   shipping_fee: 50,
   free_shipping_enabled: true,
-  free_shipping_threshold: 499,
+  free_shipping_threshold: 300,
   free_shipping_calculation: 'after_discounts',
   announcement_text: 'WELCOME TO CHIPAKK! GET 10% OFF ON YOUR FIRST ORDER',
   announcement_active: true,

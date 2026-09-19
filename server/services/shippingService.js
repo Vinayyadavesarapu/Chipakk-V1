@@ -66,7 +66,7 @@ const getShippingRules = async ({
   const total = countRows[0].total || 0;
 
   const query = `
-    SELECT 
+    SELECT
       sr.id,
       ${hasStoreId ? 'COALESCE(sr.store_id, 1) AS store_id,' : '1 AS store_id,'}
       sr.name,
@@ -131,7 +131,7 @@ const getShippingRuleById = async (ruleId, storeId = null) => {
   }
 
   const query = `
-    SELECT 
+    SELECT
       sr.id,
       ${hasStoreId ? 'COALESCE(sr.store_id, 1) AS store_id,' : '1 AS store_id,'}
       sr.name,
@@ -229,6 +229,8 @@ const updateShippingRule = async (id, ruleData, storeId = null) => {
   if (!existing) {
     return null;
   }
+
+  const hasStoreId = await checkHasStoreId();
 
   const {
     name,
@@ -356,7 +358,7 @@ const calculateShippingFee = async ({ subtotal, region, rule_id, storeId = 1 } =
     rule = {
       id: null,
       name: isMarshans ? 'Default Marshans 3D Shipping' : 'Default Standard Shipping',
-      free_shipping_threshold: isMarshans ? 99999900 : 499,
+      free_shipping_threshold: isMarshans ? 99999900 : 300,
       standard_fee: isMarshans ? 8000 : 50,
       is_enabled: 1,
       regional_overrides: null
@@ -430,7 +432,7 @@ const getStoreShippingConfig = async (storeId = 1) => {
   const rulesResult = await getShippingRules({ storeId, limit: 20 });
   const isStore2 = parseInt(storeId, 10) === 2;
   const defaultFee = isStore2 ? 8000 : 50;
-  const defaultThreshold = isStore2 ? 99999900 : 499;
+  const defaultThreshold = isStore2 ? 99999900 : 300;
   const rawFee = settings.shipping_fee !== undefined ? settings.shipping_fee : defaultFee;
   const rawThreshold = settings.free_shipping_threshold !== undefined ? settings.free_shipping_threshold : defaultThreshold;
   return {

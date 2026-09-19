@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Admin Workspace | CHIPAKK Control Panel</title>
-    <link rel="icon" type="image/png" href="logo.png">
+    <link rel="icon" type="image/png" href="assets/images/logo.png">
     <link rel="stylesheet" href="css/admin.css">
     <style>
         :root {
@@ -45,7 +45,7 @@
             border-radius: 2px;
             line-height: 1.4;
         }
-        
+
         .nav-category-header {
             font-weight: 900;
             letter-spacing: 1px;
@@ -1994,6 +1994,11 @@
                                 </select>
                                 <small class="form-hint">Controls whether this coupon is currently redeemable by customers.</small>
                             </div>
+                            <div class="retro-field">
+                                <label for="cpn-per-customer-limit">Per-Customer Usage Limit</label>
+                                <input type="number" id="cpn-per-customer-limit" class="retro-input" value="1" min="1">
+                                <small class="form-hint">Maximum successful redemptions per authenticated customer (default: 1).</small>
+                            </div>
                             <div style="display: flex; gap: 15px; margin-top: 45px;">
                                 <button class="retro-btn retro-btn-primary" id="save-coupon-btn">SAVE COUPON</button>
                                 <button class="retro-btn" id="cancel-coupon-btn">CANCEL</button>
@@ -2182,7 +2187,7 @@
                     </div>
                     <div class="retro-field" id="set-free-shipping-threshold-field">
                         <label for="set-free-shipping-threshold">Free Delivery Order Threshold (₹)</label>
-                        <input type="number" id="set-free-shipping-threshold" class="retro-input" value="499" min="0">
+                        <input type="number" id="set-free-shipping-threshold" class="retro-input" value="300" min="0">
                         <small class="form-hint">Orders at or above this amount qualify for free delivery. For CHIPAKK: Orders below ₹300 → ₹50 shipping; Orders ₹300 or above → Free delivery.</small>
                     </div>
                     <div id="set-free-shipping-note" style="display: none; padding: 10px; background: #fee2e2; border: 1.5px solid #ef4444; font-size: 0.8rem; font-weight: bold; color: #991b1b; margin-bottom: 12px;">

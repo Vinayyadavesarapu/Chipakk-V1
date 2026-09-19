@@ -1,4 +1,5 @@
 const { pool } = require('../config/database');
+const { sanitizeProductImageUrl, safelyDeleteUploadedFile } = require('../utils/imageUtils');
 
 /**
  * Calculate derived rating tier based on average product rating
@@ -319,15 +320,15 @@ const getProductById = async (productIdOrAdminId) => {
   // 2. Fetch mapped 3D materials from marshans_product_materials JOIN materials
   try {
     const [matRows] = await pool.execute(`
-      SELECT 
-        pm.material_id, 
-        pm.is_default, 
-        pm.price_modifier, 
-        m.name, 
-        m.type AS material_type, 
-        m.color AS color_name, 
-        m.color_hex, 
-        m.unit, 
+      SELECT
+        pm.material_id,
+        pm.is_default,
+        pm.price_modifier,
+        m.name,
+        m.type AS material_type,
+        m.color AS color_name,
+        m.color_hex,
+        m.unit,
         m.cost
       FROM marshans_product_materials pm
       JOIN materials m ON pm.material_id = m.id
@@ -341,11 +342,11 @@ const getProductById = async (productIdOrAdminId) => {
   // 3. Fetch mapped finishing options from marshans_product_finishing_options JOIN finishing_options
   try {
     const [finishRows] = await pool.execute(`
-      SELECT 
-        pfo.finishing_option_id, 
-        pfo.is_default, 
-        fo.name, 
-        fo.price_modifier, 
+      SELECT
+        pfo.finishing_option_id,
+        pfo.is_default,
+        fo.name,
+        fo.price_modifier,
         fo.lead_time_days
       FROM marshans_product_finishing_options pfo
       JOIN finishing_options fo ON pfo.finishing_option_id = fo.id
@@ -359,7 +360,7 @@ const getProductById = async (productIdOrAdminId) => {
   // 4. Fetch review rating stats from reviews WHERE marshans_product_id = ?
   try {
     const ratingQuery = `
-      SELECT 
+      SELECT
         COALESCE(AVG(rating), 0) AS average_rating,
         COUNT(id) AS review_count
       FROM reviews
@@ -498,7 +499,8 @@ const createProduct = async (productData) => {
     if (Array.isArray(images) && images.length > 0) {
       for (let i = 0; i < images.length; i++) {
         const img = typeof images[i] === 'string' ? { image_url: images[i] } : images[i];
-        const imgUrl = img.image_url || img.url || '';
+        const rawUrl = img.image_url || img.url || '';
+        const imgUrl = sanitizeProductImageUrl(rawUrl);
         if (imgUrl) {
           await connection.execute(
             'INSERT INTO marshans_product_images (product_id, image_url, storage_path, sort_order, is_primary) VALUES (?, ?, ?, ?, ?)',
@@ -703,7 +705,8 @@ const updateProduct = async (id, updateData) => {
       await connection.execute('DELETE FROM marshans_product_images WHERE product_id = ?', [numId]);
       for (let i = 0; i < images.length; i++) {
         const img = typeof images[i] === 'string' ? { image_url: images[i] } : images[i];
-        const imgUrl = img.image_url || img.url || '';
+        const rawUrl = img.image_url || img.url || '';
+        const imgUrl = sanitizeProductImageUrl(rawUrl);
         if (imgUrl) {
           await connection.execute(
             'INSERT INTO marshans_product_images (product_id, image_url, storage_path, sort_order, is_primary) VALUES (?, ?, ?, ?, ?)',
@@ -763,11 +766,92 @@ const deleteProduct = async (id) => {
   return result.affectedRows > 0;
 };
 
+/**
+ * Delete a product image from marshans_product_images and remove local physical file safely.
+ *
+ * @param {number|string} productId Product ID
+ * @param {number|string} imageId Image ID in marshans_product_images
+ * @param {number} [storeId=2] Store ID scope
+ * @returns {Promise<{deletedImageId: number, remainingImages: Array}>}
+ */
+const deleteProductImage = async (productId, imageId, storeId = 2) => {
+  const numProductId = parseInt(productId, 10);
+  const numImageId = parseInt(imageId, 10);
+  if (isNaN(numProductId) || isNaN(numImageId)) {
+    const err = new Error('Invalid product ID or image ID format');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  // 1. Verify product existence and Store 2 ownership
+  const [productRows] = await pool.execute(
+    'SELECT id, store_id FROM marshans_products WHERE id = ?',
+    [numProductId]
+  );
+  if (productRows.length === 0) {
+    const err = new Error(`Marshans product ${numProductId} not found`);
+    err.statusCode = 404;
+    throw err;
+  }
+
+  const product = productRows[0];
+  if (storeId !== null && storeId !== undefined && Number(product.store_id) !== Number(storeId)) {
+    const err = new Error(`Access denied. Product belongs to Store ${product.store_id}, not Store ${storeId}`);
+    err.statusCode = 403;
+    throw err;
+  }
+
+  // 2. Fetch target image to delete
+  const [imgRows] = await pool.execute(
+    'SELECT id, product_id, image_url, storage_path, sort_order, is_primary FROM marshans_product_images WHERE id = ? AND product_id = ?',
+    [numImageId, numProductId]
+  );
+  if (imgRows.length === 0) {
+    const err = new Error(`Image ${numImageId} not found on Marshans product ${numProductId}`);
+    err.statusCode = 404;
+    throw err;
+  }
+
+  const imageToDelete = imgRows[0];
+
+  // 3. Remove DB record safely
+  await pool.execute('DELETE FROM marshans_product_images WHERE id = ? AND product_id = ?', [numImageId, numProductId]);
+
+  // 4. Safely delete physical file if local upload
+  safelyDeleteUploadedFile(imageToDelete.image_url, imageToDelete.storage_path);
+
+  // 5. Promote next image to primary if deleted was primary
+  if (imageToDelete.is_primary === 1) {
+    const [remainingRows] = await pool.execute(
+      'SELECT id FROM marshans_product_images WHERE product_id = ? ORDER BY sort_order ASC, id ASC LIMIT 1',
+      [numProductId]
+    );
+    if (remainingRows.length > 0) {
+      await pool.execute(
+        'UPDATE marshans_product_images SET is_primary = 1 WHERE id = ?',
+        [remainingRows[0].id]
+      );
+    }
+  }
+
+  // 6. Fetch and return remaining images
+  const [remainingImages] = await pool.execute(
+    'SELECT id, product_id, image_url, storage_path, sort_order, is_primary FROM marshans_product_images WHERE product_id = ? ORDER BY sort_order ASC, id ASC',
+    [numProductId]
+  );
+
+  return {
+    deletedImageId: numImageId,
+    remainingImages
+  };
+};
+
 module.exports = {
   calculateRatingTier,
   getProducts,
   getProductById,
   createProduct,
   updateProduct,
-  deleteProduct
+  deleteProduct,
+  deleteProductImage
 };

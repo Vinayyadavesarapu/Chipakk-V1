@@ -13,6 +13,7 @@ const getProductionQueueHandler = async (req, res, next) => {
     const result = await productionService.getProductionQueue({
       search,
       production_status,
+      store_id: req.storeId,
       limit,
       offset
     });
@@ -55,14 +56,14 @@ const updateProductionStatusHandler = async (req, res, next) => {
     }
 
     // Read current production item to verify existence & record previous status
-    const existingItem = await productionService.getProductionItemById(numItemId);
+    const existingItem = await productionService.getProductionItemById(numItemId, req.storeId);
     if (!existingItem) {
       return sendError(res, `Production order item with ID ${itemId} not found`, 404);
     }
 
     const previousStatus = existingItem.production_status;
 
-    const updatedItem = await productionService.updateProductionStatus(numItemId, rawStatus);
+    const updatedItem = await productionService.updateProductionStatus(numItemId, rawStatus, req.storeId);
 
     // Write audit log if request is from an authenticated admin
     if (req.user && req.user.uid) {

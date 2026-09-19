@@ -1,7 +1,7 @@
 /* =========================================================
    CHIPAKK — Customer Account Module
    js/account.js
-   
+
    AUTHENTICATED ACCOUNT ENGINE:
    - Real Firebase Authentication lifecycle
    - Dual-state interface: Sign In / Sign Up vs Customer Dashboard
@@ -423,7 +423,7 @@
       const dateStr = new Date(dateVal).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
       const fulfillStatus = ord.fulfillment_status || ord.status || "PROCESSING";
       const statusClass = fulfillStatus === "DELIVERED" ? "status-delivered" : (fulfillStatus === "SHIPPED" ? "status-shipped" : "status-processing");
-      const orderTotal = ord.total_price_inr ?? ord.total ?? 0;
+      const orderTotal = ord.total_price_rupees ?? ord.total_price ?? ord.total_price_inr ?? ord.total ?? 0;
       const rawPayStatus = (ord.payment_status || "").toLowerCase();
       const rawPayMethod = (ord.payment_method || "").toUpperCase();
       let paymentNote = "Pending Payment";
@@ -490,7 +490,7 @@
       btn.addEventListener("click", async () => {
         const orderIdentifier = btn.dataset.viewOrder;
         let targetOrder = orders.find((o) => String(o.id) === orderIdentifier || String(o.orderId) === orderIdentifier || String(o.order_number) === orderIdentifier);
-        
+
         if (targetOrder && targetOrder.id && (!targetOrder.items || targetOrder.items.length === 0)) {
           try {
             const getOrderFn = window.CHIPAKK?.getCustomerOrderByIdApi || window.CHIPAKK?.api?.getCustomerOrderById;
@@ -519,7 +519,7 @@
     if (msgEl) {
       msgEl.textContent = getOrderStatusCustomerMessage(order.fulfillment_status || order.status, order.payment_status);
     }
-    
+
     const paymentEl = $("#trackModalPayment");
     if (paymentEl) {
       const rawPayStatus = (order.payment_status || "").toLowerCase();
@@ -539,7 +539,7 @@
       }
     }
 
-    const orderTotal = order.total_price_inr ?? order.total ?? 0;
+    const orderTotal = order.total_price_rupees ?? order.total_price ?? order.total_price_inr ?? order.total ?? 0;
     $("#trackModalTotal").textContent = formatPrice(orderTotal);
     $("#trackModalCourier").textContent = order.courier_name || (order.tracking_number ? "BlueDart Express" : "Standard Shipping (Awaiting Dispatch)");
     $("#trackModalTrackingNo").textContent = order.tracking_number || "Will be assigned once package is dispatched";
@@ -572,7 +572,7 @@
           const title = item.product_title || item.name || "Sticker";
           const variant = item.variant_name || item.material || "Standard Vinyl";
           const qty = item.quantity || item.qty || 1;
-          const price = item.unit_price_inr ?? item.price ?? 0;
+          const price = item.unit_price_rupees ?? item.unit_price ?? item.unit_price_inr ?? item.price ?? 0;
           const rawImg = item.img || item.image_url || item.image;
           const isImg = typeof rawImg === 'string' && (rawImg.startsWith('http') || rawImg.includes('/') || /\.(png|jpe?g|webp|gif|svg)/i.test(rawImg));
           const resolved = isImg ? (window.CHIPAKK?.resolveImageUrl ? window.CHIPAKK.resolveImageUrl(rawImg) : rawImg) : null;

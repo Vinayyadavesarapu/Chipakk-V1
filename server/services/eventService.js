@@ -1,5 +1,17 @@
 const { pool } = require('../config/database');
 
+let hasStoreIdColumn = null;
+const checkHasStoreId = async () => {
+  if (hasStoreIdColumn !== null) return hasStoreIdColumn;
+  try {
+    const [cols] = await pool.execute("SHOW COLUMNS FROM events LIKE 'store_id'");
+    hasStoreIdColumn = cols && cols.length > 0;
+  } catch (err) {
+    hasStoreIdColumn = false;
+  }
+  return hasStoreIdColumn;
+};
+
 /**
  * Helper to parse JSON values safely
  */
@@ -22,7 +34,7 @@ const safeJsonParse = (val, fallback = null) => {
  */
 const deriveEventStatus = (eventRow) => {
   if (!eventRow.active) return 'INACTIVE';
-  
+
   const now = new Date();
   const startTime = new Date(eventRow.start_time);
   const endTime = new Date(eventRow.end_time);
@@ -40,11 +52,25 @@ const getEvents = async ({
   active,
   event_type,
   status,
+  store_id,
   limit = 50,
   offset = 0
 } = {}) => {
   const conditions = [];
   const params = [];
+
+  const hasStoreId = await checkHasStoreId();
+  if (hasStoreId && store_id !== undefined && store_id !== null && String(store_id).trim() !== '') {
+    const sId = parseInt(store_id, 10);
+    if (!isNaN(sId)) {
+      if (sId === 1) {
+        conditions.push('(e.store_id = 1 OR e.store_id IS NULL)');
+      } else {
+        conditions.push('e.store_id = ?');
+        params.push(sId);
+      }
+    }
+  }
 
   if (active !== undefined && active !== null && active !== '') {
     conditions.push('e.active = ?');
@@ -91,7 +117,7 @@ const getEvents = async ({
   const total = countRows[0].total || 0;
 
   const query = `
-    SELECT 
+    SELECT
       e.id,
       e.name,
       e.event_type,
@@ -130,14 +156,29 @@ const getEvents = async ({
 /**
  * Fetch a single event by numeric BIGINT ID
  */
-const getEventById = async (eventId) => {
+const getEventById = async (eventId, store_id = null) => {
   if (!eventId) return null;
 
   const numId = parseInt(eventId, 10);
   if (isNaN(numId)) return null;
 
+  const hasStoreId = await checkHasStoreId();
+  let storeCondition = '';
+  const params = [numId];
+  if (hasStoreId && store_id !== null && store_id !== undefined) {
+    const sId = parseInt(store_id, 10);
+    if (!isNaN(sId)) {
+      if (sId === 1) {
+        storeCondition = ' AND (e.store_id = 1 OR e.store_id IS NULL)';
+      } else {
+        storeCondition = ' AND e.store_id = ?';
+        params.push(sId);
+      }
+    }
+  }
+
   const query = `
-    SELECT 
+    SELECT
       e.id,
       e.name,
       e.event_type,
@@ -150,11 +191,11 @@ const getEventById = async (eventId) => {
       e.created_at,
       e.updated_at
     FROM events e
-    WHERE e.id = ?
+    WHERE e.id = ?${storeCondition}
     LIMIT 1
   `;
 
-  const [rows] = await pool.execute(query, [numId]);
+  const [rows] = await pool.execute(query, params);
   if (!rows || rows.length === 0) {
     return null;
   }
@@ -202,20 +243,38 @@ const createEvent = async (eventData) => {
     throw new Error('End time cannot be earlier than start time.');
   }
 
-  const discountVal = Math.min(Math.max(parseInt(discount_percent, 10) || 0, 0), 100);
+  const discountVal = Math.min(Math.max(parseInt(eventData.discount_percent !== undefined ? eventData.discount_percent : eventData.discount_value, 10) || 0, 0), 100);
   const startTimeISO = startDate.toISOString().slice(0, 19).replace('T', ' ');
   const endTimeISO = endDate.toISOString().slice(0, 19).replace('T', ' ');
 
-  const targetProdsJson = JSON.stringify(Array.isArray(target_products) ? target_products : []);
+  const targetProductsList = eventData.target_products !== undefined ? eventData.target_products : eventData.target_product_ids;
+  const targetProdsJson = JSON.stringify(Array.isArray(targetProductsList) ? targetProductsList : []);
   const targetCatsJson = JSON.stringify(Array.isArray(target_categories) ? target_categories : []);
 
-  const query = `
+  const hasStoreId = await checkHasStoreId();
+  const eventStoreId = eventData.store_id ? (parseInt(eventData.store_id, 10) === 2 ? 2 : 1) : 1;
+
+  const query = hasStoreId ? `
+    INSERT INTO events (
+      name, store_id, event_type, start_time, end_time, discount_percent, target_products, target_categories, active
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  ` : `
     INSERT INTO events (
       name, event_type, start_time, end_time, discount_percent, target_products, target_categories, active
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `;
 
-  const params = [
+  const params = hasStoreId ? [
+    name.trim(),
+    eventStoreId,
+    String(event_type || 'drop').trim().toLowerCase(),
+    startTimeISO,
+    endTimeISO,
+    discountVal,
+    targetProdsJson,
+    targetCatsJson,
+    active ? 1 : 0
+  ] : [
     name.trim(),
     String(event_type || 'drop').trim().toLowerCase(),
     startTimeISO,
@@ -227,19 +286,19 @@ const createEvent = async (eventData) => {
   ];
 
   const [result] = await pool.execute(query, params);
-  return getEventById(result.insertId);
+  return getEventById(result.insertId, eventStoreId);
 };
 
 /**
  * Update an existing event in MySQL
  */
-const updateEvent = async (id, eventData) => {
+const updateEvent = async (id, eventData, store_id = null) => {
   const numId = parseInt(id, 10);
   if (isNaN(numId)) {
     throw new Error('Invalid event ID format.');
   }
 
-  const existing = await getEventById(numId);
+  const existing = await getEventById(numId, store_id);
   if (!existing) {
     return null;
   }
@@ -294,15 +353,17 @@ const updateEvent = async (id, eventData) => {
     throw new Error('End time cannot be earlier than start time.');
   }
 
-  if (discount_percent !== undefined) {
-    const discountVal = Math.min(Math.max(parseInt(discount_percent, 10) || 0, 0), 100);
+  const rawDiscount = discount_percent !== undefined ? discount_percent : eventData.discount_value;
+  if (rawDiscount !== undefined) {
+    const discountVal = Math.min(Math.max(parseInt(rawDiscount, 10) || 0, 0), 100);
     updates.push('discount_percent = ?');
     params.push(discountVal);
   }
 
-  if (target_products !== undefined) {
+  const rawProducts = target_products !== undefined ? target_products : eventData.target_product_ids;
+  if (rawProducts !== undefined) {
     updates.push('target_products = ?');
-    params.push(JSON.stringify(Array.isArray(target_products) ? target_products : []));
+    params.push(JSON.stringify(Array.isArray(rawProducts) ? rawProducts : []));
   }
 
   if (target_categories !== undefined) {
@@ -321,16 +382,21 @@ const updateEvent = async (id, eventData) => {
     await pool.execute(query, params);
   }
 
-  return getEventById(numId);
+  return getEventById(numId, store_id);
 };
 
 /**
  * Deactivate a promotional event (soft deactivation preserving reporting history)
  */
-const deleteEvent = async (id) => {
+const deleteEvent = async (id, store_id = null) => {
   const numId = parseInt(id, 10);
   if (isNaN(numId)) {
     throw new Error('Invalid event ID format.');
+  }
+
+  const existing = await getEventById(numId, store_id);
+  if (!existing) {
+    return false;
   }
 
   const [result] = await pool.execute('UPDATE events SET active = 0 WHERE id = ?', [numId]);

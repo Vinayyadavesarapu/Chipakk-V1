@@ -130,7 +130,7 @@ const updateOrderShippingHandler = async (req, res, next) => {
       return sendError(res, 'Invalid order ID format. Expected numeric BIGINT ID.', 400);
     }
 
-    const existingOrder = await orderService.getOrderById(numId);
+    const existingOrder = await orderService.getOrderById(numId, req.storeId);
     if (!existingOrder) {
       return sendError(res, `Order with ID ${id} not found`, 404);
     }
@@ -140,7 +140,7 @@ const updateOrderShippingHandler = async (req, res, next) => {
       tracking_no,
       ship_date,
       ship_notes
-    });
+    }, req.storeId);
 
     // Write audit log if request is authenticated admin
     if (req.user && req.user.uid) {

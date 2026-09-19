@@ -1,4 +1,5 @@
 const { pool } = require('../config/database');
+const { normalizeIndianPhoneNumber } = require('../utils/phoneUtils');
 
 /**
  * Validate customer address fields
@@ -12,12 +13,13 @@ const validateAddressPayload = (data) => {
     throw err;
   }
 
-  const cleanPhone = String(phone || '').replace(/^[\s\-\+910]+/, '').replace(/[\s\-]/g, '');
-  if (!cleanPhone || cleanPhone.length < 10) {
+  const phoneValidation = normalizeIndianPhoneNumber(phone);
+  if (!phoneValidation.valid) {
     const err = new Error('Valid 10-digit mobile phone number is required.');
     err.statusCode = 400;
     throw err;
   }
+  const cleanPhone = phoneValidation.phone;
 
   if (!address_line || typeof address_line !== 'string' || address_line.trim().length < 5) {
     const err = new Error('Complete street address is required.');
@@ -52,7 +54,7 @@ const getCustomerAddresses = async (firebaseUid) => {
   if (!firebaseUid) return [];
 
   const query = `
-    SELECT 
+    SELECT
       id,
       user_id,
       firebase_uid,
@@ -86,7 +88,7 @@ const getCustomerAddressById = async (id, firebaseUid) => {
   if (isNaN(numId) || !firebaseUid) return null;
 
   const query = `
-    SELECT 
+    SELECT
       id,
       user_id,
       firebase_uid,
@@ -168,7 +170,8 @@ const createCustomerAddress = async (firebaseUid, addressData) => {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
-    const cleanPhone = String(phone).replace(/^[\s\-\+910]+/, '').replace(/[\s\-]/g, '');
+    const phoneResult = normalizeIndianPhoneNumber(phone);
+    const cleanPhone = phoneResult.valid ? phoneResult.phone : String(phone).trim();
 
     const [result] = await connection.execute(insertQuery, [
       userId,
@@ -242,7 +245,8 @@ const updateCustomerAddress = async (id, firebaseUid, addressData) => {
     }
 
     if (addressData.phone !== undefined) {
-      const cleanPhone = String(addressData.phone).replace(/^[\s\-\+910]+/, '').replace(/[\s\-]/g, '');
+      const phoneResult = normalizeIndianPhoneNumber(addressData.phone);
+      const cleanPhone = phoneResult.valid ? phoneResult.phone : String(addressData.phone).trim();
       updates.push('phone = ?');
       params.push(cleanPhone);
     }

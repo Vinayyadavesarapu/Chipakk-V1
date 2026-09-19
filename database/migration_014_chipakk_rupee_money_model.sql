@@ -40,18 +40,28 @@ USE `u781826529_chipakk`;
 -- -----------------------------------------------------------------------------
 
 -- Query 1.1: Pre-flight check for products
-SELECT 
+SELECT
   id, store_id, name, sku, price, compare_at_price, created_at
 FROM `products`
-WHERE id IN (1, 2)
+WHERE sku IN ('SKU-AN_001', 'SKU-CK-001', 'SKU-CK-002')
+   OR (store_id = 1 AND price = 1500)
 ORDER BY id ASC;
 
 -- Query 1.2: Pre-flight check for product variants
-SELECT 
+SELECT
   pv.id, pv.product_id, pv.sku, pv.price, pv.variant_slug
 FROM `product_variants` pv
-WHERE pv.product_id IN (1, 2)
+JOIN `products` p ON pv.product_id = p.id
+WHERE (p.store_id = 1 OR p.store_id IS NULL)
+  AND (pv.sku IN ('SKU-AN_001', 'SKU-CK-001', 'SKU-CK-002') OR pv.price = 1500)
 ORDER BY pv.id ASC;
+
+-- Query 1.3: Pre-flight check for raw base64 images in product_images
+SELECT
+  id, product_id, SUBSTRING(image_url, 1, 50) AS image_preview, is_primary
+FROM `product_images`
+WHERE image_url LIKE 'data:image/%'
+ORDER BY id ASC;
 
 
 -- -----------------------------------------------------------------------------
@@ -62,8 +72,7 @@ ORDER BY pv.id ASC;
 UPDATE `products`
 SET `price` = 15,
     `compare_at_price` = 0
-WHERE `id` = 1
-  AND `sku` = 'SKU-AN_001'
+WHERE `sku` = 'SKU-AN_001'
   AND `price` = 1500
   AND (`store_id` = 1 OR `store_id` IS NULL);
 
@@ -71,16 +80,25 @@ WHERE `id` = 1
 UPDATE `products`
 SET `price` = 15,
     `compare_at_price` = 0
-WHERE `id` = 2
-  AND `sku` = 'SKU-CK-001'
+WHERE `sku` = 'SKU-CK-001'
   AND `price` = 1500
   AND (`store_id` = 1 OR `store_id` IS NULL);
 
--- 2.3 Convert Product Variants explicitly linked to Products 1 & 2
-UPDATE `product_variants`
-SET `price` = 15
-WHERE `product_id` IN (1, 2)
-  AND `price` = 1500;
+-- 2.3 Convert Product 3 / SKU-CK-002 if present
+UPDATE `products`
+SET `price` = 15,
+    `compare_at_price` = 0
+WHERE `sku` = 'SKU-CK-002'
+  AND `price` = 1500
+  AND (`store_id` = 1 OR `store_id` IS NULL);
+
+-- 2.4 Convert Product Variants explicitly for known SKUs
+UPDATE `product_variants` pv
+JOIN `products` p ON pv.product_id = p.id
+SET pv.`price` = 15
+WHERE (p.store_id = 1 OR p.store_id IS NULL)
+  AND pv.`sku` IN ('SKU-AN_001', 'SKU-CK-001', 'SKU-CK-002')
+  AND pv.`price` = 1500;
 
 
 -- -----------------------------------------------------------------------------
@@ -94,22 +112,22 @@ WHERE `product_id` IN (1, 2)
 -- -----------------------------------------------------------------------------
 
 -- Query 3.1: Verify updated products
-SELECT 
+SELECT
   id, store_id, name, sku, price, compare_at_price
 FROM `products`
-WHERE id IN (1, 2)
+WHERE sku IN ('SKU-AN_001', 'SKU-CK-001', 'SKU-CK-002')
 ORDER BY id ASC;
 
 -- Query 3.2: Verify updated product variants
-SELECT 
+SELECT
   pv.id, pv.product_id, pv.sku, pv.price, pv.variant_slug
 FROM `product_variants` pv
-WHERE pv.product_id IN (1, 2)
+WHERE pv.sku IN ('SKU-AN_001', 'SKU-CK-001', 'SKU-CK-002')
 ORDER BY pv.id ASC;
 
 -- Query 3.3: Integrity verification (confirm Store 2 isolation)
-SELECT 
+SELECT
   COUNT(*) AS unexpected_modified_store2_products
 FROM `products`
 WHERE store_id = 2
-  AND id IN (1, 2);
+  AND price = 15;

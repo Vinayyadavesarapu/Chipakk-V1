@@ -14,7 +14,7 @@ const getSettingsHandler = async (req, res, next) => {
     const settings = await settingsService.getStoreSettings(storeId);
 
     // Look up authoritative active shipping rule from shipping_rules table if present
-    let activeShippingThreshold = settings.free_shipping_threshold !== undefined ? settings.free_shipping_threshold : (storeId === 2 ? 0 : 499);
+    let activeShippingThreshold = settings.free_shipping_threshold !== undefined ? settings.free_shipping_threshold : (storeId === 2 ? 0 : 300);
     let activeShippingFee = settings.shipping_fee || (storeId === 2 ? 10000 : 50);
     let isFreeShippingEnabled = settings.free_shipping_enabled !== undefined ? Boolean(settings.free_shipping_enabled) : (storeId === 1);
 
@@ -93,8 +93,8 @@ const getSettingsHandler = async (req, res, next) => {
         shipping_fee: isMarshans ? 10000 : 50,
         shipping_fee_rupees: isMarshans ? 100 : 50,
         free_shipping_enabled: !isMarshans,
-        free_shipping_threshold: isMarshans ? 0 : 499,
-        free_shipping_threshold_rupees: isMarshans ? 0 : 499,
+        free_shipping_threshold: isMarshans ? 0 : 300,
+        free_shipping_threshold_rupees: isMarshans ? 0 : 300,
         free_shipping_calculation: 'after_discounts',
         announcement_text: isMarshans ? 'PRECISION 3D PRINTING & RAPID PROTOTYPING' : 'WELCOME TO CHIPAKK!',
         announcement_active: true,
@@ -137,7 +137,7 @@ const getAdminSettingsHandler = async (req, res, next) => {
         gst_pct: 18,
         shipping_fee: isMarshans ? 10000 : 50,
         free_shipping_enabled: !isMarshans,
-        free_shipping_threshold: isMarshans ? 0 : 499
+        free_shipping_threshold: isMarshans ? 0 : 300
       }
     }, 'Admin store settings fallback');
   }

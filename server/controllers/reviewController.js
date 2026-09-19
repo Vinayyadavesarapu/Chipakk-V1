@@ -97,7 +97,7 @@ const updateReviewHandler = async (req, res, next) => {
       rating,
       comment,
       status
-    });
+    }, req.storeId);
 
     // Write audit log if request is from an authenticated admin
     if (req.user && req.user.uid) {

@@ -33,11 +33,24 @@ const safeJsonParse = (val, fallback = null) => {
 const getProductionQueue = async ({
   search,
   production_status,
+  store_id,
   limit = 50,
   offset = 0
 } = {}) => {
   const conditions = [];
   const params = [];
+
+  if (store_id !== undefined && store_id !== null && String(store_id).trim() !== '') {
+    const sId = parseInt(store_id, 10);
+    if (!isNaN(sId)) {
+      if (sId === 1) {
+        conditions.push('(o.store_id = 1 OR o.store_id IS NULL)');
+      } else {
+        conditions.push('o.store_id = ?');
+        params.push(sId);
+      }
+    }
+  }
 
   if (production_status && String(production_status).trim()) {
     conditions.push('oi.production_status = ?');
@@ -67,7 +80,7 @@ const getProductionQueue = async ({
 
   // Items query JOINing order details
   const query = `
-    SELECT 
+    SELECT
       oi.id AS order_item_id,
       oi.order_id,
       o.order_number,
@@ -136,14 +149,28 @@ const getProductionQueue = async ({
 /**
  * Fetch a single order_item by numeric BIGINT ID with associated order context
  */
-const getProductionItemById = async (itemId) => {
+const getProductionItemById = async (itemId, store_id = null) => {
   if (!itemId) return null;
 
   const numItemId = parseInt(itemId, 10);
   if (isNaN(numItemId)) return null;
 
+  let storeCondition = '';
+  const params = [numItemId];
+  if (store_id !== null && store_id !== undefined && String(store_id).trim() !== '') {
+    const sId = parseInt(store_id, 10);
+    if (!isNaN(sId)) {
+      if (sId === 1) {
+        storeCondition = ' AND (o.store_id = 1 OR o.store_id IS NULL)';
+      } else {
+        storeCondition = ' AND o.store_id = ?';
+        params.push(sId);
+      }
+    }
+  }
+
   const query = `
-    SELECT 
+    SELECT
       oi.id AS order_item_id,
       oi.order_id,
       o.order_number,
@@ -164,11 +191,11 @@ const getProductionItemById = async (itemId) => {
       oi.created_at
     FROM order_items oi
     JOIN orders o ON oi.order_id = o.id
-    WHERE oi.id = ?
+    WHERE oi.id = ?${storeCondition}
     LIMIT 1
   `;
 
-  const [rows] = await pool.execute(query, [numItemId]);
+  const [rows] = await pool.execute(query, params);
 
   if (!rows || rows.length === 0) {
     return null;
@@ -207,7 +234,7 @@ const getProductionItemById = async (itemId) => {
 /**
  * Update production_status for a specific order item
  */
-const updateProductionStatus = async (itemId, status) => {
+const updateProductionStatus = async (itemId, status, store_id = null) => {
   const numItemId = parseInt(itemId, 10);
   if (isNaN(numItemId)) {
     throw new Error('Invalid order item ID format. Expected numeric BIGINT ID.');
@@ -219,7 +246,7 @@ const updateProductionStatus = async (itemId, status) => {
     throw new Error(`Invalid production status. Allowed values: ${ALLOWED_PRODUCTION_STATUSES.join(', ')}`);
   }
 
-  const existing = await getProductionItemById(numItemId);
+  const existing = await getProductionItemById(numItemId, store_id);
   if (!existing) {
     return null;
   }
@@ -227,7 +254,7 @@ const updateProductionStatus = async (itemId, status) => {
   const query = 'UPDATE order_items SET production_status = ? WHERE id = ?';
   await pool.execute(query, [normalizedStatus, numItemId]);
 
-  return getProductionItemById(numItemId);
+  return getProductionItemById(numItemId, store_id);
 };
 
 module.exports = {

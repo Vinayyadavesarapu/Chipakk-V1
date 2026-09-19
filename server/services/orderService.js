@@ -3,6 +3,95 @@ const couponService = require('./couponService');
 const shippingService = require('./shippingService');
 const settingsService = require('./settingsService');
 const { isMarshansHybridCatalogEnabled } = require('../config/features');
+const { normalizeIndianPhoneNumber } = require('../utils/phoneUtils');
+const { calculateInclusiveGst, resolveSellerState } = require('../utils/taxUtils');
+
+let hasTaxColsCached = null;
+const checkHasTaxCols = async () => {
+  if (hasTaxColsCached !== null) return hasTaxColsCached;
+  try {
+    const [cols] = await pool.execute(
+      "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'orders' AND COLUMN_NAME = 'tax_amount'"
+    );
+    hasTaxColsCached = cols && cols.length > 0;
+  } catch (_) {
+    hasTaxColsCached = false;
+  }
+  return hasTaxColsCached;
+};
+
+/**
+ * Custom Sticker Tiers & Pricing Multipliers (Server Authoritative)
+ */
+const MIN_ITEM_QUANTITY = 1;
+const MAX_ITEM_QUANTITY = 10000;
+const MAX_ORDER_ITEMS = 50;
+const MAX_ORDER_TOTAL_RUPEES = 50000;
+const ALLOWED_PAYMENT_METHODS = ['COD', 'UPI', 'CARD', 'NETBANKING', 'ONLINE', 'WALLET'];
+
+const CUSTOM_STICKER_TIERS = {
+  10: 499,
+  25: 899,
+  50: 1499,
+  100: 2499,
+  250: 4999,
+  500: 8499
+};
+
+const ALLOWED_CUT_TYPES = ['Die Cut', 'Kiss Cut', 'Holographic', 'Clear Vinyl', 'Clear'];
+const ALLOWED_SIZES = ['2" x 2"', '3" x 3"', '4" x 4"'];
+const ALLOWED_FINISHES = ['Glossy', 'Matte'];
+
+const calculateAuthoritativeCustomStickerPrice = (customData) => {
+  if (!customData || typeof customData !== 'object') {
+    const err = new Error('Custom design specifications are required for custom stickers.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const qty = parseInt(customData.quantity, 10);
+  if (!CUSTOM_STICKER_TIERS[qty]) {
+    const err = new Error(`Invalid custom sticker quantity tier: ${customData.quantity}. Allowed tiers are 10, 25, 50, 100, 250, 500.`);
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const cutType = customData.cutType || 'Die Cut';
+  if (!ALLOWED_CUT_TYPES.includes(cutType)) {
+    const err = new Error(`Invalid custom sticker cut type: ${cutType}. Allowed types: ${ALLOWED_CUT_TYPES.join(', ')}.`);
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const size = customData.size || '3" x 3"';
+  if (!ALLOWED_SIZES.includes(size)) {
+    const err = new Error(`Invalid custom sticker size: ${size}. Allowed sizes: ${ALLOWED_SIZES.join(', ')}.`);
+    err.statusCode = 400;
+    throw err;
+  }
+
+  if (customData.finish && !ALLOWED_FINISHES.includes(customData.finish)) {
+    const err = new Error(`Invalid custom sticker finish: ${customData.finish}. Allowed finishes: ${ALLOWED_FINISHES.join(', ')}.`);
+    err.statusCode = 400;
+    throw err;
+  }
+
+  let basePrice = CUSTOM_STICKER_TIERS[qty];
+
+  // Cut type multiplier
+  if (cutType === 'Holographic') {
+    basePrice = Math.round(basePrice * 1.25);
+  } else if (cutType === 'Clear Vinyl' || cutType === 'Clear') {
+    basePrice = Math.round(basePrice * 1.15);
+  }
+
+  // Size multiplier
+  if (size === '4" x 4"') {
+    basePrice = Math.round(basePrice * 1.2);
+  }
+
+  return basePrice;
+};
 
 let hasMarshansColInOrderItems = null;
 const checkHasMarshansOrderCol = async (conn = pool) => {
@@ -164,8 +253,10 @@ const getOrders = async ({
   const [countRows] = await pool.execute(countQuery, params);
   const total = countRows[0].total || 0;
 
+  const hasTax = await checkHasTaxCols();
+
   const query = `
-    SELECT 
+    SELECT
       o.id,
       o.order_number,
       o.customer_id,
@@ -179,6 +270,7 @@ const getOrders = async ({
       o.subtotal,
       o.discount_total,
       o.shipping_charge,
+      ${hasTax ? 'COALESCE(o.tax_amount, 0) AS tax_amount, COALESCE(o.cgst_amount, 0) AS cgst_amount, COALESCE(o.sgst_amount, 0) AS sgst_amount, COALESCE(o.igst_amount, 0) AS igst_amount, COALESCE(o.shipping_method, "standard") AS shipping_method,' : '0 AS tax_amount, 0 AS cgst_amount, 0 AS sgst_amount, 0 AS igst_amount, "standard" AS shipping_method,'}
       o.total_price,
       o.coupon_code,
       o.courier,
@@ -203,14 +295,27 @@ const getOrders = async ({
     const rawSubtotal = parseInt(r.subtotal, 10) || 0;
     const rawDiscount = parseInt(r.discount_total, 10) || 0;
     const rawShipping = parseInt(r.shipping_charge, 10) || 0;
+    const rawTax = parseInt(r.tax_amount, 10) || 0;
+    const rawCgst = parseInt(r.cgst_amount, 10) || 0;
+    const rawSgst = parseInt(r.sgst_amount, 10) || 0;
+    const rawIgst = parseInt(r.igst_amount, 10) || 0;
+
+    const totalPriceRupees = isStore2 ? Math.round(rawTotalPrice / 100) : rawTotalPrice;
+    const taxRupees = isStore2 ? Math.round(rawTax / 100) : rawTax;
 
     return {
       ...r,
       shipping_address: safeJsonParse(r.shipping_address, null),
-      total_price_rupees: isStore2 ? Math.round(rawTotalPrice / 100) : rawTotalPrice,
+      total_price_rupees: totalPriceRupees,
       subtotal_rupees: isStore2 ? Math.round(rawSubtotal / 100) : rawSubtotal,
       discount_total_rupees: isStore2 ? Math.round(rawDiscount / 100) : rawDiscount,
-      shipping_charge_rupees: isStore2 ? Math.round(rawShipping / 100) : rawShipping
+      shipping_charge_rupees: isStore2 ? Math.round(rawShipping / 100) : rawShipping,
+      tax_amount_rupees: taxRupees,
+      cgst_amount_rupees: isStore2 ? Math.round(rawCgst / 100) : rawCgst,
+      sgst_amount_rupees: isStore2 ? Math.round(rawSgst / 100) : rawSgst,
+      igst_amount_rupees: isStore2 ? Math.round(rawIgst / 100) : rawIgst,
+      taxable_amount_rupees: totalPriceRupees - taxRupees,
+      shipping_method: r.shipping_method || 'standard'
     };
   });
 
@@ -245,8 +350,10 @@ const getOrderById = async (orderIdOrNumber, storeId = null) => {
     }
   }
 
+  const hasTax = await checkHasTaxCols();
+
   const orderQuery = `
-    SELECT 
+    SELECT
       o.id,
       o.order_number,
       o.customer_id,
@@ -260,6 +367,7 @@ const getOrderById = async (orderIdOrNumber, storeId = null) => {
       o.subtotal,
       o.discount_total,
       o.shipping_charge,
+      ${hasTax ? 'COALESCE(o.tax_amount, 0) AS tax_amount, COALESCE(o.cgst_amount, 0) AS cgst_amount, COALESCE(o.sgst_amount, 0) AS sgst_amount, COALESCE(o.igst_amount, 0) AS igst_amount, COALESCE(o.shipping_method, "standard") AS shipping_method,' : '0 AS tax_amount, 0 AS cgst_amount, 0 AS sgst_amount, 0 AS igst_amount, "standard" AS shipping_method,'}
       o.total_price,
       o.coupon_code,
       o.courier,
@@ -290,16 +398,26 @@ const getOrderById = async (orderIdOrNumber, storeId = null) => {
   const rawSubtotal = parseInt(order.subtotal, 10) || 0;
   const rawDiscount = parseInt(order.discount_total, 10) || 0;
   const rawShipping = parseInt(order.shipping_charge, 10) || 0;
+  const rawTax = parseInt(order.tax_amount, 10) || 0;
+  const rawCgst = parseInt(order.cgst_amount, 10) || 0;
+  const rawSgst = parseInt(order.sgst_amount, 10) || 0;
+  const rawIgst = parseInt(order.igst_amount, 10) || 0;
 
   order.total_price_rupees = isStore2 ? Math.round(rawTotalPrice / 100) : rawTotalPrice;
   order.subtotal_rupees = isStore2 ? Math.round(rawSubtotal / 100) : rawSubtotal;
   order.discount_total_rupees = isStore2 ? Math.round(rawDiscount / 100) : rawDiscount;
   order.shipping_charge_rupees = isStore2 ? Math.round(rawShipping / 100) : rawShipping;
+  order.tax_amount_rupees = isStore2 ? Math.round(rawTax / 100) : rawTax;
+  order.cgst_amount_rupees = isStore2 ? Math.round(rawCgst / 100) : rawCgst;
+  order.sgst_amount_rupees = isStore2 ? Math.round(rawSgst / 100) : rawSgst;
+  order.igst_amount_rupees = isStore2 ? Math.round(rawIgst / 100) : rawIgst;
+  order.taxable_amount_rupees = order.total_price_rupees - order.tax_amount_rupees;
+  order.shipping_method = order.shipping_method || 'standard';
 
   // Fetch Order Items with product image
   const hasMarshansProductCol = await checkHasMarshansOrderCol();
   const itemsQuery = `
-    SELECT 
+    SELECT
       oi.id,
       oi.order_id,
       oi.product_id,
@@ -311,6 +429,7 @@ const getOrderById = async (orderIdOrNumber, storeId = null) => {
       oi.unit_price,
       oi.quantity,
       oi.total_price,
+      ${hasTax ? 'COALESCE(oi.hsn_code, "4911") AS hsn_code, COALESCE(oi.tax_rate, 18.00) AS tax_rate, COALESCE(oi.tax_amount, 0) AS tax_amount,' : '"4911" AS hsn_code, 18.00 AS tax_rate, 0 AS tax_amount,'}
       oi.admin_product_id_snapshot,
       oi.production_status,
       oi.created_at,
@@ -355,7 +474,10 @@ const getOrderById = async (orderIdOrNumber, storeId = null) => {
     custom_designs: customDesignsByItem[item.id] || [],
     variant_options: safeJsonParse(item.variant_options, null),
     unit_price_rupees: isStore2 ? Math.round((parseInt(item.unit_price, 10) || 0) / 100) : (parseInt(item.unit_price, 10) || 0),
-    total_price_rupees: isStore2 ? Math.round((parseInt(item.total_price, 10) || 0) / 100) : (parseInt(item.total_price, 10) || 0)
+    total_price_rupees: isStore2 ? Math.round((parseInt(item.total_price, 10) || 0) / 100) : (parseInt(item.total_price, 10) || 0),
+    hsn_code: item.hsn_code || '4911',
+    tax_rate: parseFloat(item.tax_rate) || 18.00,
+    tax_amount_rupees: isStore2 ? Math.round((parseInt(item.tax_amount, 10) || 0) / 100) : (parseInt(item.tax_amount, 10) || 0)
   }));
 
   // Attach status history timeline
@@ -387,6 +509,15 @@ const updateOrderStatus = async (id, status, options = {}) => {
   const query = 'UPDATE orders SET fulfillment_status = ? WHERE id = ?';
   await pool.execute(query, [normalizedStatus, numId]);
 
+  if (normalizedStatus === 'CANCELLED') {
+    try {
+      await pool.execute(
+        "UPDATE coupon_usage SET status = 'released' WHERE order_id = ? AND status = 'reserved'",
+        [numId]
+      );
+    } catch (_) {}
+  }
+
   // Record status history transition
   await recordOrderStatusHistory(numId, normalizedStatus, {
     changed_by: options.changed_by || 'Admin',
@@ -399,13 +530,13 @@ const updateOrderStatus = async (id, status, options = {}) => {
 /**
  * Update order courier shipping tracking details
  */
-const updateOrderShipping = async (id, shippingData = {}) => {
+const updateOrderShipping = async (id, shippingData = {}, storeId = null) => {
   const numId = parseInt(id, 10);
   if (isNaN(numId)) {
     throw new Error('Invalid order ID format. Expected numeric BIGINT ID.');
   }
 
-  const existing = await getOrderById(numId);
+  const existing = await getOrderById(numId, storeId);
   if (!existing) {
     return null;
   }
@@ -428,14 +559,14 @@ const updateOrderShipping = async (id, shippingData = {}) => {
   const safeShipNotes = ship_notes !== undefined ? (ship_notes && String(ship_notes).trim() ? String(ship_notes).trim() : null) : existing.ship_notes;
 
   const query = `
-    UPDATE orders 
-    SET courier = ?, tracking_no = ?, ship_date = ?, ship_notes = ? 
+    UPDATE orders
+    SET courier = ?, tracking_no = ?, ship_date = ?, ship_notes = ?
     WHERE id = ?
   `;
 
   await pool.execute(query, [safeCourier, safeTrackingNo, safeShipDate, safeShipNotes, numId]);
 
-  return getOrderById(numId);
+  return getOrderById(numId, storeId);
 };
 
 /**
@@ -516,32 +647,33 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
     country = 'India'
   } = shipping_address;
 
-  if (!recipientName || recipientName.trim().length < 2) {
+  if (!recipientName || typeof recipientName !== 'string' || recipientName.trim().length < 2) {
     const err = new Error('Recipient name is required.');
     err.statusCode = 400;
     throw err;
   }
 
-  const cleanPhone = String(recipientPhone || '').replace(/^[\s\-\+910]+/, '').replace(/[\s\-]/g, '');
-  if (!cleanPhone || cleanPhone.length < 10) {
+  const phoneValidation = normalizeIndianPhoneNumber(recipientPhone);
+  if (!phoneValidation.valid) {
     const err = new Error('Valid 10-digit mobile phone number is required.');
     err.statusCode = 400;
     throw err;
   }
+  const cleanPhone = phoneValidation.phone;
 
-  if (!streetAddress || streetAddress.trim().length < 5) {
+  if (!streetAddress || typeof streetAddress !== 'string' || streetAddress.trim().length < 5) {
     const err = new Error('Complete street address is required.');
     err.statusCode = 400;
     throw err;
   }
 
-  if (!city || city.trim().length < 2) {
+  if (!city || typeof city !== 'string' || city.trim().length < 2) {
     const err = new Error('City is required.');
     err.statusCode = 400;
     throw err;
   }
 
-  if (!state || state.trim().length < 2) {
+  if (!state || typeof state !== 'string' || state.trim().length < 2) {
     const err = new Error('State is required.');
     err.statusCode = 400;
     throw err;
@@ -568,6 +700,11 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
     }, connection);
 
     const activeStoreId = parseInt(orderPayload?.store_id, 10) === 2 ? 2 : 1;
+    if (activeStoreId === 2 && !isMarshansHybridCatalogEnabled()) {
+      const err = new Error('THE MARSHANS store catalog is currently unavailable.');
+      err.statusCode = 400;
+      throw err;
+    }
     const isHybridMarshans = isMarshansHybridCatalogEnabled() && activeStoreId === 2;
 
     // Resolve items from cart if cart_id is provided and items is empty or omitted
@@ -661,13 +798,78 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
       throw err;
     }
 
+    if (orderItems.length > MAX_ORDER_ITEMS) {
+      const err = new Error(`Order cannot exceed ${MAX_ORDER_ITEMS} items.`);
+      err.statusCode = 400;
+      throw err;
+    }
+
     // 4. Server-side validation of cart items & price lookup
     let subtotalPaise = 0;
     const validatedItems = [];
 
     for (const item of orderItems) {
+      const rawQty = item.quantity !== undefined ? item.quantity : item.qty;
+      const parsedQty = typeof rawQty === 'number'
+        ? rawQty
+        : (typeof rawQty === 'string' && /^\d+$/.test(rawQty.trim()) ? parseInt(rawQty.trim(), 10) : NaN);
+
+      if (!Number.isInteger(parsedQty) || parsedQty < MIN_ITEM_QUANTITY || parsedQty > MAX_ITEM_QUANTITY) {
+        const err = new Error(`Item quantity must be an integer between ${MIN_ITEM_QUANTITY} and ${MAX_ITEM_QUANTITY}.`);
+        err.statusCode = 400;
+        throw err;
+      }
+      const qty = parsedQty;
+
+      // Support Custom Sticker Packs (print-on-demand)
+      const isCustomItem = Boolean(item.is_custom || (!item.product_id && (item.name || item.product_name)));
+      if (isCustomItem) {
+        if (activeStoreId !== 1) {
+          const err = new Error('Custom stickers are only available for CHIPAKK (Store 1).');
+          err.statusCode = 400;
+          throw err;
+        }
+
+        const customPrice = calculateAuthoritativeCustomStickerPrice(item.custom_design_data);
+        const lineTotal = customPrice * qty;
+        subtotalPaise += lineTotal;
+
+        const spec = item.custom_design_data;
+        const cutType = spec.cutType || 'Die Cut';
+        const size = spec.size || '3" x 3"';
+        const finish = spec.finish || 'Glossy';
+        const packQty = parseInt(spec.quantity, 10);
+
+        const customName = `Custom ${cutType} Stickers (${packQty} pcs)`;
+        const customSku = `SKU-CUSTOM-${packQty}-${String(cutType).toUpperCase().replace(/[^A-Z0-9]/g, '-')}`;
+        const customVariantOptions = JSON.stringify({
+          cutType,
+          size,
+          finish,
+          pack_quantity: packQty
+        });
+
+        validatedItems.push({
+          product_id: null,
+          marshans_product_id: null,
+          variant_id: null,
+          product_name: customName.slice(0, 255),
+          sku: customSku.slice(0, 100),
+          admin_product_id_snapshot: 'CUSTOM-POD',
+          variant_options: customVariantOptions,
+          unit_price: customPrice,
+          quantity: qty,
+          total_price: lineTotal,
+          custom_design_data: {
+            storagePath: typeof spec.storagePath === 'string' ? spec.storagePath.slice(0, 255) : '',
+            uploadedPreviewUrl: (typeof spec.uploadedPreviewUrl === 'string' && !spec.uploadedPreviewUrl.startsWith('data:')) ? spec.uploadedPreviewUrl.slice(0, 1024) : '',
+            fileName: typeof spec.fileName === 'string' ? spec.fileName.slice(0, 255) : 'custom-artwork.png'
+          }
+        });
+        continue;
+      }
+
       const productId = parseInt(item.product_id || item.id, 10);
-      const qty = Math.max(parseInt(item.quantity || item.qty, 10) || 1, 1);
 
       if (isNaN(productId)) {
         const err = new Error('Invalid product ID in order items.');
@@ -747,6 +949,12 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
         }
       }
 
+      if (unitPricePaise <= 0) {
+        const err = new Error(`Product #${productId} has an invalid price.`);
+        err.statusCode = 400;
+        throw err;
+      }
+
       const lineTotalPaise = unitPricePaise * qty;
       subtotalPaise += lineTotalPaise;
 
@@ -764,13 +972,24 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
       });
     }
 
-    // 5. Server-side coupon validation (store-scoped)
+    // 5. Server-side coupon validation (store-scoped) with row locking
     let discountPaise = 0;
     let validatedCoupon = null;
 
     if (coupon_code && String(coupon_code).trim()) {
       const codeStr = String(coupon_code).trim().toUpperCase();
-      const couponCheck = await couponService.validateCoupon(codeStr, subtotalPaise, activeStoreId);
+
+      // Lock the coupon row FOR UPDATE within this active transaction to eliminate race conditions
+      let lockedCoupon = null;
+      try {
+        const [lockedRows] = await connection.execute(
+          'SELECT * FROM coupons WHERE UPPER(code) = ? AND (store_id = ? OR (store_id IS NULL AND ? = 1)) LIMIT 1 FOR UPDATE',
+          [codeStr, activeStoreId, activeStoreId]
+        );
+        if (lockedRows && lockedRows.length > 0) lockedCoupon = lockedRows[0];
+      } catch (_) {}
+
+      const couponCheck = await couponService.validateCoupon(codeStr, subtotalPaise, activeStoreId, customerId, null, lockedCoupon);
 
       if (!couponCheck.valid) {
         const err = new Error(couponCheck.message || 'Invalid coupon code.');
@@ -783,8 +1002,10 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
     }
 
     // 6. Server-side shipping fee calculation (store-scoped)
+    // CRITICAL COMMERCIAL RULE: Free shipping eligibility is based strictly on the
+    // GROSS MERCHANDISE SUBTOTAL (subtotalPaise) BEFORE any coupon/product discounts.
     const shippingCheck = await shippingService.calculateShippingFee({
-      subtotal: Math.max(0, subtotalPaise - discountPaise),
+      subtotal: subtotalPaise,
       region: state.trim(),
       storeId: activeStoreId
     });
@@ -793,6 +1014,30 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
     // 7. Server-side GST and total calculation
     const discountedSubtotalPaise = Math.max(0, subtotalPaise - discountPaise);
     const totalPricePaise = discountedSubtotalPaise + shippingChargePaise;
+
+    const maxTotal = activeStoreId === 2 ? (MAX_ORDER_TOTAL_RUPEES * 100) : MAX_ORDER_TOTAL_RUPEES;
+    if (totalPricePaise > maxTotal) {
+      const err = new Error(`Order total cannot exceed ₹${MAX_ORDER_TOTAL_RUPEES}.`);
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const safePaymentMethod = ALLOWED_PAYMENT_METHODS.includes(String(payment_method || '').toUpperCase())
+      ? String(payment_method).toUpperCase()
+      : 'COD';
+
+    // 7.1 Authoritative 18% inclusive GST & State Split Calculation
+    const storeSettings = await settingsService.getStoreSettings(activeStoreId);
+    const sellerState = resolveSellerState(storeSettings);
+    const customerState = state.trim();
+    const gstRate = storeSettings.gst_enabled !== false ? (storeSettings.gst_pct || storeSettings.gst_rate || 18) : 0;
+
+    const orderTaxBreakdown = calculateInclusiveGst({
+      amount: totalPricePaise,
+      gstRate,
+      sellerState,
+      customerState
+    });
 
     // 8. Generate order number (CHP for CHIPAKK, MRSH for THE MARSHANS)
     const timestampPart = Date.now().toString().slice(-6);
@@ -812,176 +1057,185 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
       country: country ? country.trim() : 'India'
     };
 
-    // 10. Insert into orders table (check for customer_phone & store_id columns dynamically)
+    // 10. Insert into orders table (check for columns dynamically)
     let hasPhoneCol = false;
     let hasStoreIdCol = true;
+    let hasTaxCols = false;
+    let hasShippingMethodCol = false;
+
     try {
       const [orderCols] = await connection.execute(
-        "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'orders' AND COLUMN_NAME IN ('customer_phone', 'store_id')"
+        "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'orders'"
       );
       const colNames = (orderCols || []).map(c => c.COLUMN_NAME.toLowerCase());
       hasPhoneCol = colNames.includes('customer_phone');
       hasStoreIdCol = colNames.includes('store_id');
+      hasTaxCols = colNames.includes('tax_amount');
+      hasShippingMethodCol = colNames.includes('shipping_method');
     } catch (e) { }
 
-    let orderInsertQuery;
-    let orderParams;
+    const orderColumns = [
+      'order_number', 'customer_id', 'customer_email', 'customer_name'
+    ];
+    const orderPlaceholders = ['?', '?', '?', '?'];
+    const orderParams = [
+      orderNumber,
+      customerId,
+      shippingSnapshot.email,
+      shippingSnapshot.name
+    ];
 
-    if (hasPhoneCol && hasStoreIdCol) {
-      orderInsertQuery = `
-        INSERT INTO orders (
-          order_number, customer_id, store_id, customer_email, customer_name, customer_phone,
-          shipping_address, payment_method, payment_status, fulfillment_status,
-          subtotal, discount_total, shipping_charge, total_price, coupon_code
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', ?, ?, ?, ?, ?)
-      `;
-      orderParams = [
-        orderNumber,
-        customerId,
-        activeStoreId,
-        shippingSnapshot.email,
-        shippingSnapshot.name,
-        shippingSnapshot.phone,
-        JSON.stringify(shippingSnapshot),
-        payment_method ? String(payment_method).toUpperCase() : 'COD',
-        subtotalPaise,
-        discountPaise,
-        shippingChargePaise,
-        totalPricePaise,
-        validatedCoupon ? validatedCoupon.code : null
-      ];
-    } else if (hasStoreIdCol) {
-      orderInsertQuery = `
-        INSERT INTO orders (
-          order_number, customer_id, store_id, customer_email, customer_name,
-          shipping_address, payment_method, payment_status, fulfillment_status,
-          subtotal, discount_total, shipping_charge, total_price, coupon_code
-        ) VALUES (?, ?, ?, ?, ?, ?, 'pending', 'pending', ?, ?, ?, ?, ?)
-      `;
-      orderParams = [
-        orderNumber,
-        customerId,
-        activeStoreId,
-        shippingSnapshot.email,
-        shippingSnapshot.name,
-        JSON.stringify(shippingSnapshot),
-        payment_method ? String(payment_method).toUpperCase() : 'COD',
-        subtotalPaise,
-        discountPaise,
-        shippingChargePaise,
-        totalPricePaise,
-        validatedCoupon ? validatedCoupon.code : null
-      ];
-    } else {
-      orderInsertQuery = `
-        INSERT INTO orders (
-          order_number, customer_id, customer_email, customer_name,
-          shipping_address, payment_method, payment_status, fulfillment_status,
-          subtotal, discount_total, shipping_charge, total_price, coupon_code
-        ) VALUES (?, ?, ?, ?, ?, 'pending', 'pending', ?, ?, ?, ?, ?)
-      `;
-      orderParams = [
-        orderNumber,
-        customerId,
-        shippingSnapshot.email,
-        shippingSnapshot.name,
-        JSON.stringify(shippingSnapshot),
-        payment_method ? String(payment_method).toUpperCase() : 'COD',
-        subtotalPaise,
-        discountPaise,
-        shippingChargePaise,
-        totalPricePaise,
-        validatedCoupon ? validatedCoupon.code : null
-      ];
+    if (hasStoreIdCol) {
+      orderColumns.push('store_id');
+      orderPlaceholders.push('?');
+      orderParams.push(activeStoreId);
     }
 
-    const [orderResult] = await connection.execute(orderInsertQuery, orderParams);
+    if (hasPhoneCol) {
+      orderColumns.push('customer_phone');
+      orderPlaceholders.push('?');
+      orderParams.push(shippingSnapshot.phone);
+    }
 
+    orderColumns.push('shipping_address');
+    orderPlaceholders.push('?');
+    orderParams.push(JSON.stringify(shippingSnapshot));
+
+    if (hasShippingMethodCol) {
+      orderColumns.push('shipping_method');
+      orderPlaceholders.push('?');
+      orderParams.push('standard');
+    }
+
+    orderColumns.push('payment_method', 'payment_status', 'fulfillment_status', 'subtotal', 'discount_total', 'shipping_charge');
+    orderPlaceholders.push('?', "'pending'", "'pending'", '?', '?', '?');
+    orderParams.push(
+      safePaymentMethod,
+      subtotalPaise,
+      discountPaise,
+      shippingChargePaise
+    );
+
+    if (hasTaxCols) {
+      orderColumns.push('tax_amount', 'cgst_amount', 'sgst_amount', 'igst_amount');
+      orderPlaceholders.push('?', '?', '?', '?');
+      orderParams.push(
+        orderTaxBreakdown.tax_amount,
+        orderTaxBreakdown.cgst_amount,
+        orderTaxBreakdown.sgst_amount,
+        orderTaxBreakdown.igst_amount
+      );
+    }
+
+    orderColumns.push('total_price', 'coupon_code');
+    orderPlaceholders.push('?', '?');
+    orderParams.push(
+      totalPricePaise,
+      validatedCoupon ? validatedCoupon.code : null
+    );
+
+    const orderInsertQuery = `INSERT INTO orders (${orderColumns.join(', ')}) VALUES (${orderPlaceholders.join(', ')})`;
+    const [orderResult] = await connection.execute(orderInsertQuery, orderParams);
     const orderId = orderResult.insertId;
 
-    // 11. Insert order items (Hybrid Architecture Bridge Preparation)
+    // 11. Insert order items (Hybrid Architecture Bridge & Tax Snapshot)
     let hasMarshansProductCol = false;
+    let hasItemTaxCols = false;
+
     try {
       const [colCheck] = await connection.execute(
-        "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'order_items' AND COLUMN_NAME = 'marshans_product_id'"
+        "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'order_items'"
       );
-      hasMarshansProductCol = colCheck && colCheck.length > 0;
+      const colNames = (colCheck || []).map(c => c.COLUMN_NAME.toLowerCase());
+      hasMarshansProductCol = colNames.includes('marshans_product_id');
+      hasItemTaxCols = colNames.includes('tax_amount');
     } catch (_) { }
 
-    if (hasMarshansProductCol) {
-      const itemInsertQuery = `
-        INSERT INTO order_items (
-          order_id,
-          product_id,
-          marshans_product_id,
-          variant_id,
-          product_name,
-          sku,
-          admin_product_id_snapshot,
-          variant_options,
-          unit_price,
-          quantity,
-          total_price
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `;
+    for (const it of validatedItems) {
+      const itemTax = calculateInclusiveGst({
+        amount: it.total_price,
+        gstRate,
+        sellerState,
+        customerState
+      });
+      const itemHsn = isHybridMarshans ? '3926' : '4911';
 
-      for (const it of validatedItems) {
-        await connection.execute(itemInsertQuery, [
-          orderId,
-          it.product_id,
-          it.marshans_product_id,
-          it.variant_id,
-          it.product_name,
-          it.sku,
-          it.admin_product_id_snapshot,
-          it.variant_options,
-          it.unit_price,
-          it.quantity,
-          it.total_price
-        ]);
+      const itemCols = ['order_id', 'product_id'];
+      const itemVals = ['?', '?'];
+      const itemParams = [orderId, hasMarshansProductCol ? it.product_id : (it.product_id || it.marshans_product_id)];
+
+      if (hasMarshansProductCol) {
+        itemCols.push('marshans_product_id');
+        itemVals.push('?');
+        itemParams.push(it.marshans_product_id);
       }
-    } else {
-      const itemInsertQuery = `
-        INSERT INTO order_items (
-          order_id,
-          product_id,
-          variant_id,
-          product_name,
-          sku,
-          admin_product_id_snapshot,
-          variant_options,
-          unit_price,
-          quantity,
-          total_price
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `;
 
-      for (const it of validatedItems) {
-        await connection.execute(itemInsertQuery, [
-          orderId,
-          it.product_id || it.marshans_product_id,
-          it.variant_id,
-          it.product_name,
-          it.sku,
-          it.admin_product_id_snapshot,
-          it.variant_options,
-          it.unit_price,
-          it.quantity,
-          it.total_price
-        ]);
+      itemCols.push('variant_id', 'product_name', 'sku');
+      itemVals.push('?', '?', '?');
+      itemParams.push(it.variant_id, it.product_name, it.sku);
+
+      if (hasItemTaxCols) {
+        itemCols.push('hsn_code', 'tax_rate', 'tax_amount');
+        itemVals.push('?', '?', '?');
+        itemParams.push(itemHsn, gstRate, itemTax.tax_amount);
+      }
+
+      itemCols.push('admin_product_id_snapshot', 'variant_options', 'unit_price', 'quantity', 'total_price');
+      itemVals.push('?', '?', '?', '?', '?');
+      itemParams.push(it.admin_product_id_snapshot, it.variant_options, it.unit_price, it.quantity, it.total_price);
+
+      const itemInsertQuery = `INSERT INTO order_items (${itemCols.join(', ')}) VALUES (${itemVals.join(', ')})`;
+      const [itemRes] = await connection.execute(itemInsertQuery, itemParams);
+
+      if (it.custom_design_data && itemRes && itemRes.insertId) {
+        try {
+          await connection.execute(`
+            INSERT INTO order_item_custom_designs (
+              order_item_id, file_role, storage_path, image_url, original_filename, file_type, file_size_bytes, verification_status, uploaded_at
+            ) VALUES (?, 'original_upload', ?, ?, ?, 'image/png', 0, 'PENDING', NOW())
+          `, [
+            itemRes.insertId,
+            it.custom_design_data.storagePath || '',
+            it.custom_design_data.uploadedPreviewUrl || '',
+            it.custom_design_data.fileName || 'custom-artwork.png'
+          ]);
+        } catch (customErr) {
+          console.warn('[OrderItemCustomDesign Insert Warning]', customErr.message);
+        }
       }
     }
 
-    // 12. Record coupon usage if coupon applied
+    // 12. Record coupon usage (lifecycle: reserved for online pending, consumed for COD)
     if (validatedCoupon) {
-      await connection.execute(
-        'INSERT INTO coupon_usage (coupon_id, order_id, customer_id, discount_amount) VALUES (?, ?, ?, ?)',
-        [validatedCoupon.id, orderId, customerId, discountPaise]
-      );
-      await connection.execute(
-        'UPDATE coupons SET usage_count = usage_count + 1 WHERE id = ?',
-        [validatedCoupon.id]
-      );
+      const isCod = safePaymentMethod === 'COD';
+      const initialUsageStatus = isCod ? 'consumed' : 'reserved';
+
+      let hasUsageStatusCol = false;
+      try {
+        const [usageCols] = await connection.execute(
+          "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'coupon_usage' AND COLUMN_NAME = 'status'"
+        );
+        hasUsageStatusCol = usageCols && usageCols.length > 0;
+      } catch (_) {}
+
+      if (hasUsageStatusCol) {
+        await connection.execute(
+          'INSERT INTO coupon_usage (coupon_id, order_id, customer_id, discount_amount, status, reserved_at) VALUES (?, ?, ?, ?, ?, NOW())',
+          [validatedCoupon.id, orderId, customerId, discountPaise, initialUsageStatus]
+        );
+      } else {
+        await connection.execute(
+          'INSERT INTO coupon_usage (coupon_id, order_id, customer_id, discount_amount) VALUES (?, ?, ?, ?)',
+          [validatedCoupon.id, orderId, customerId, discountPaise]
+        );
+      }
+
+      if (isCod) {
+        await connection.execute(
+          'UPDATE coupons SET usage_count = usage_count + 1 WHERE id = ?',
+          [validatedCoupon.id]
+        );
+      }
     }
 
     // 13. Record initial chronological status transition
@@ -1039,7 +1293,7 @@ const getCustomerOrders = async (firebaseUid, { limit = 20, offset = 0 } = {}) =
   const total = countRows[0]?.total || 0;
 
   const query = `
-    SELECT 
+    SELECT
       o.id,
       o.order_number,
       o.customer_id,
@@ -1069,12 +1323,57 @@ const getCustomerOrders = async (firebaseUid, { limit = 20, offset = 0 } = {}) =
 
   const [rows] = await pool.execute(query, [customerId, parsedLimit, parsedOffset]);
 
+  let itemsByOrderId = {};
+  if (rows.length > 0) {
+    try {
+      const hasMarshansProductCol = await checkHasMarshansOrderCol();
+      const orderIds = rows.map(r => r.id);
+      const placeholders = orderIds.map(() => '?').join(',');
+      const [allItemRows] = await pool.execute(`
+        SELECT
+          oi.id,
+          oi.order_id,
+          oi.product_id,
+          ${hasMarshansProductCol ? 'oi.marshans_product_id,' : 'NULL AS marshans_product_id,'}
+          oi.variant_id,
+          oi.product_name,
+          oi.sku,
+          oi.variant_options,
+          oi.unit_price,
+          oi.quantity,
+          oi.total_price,
+          COALESCE(
+            (SELECT image_url FROM product_images WHERE product_id = oi.product_id ORDER BY is_primary DESC, sort_order ASC, id ASC LIMIT 1),
+            ${hasMarshansProductCol ? '(SELECT image_url FROM marshans_product_images WHERE product_id = oi.marshans_product_id ORDER BY is_primary DESC, sort_order ASC, id ASC LIMIT 1),' : ''}
+            NULL
+          ) AS product_image
+        FROM order_items oi
+        WHERE oi.order_id IN (${placeholders})
+        ORDER BY oi.id ASC
+      `, orderIds);
+
+      for (const item of allItemRows) {
+        if (!itemsByOrderId[item.order_id]) itemsByOrderId[item.order_id] = [];
+        itemsByOrderId[item.order_id].push({
+          ...item,
+          product_id: item.marshans_product_id || item.product_id,
+          marshans_product_id: item.marshans_product_id || null,
+          img: item.product_image || null,
+          variant_options: safeJsonParse(item.variant_options, null)
+        });
+      }
+    } catch (itemErr) {
+      console.warn('[orderService.getCustomerOrders] Could not fetch preview items:', itemErr.message);
+    }
+  }
+
   const orders = rows.map(r => {
     const isStore2 = parseInt(r.store_id, 10) === 2;
     const rawTotalPrice = parseInt(r.total_price, 10) || 0;
     const rawSubtotal = parseInt(r.subtotal, 10) || 0;
     const rawDiscount = parseInt(r.discount_total, 10) || 0;
     const rawShipping = parseInt(r.shipping_charge, 10) || 0;
+    const orderItems = itemsByOrderId[r.id] || [];
 
     return {
       ...r,
@@ -1082,7 +1381,12 @@ const getCustomerOrders = async (firebaseUid, { limit = 20, offset = 0 } = {}) =
       total_price_rupees: isStore2 ? Math.round(rawTotalPrice / 100) : rawTotalPrice,
       subtotal_rupees: isStore2 ? Math.round(rawSubtotal / 100) : rawSubtotal,
       discount_total_rupees: isStore2 ? Math.round(rawDiscount / 100) : rawDiscount,
-      shipping_charge_rupees: isStore2 ? Math.round(rawShipping / 100) : rawShipping
+      shipping_charge_rupees: isStore2 ? Math.round(rawShipping / 100) : rawShipping,
+      items: orderItems.map(item => ({
+        ...item,
+        unit_price_rupees: isStore2 ? Math.round((parseInt(item.unit_price, 10) || 0) / 100) : (parseInt(item.unit_price, 10) || 0),
+        total_price_rupees: isStore2 ? Math.round((parseInt(item.total_price, 10) || 0) / 100) : (parseInt(item.total_price, 10) || 0)
+      }))
     };
   });
 
