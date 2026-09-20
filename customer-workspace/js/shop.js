@@ -21,6 +21,8 @@
     formatPrice,
     starsMarkup,
     renderProductCard,
+    renderProductGrid,
+    loader,
     escapeHtml,
     escapeAttr,
     showToast,
@@ -206,7 +208,7 @@
 
     const visibleItems = filtered.slice(0, visibleCount);
 
-    grid.innerHTML = visibleItems.map(p => renderProductCard(p, { isWishlisted: wishlist.has(p.id) })).join("");
+    grid.innerHTML = renderProductGrid(visibleItems, { isWishlisted: (p) => wishlist.has(p.id) });
 
     // Load more button state
     if (loadMoreBtn) {
@@ -294,14 +296,43 @@
      6. INIT SHOP
      ========================================================= */
 
-  async function initShop() {
-    parseUrlParams();
-    allCategories = await getCategories();
-    allProducts = await getProducts();
+  function renderLoadError() {
+    const grid = $("#shopProductGrid");
+    if (!grid) return;
+    grid.innerHTML = `
+      <div class="catalog-error-state" role="alert">
+        <div class="catalog-error-icon" aria-hidden="true">📡</div>
+        <h3>We couldn't load the stickers</h3>
+        <p>Check your connection and try again.</p>
+        <button type="button" class="btn btn-primary" id="retryCatalogBtn">Try Again</button>
+      </div>
+    `;
+    $("#retryCatalogBtn")?.addEventListener("click", () => { initShop({ retry: true }); });
+  }
 
-    renderCategoryPills();
-    renderCatalog();
-    setupShopEvents();
+  let shopEventsBound = false;
+
+  async function initShop(opts = {}) {
+    // Taken synchronously (before the first await) so the loader knows this page's critical work
+    const releaseLoader = loader.hold("shop-catalog");
+    try {
+      parseUrlParams();
+      const [cats, prods] = await Promise.all([
+        getCategories({ refresh: !!opts.retry }),
+        getProducts({ strict: true, refresh: !!opts.retry })
+      ]);
+      allCategories = cats;
+      allProducts = prods;
+
+      renderCategoryPills();
+      renderCatalog();
+    } catch (err) {
+      console.error("[CHIPAKK Shop] Catalog failed to load:", err);
+      renderLoadError();
+    } finally {
+      if (!shopEventsBound) { setupShopEvents(); shopEventsBound = true; }
+      releaseLoader();
+    }
   }
 
   if (document.readyState === "loading") {

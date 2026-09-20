@@ -4,7 +4,9 @@ const shippingService = require('./shippingService');
 const settingsService = require('./settingsService');
 const { isMarshansHybridCatalogEnabled } = require('../config/features');
 const { normalizeIndianPhoneNumber } = require('../utils/phoneUtils');
-const { calculateInclusiveGst, resolveSellerState } = require('../utils/taxUtils');
+const core = require('../utils/taxCore');
+const taxUtils = require('../utils/taxUtils');
+const taxProfileService = require('./taxProfileService');
 
 let hasTaxColsCached = null;
 const checkHasTaxCols = async () => {
@@ -18,6 +20,22 @@ const checkHasTaxCols = async () => {
     hasTaxColsCached = false;
   }
   return hasTaxColsCached;
+};
+
+/** Which of the optional GST configuration / snapshot columns exist yet (migration 017). */
+const getTaxSchemaSupport = async (db) => {
+  const support = { products: false, categories: false, marshans_products: false, marshans_categories: false, orderSnapshot: false, itemSplit: false };
+  try {
+    const [rows] = await db.execute(
+      "SELECT TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND ((COLUMN_NAME = 'hsn_code' AND TABLE_NAME IN ('products','categories','marshans_products','marshans_categories')) OR (TABLE_NAME = 'orders' AND COLUMN_NAME = 'supplier_gstin') OR (TABLE_NAME = 'order_items' AND COLUMN_NAME = 'taxable_value'))"
+    );
+    (rows || []).forEach((r) => {
+      if (r.COLUMN_NAME === 'hsn_code' && support[r.TABLE_NAME] !== undefined) support[r.TABLE_NAME] = true;
+      if (r.TABLE_NAME === 'orders' && r.COLUMN_NAME === 'supplier_gstin') support.orderSnapshot = true;
+      if (r.TABLE_NAME === 'order_items' && r.COLUMN_NAME === 'taxable_value') support.itemSplit = true;
+    });
+  } catch (_) { /* treated as: nothing migrated */ }
+  return support;
 };
 
 /**
@@ -429,7 +447,7 @@ const getOrderById = async (orderIdOrNumber, storeId = null) => {
       oi.unit_price,
       oi.quantity,
       oi.total_price,
-      ${hasTax ? 'COALESCE(oi.hsn_code, "4911") AS hsn_code, COALESCE(oi.tax_rate, 18.00) AS tax_rate, COALESCE(oi.tax_amount, 0) AS tax_amount,' : '"4911" AS hsn_code, 18.00 AS tax_rate, 0 AS tax_amount,'}
+      ${hasTax ? 'oi.hsn_code AS hsn_code, oi.tax_rate AS tax_rate, COALESCE(oi.tax_amount, 0) AS tax_amount,' : 'NULL AS hsn_code, NULL AS tax_rate, 0 AS tax_amount,'}
       oi.admin_product_id_snapshot,
       oi.production_status,
       oi.created_at,
@@ -475,8 +493,9 @@ const getOrderById = async (orderIdOrNumber, storeId = null) => {
     variant_options: safeJsonParse(item.variant_options, null),
     unit_price_rupees: isStore2 ? Math.round((parseInt(item.unit_price, 10) || 0) / 100) : (parseInt(item.unit_price, 10) || 0),
     total_price_rupees: isStore2 ? Math.round((parseInt(item.total_price, 10) || 0) / 100) : (parseInt(item.total_price, 10) || 0),
-    hsn_code: item.hsn_code || '4911',
-    tax_rate: parseFloat(item.tax_rate) || 18.00,
+    // No invented defaults: an HSN that was never configured stays null, and a genuine 0% rate stays 0.
+    hsn_code: item.hsn_code || null,
+    tax_rate: item.tax_rate === null || item.tax_rate === undefined || !isFinite(parseFloat(item.tax_rate)) ? null : parseFloat(item.tax_rate),
     tax_amount_rupees: isStore2 ? Math.round((parseInt(item.tax_amount, 10) || 0) / 100) : (parseInt(item.tax_amount, 10) || 0)
   }));
 
@@ -707,6 +726,29 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
     }
     const isHybridMarshans = isMarshansHybridCatalogEnabled() && activeStoreId === 2;
 
+    // GST identity first: without a valid registered supplier a tax snapshot would be wrong and unfixable later,
+    // so the order is refused (503) instead of being written with invented supplier data.
+    const taxProfile = await taxProfileService.getTaxProfile(activeStoreId);
+    taxProfileService.assertCheckoutReady(taxProfile);
+    const customerStateCode = core.resolveStateCode(state);
+    if (taxProfile.gst_enabled && !customerStateCode) {
+      const err = new Error('Please enter a valid Indian state or union territory for delivery (it decides how GST is applied).');
+      err.statusCode = 400;
+      throw err;
+    }
+    let recipientGstin = null;
+    const rawRecipientGstin = orderPayload?.recipient_gstin || orderPayload?.gstin || shipping_address?.gstin;
+    if (rawRecipientGstin) {
+      const rg = taxUtils.validateGstin(String(rawRecipientGstin));
+      if (!rg.valid) {
+        const err = new Error(`Buyer GSTIN is not valid: ${rg.reason}`);
+        err.statusCode = 400;
+        throw err;
+      }
+      recipientGstin = rg.gstin;
+    }
+    const taxSupport = await getTaxSchemaSupport(connection);
+
     // Resolve items from cart if cart_id is provided and items is empty or omitted
     let orderItems = items;
     if ((!orderItems || !Array.isArray(orderItems) || orderItems.length === 0) && orderPayload?.cart_id) {
@@ -860,6 +902,10 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
           unit_price: customPrice,
           quantity: qty,
           total_price: lineTotal,
+          // custom stickers have no catalogue record: their HSN/rate come from explicit store settings, else unset
+          tax_cfg: { hsn: taxProfile.custom_item_hsn || null, hsn_source: taxProfile.custom_item_hsn ? 'store_setting' : 'unset',
+            rate: taxProfile.custom_item_gst_rate !== null && taxProfile.custom_item_gst_rate !== undefined ? taxProfile.custom_item_gst_rate : taxProfile.default_gst_rate,
+            rate_source: taxProfile.custom_item_gst_rate !== null && taxProfile.custom_item_gst_rate !== undefined ? 'store_setting' : 'store_default' },
           custom_design_data: {
             storagePath: typeof spec.storagePath === 'string' ? spec.storagePath.slice(0, 255) : '',
             uploadedPreviewUrl: (typeof spec.uploadedPreviewUrl === 'string' && !spec.uploadedPreviewUrl.startsWith('data:')) ? spec.uploadedPreviewUrl.slice(0, 1024) : '',
@@ -885,10 +931,17 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
 
       if (isHybridMarshans) {
         // Fetch active Store 2 product from marshans_products
-        const [prodRows] = await connection.execute(
-          'SELECT id, name, sku, price, active, admin_product_id FROM marshans_products WHERE id = ? AND store_id = 2 LIMIT 1',
-          [productId]
-        );
+        const mpCols = taxSupport.marshans_products ? ', p.hsn_code, p.gst_rate' : '';
+        const mcCols = taxSupport.marshans_categories ? ', c.hsn_code AS category_hsn_code, c.gst_rate AS category_gst_rate' : '';
+        const [prodRows] = (mpCols || mcCols)
+          ? await connection.execute(
+            `SELECT p.id, p.name, p.sku, p.price, p.active, p.admin_product_id${mpCols}${mcCols} FROM marshans_products p${mcCols ? ' LEFT JOIN marshans_categories c ON c.id = p.category_id' : ''} WHERE p.id = ? AND p.store_id = 2 LIMIT 1`,
+            [productId]
+          )
+          : await connection.execute(
+            'SELECT id, name, sku, price, active, admin_product_id FROM marshans_products WHERE id = ? AND store_id = 2 LIMIT 1',
+            [productId]
+          );
 
         if (!prodRows || prodRows.length === 0 || !prodRows[0].active) {
           const err = new Error(`Product #${productId} is invalid or no longer available in THE MARSHANS catalog.`);
@@ -901,10 +954,17 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
         itemSku = product.sku;
       } else {
         // Fetch active Store 1 product from products
-        const [prodRows] = await connection.execute(
-          'SELECT id, name, sku, price, active, admin_product_id, store_id FROM products WHERE id = ? AND (store_id = 1 OR store_id IS NULL) LIMIT 1',
-          [productId]
-        );
+        const pCols = taxSupport.products ? ', p.hsn_code, p.gst_rate' : '';
+        const cCols = taxSupport.categories ? ', c.hsn_code AS category_hsn_code, c.gst_rate AS category_gst_rate' : '';
+        const [prodRows] = (pCols || cCols)
+          ? await connection.execute(
+            `SELECT p.id, p.name, p.sku, p.price, p.active, p.admin_product_id, p.store_id${pCols}${cCols} FROM products p${cCols ? ' LEFT JOIN categories c ON c.id = p.category_id' : ''} WHERE p.id = ? AND (p.store_id = 1 OR p.store_id IS NULL) LIMIT 1`,
+            [productId]
+          )
+          : await connection.execute(
+            'SELECT id, name, sku, price, active, admin_product_id, store_id FROM products WHERE id = ? AND (store_id = 1 OR store_id IS NULL) LIMIT 1',
+            [productId]
+          );
 
         if (!prodRows || prodRows.length === 0 || !prodRows[0].active) {
           const err = new Error(`Product #${productId} is invalid or no longer available.`);
@@ -968,7 +1028,8 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
         variant_options: variantOptions,
         unit_price: unitPricePaise,
         quantity: qty,
-        total_price: lineTotalPaise
+        total_price: lineTotalPaise,
+        tax_cfg: taxProfileService.resolveLineTaxConfig(product, taxProfile)
       });
     }
 
@@ -987,7 +1048,10 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
           [codeStr, activeStoreId, activeStoreId]
         );
         if (lockedRows && lockedRows.length > 0) lockedCoupon = lockedRows[0];
-      } catch (_) {}
+      } catch (lockErr) {
+        // Falls back to an unlocked read (still validated below); make the degradation visible.
+        console.warn('[Order] Coupon row lock unavailable, validating without FOR UPDATE:', lockErr.message);
+      }
 
       const couponCheck = await couponService.validateCoupon(codeStr, subtotalPaise, activeStoreId, customerId, null, lockedCoupon);
 
@@ -1026,18 +1090,28 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
       ? String(payment_method).toUpperCase()
       : 'COD';
 
-    // 7.1 Authoritative 18% inclusive GST & State Split Calculation
-    const storeSettings = await settingsService.getStoreSettings(activeStoreId);
-    const sellerState = resolveSellerState(storeSettings);
-    const customerState = state.trim();
-    const gstRate = storeSettings.gst_enabled !== false ? (storeSettings.gst_pct || storeSettings.gst_rate || 18) : 0;
-
-    const orderTaxBreakdown = calculateInclusiveGst({
-      amount: totalPricePaise,
-      gstRate,
-      sellerState,
-      customerState
+    // 7.1 Authoritative GST (inclusive): per-line HSN + rate snapshot, discount allocated across lines, shipping taxed
+    //     as a composite supply, CGST+SGST vs IGST from supplier state vs place of supply. The storefront runs the
+    //     identical core (taxCore.js), so what the customer sees is what is stored.
+    const orderTax = core.computeOrderTax({
+      lines: validatedItems.map((it, idx) => ({ key: idx, gross: it.total_price, rate: it.tax_cfg.rate, hsn: it.tax_cfg.hsn })),
+      discount: discountPaise,
+      shipping: shippingChargePaise,
+      gstEnabled: taxProfile.gst_enabled,
+      defaultRate: taxProfile.default_gst_rate,
+      sellerState: taxProfile.seller_state_code,
+      customerState: state.trim()
     });
+    if (orderTax.totals.total_value !== totalPricePaise ||
+        (taxProfile.gst_enabled && orderTax.supply_type === 'UNDETERMINED') ||
+        orderTax.totals.taxable_value + orderTax.totals.tax !== totalPricePaise) {
+      console.error('[GST] Tax computation did not reconcile with the order total', { totalPricePaise, totals: orderTax.totals, supply: orderTax.supply_type });
+      const err = new Error('We could not complete the tax calculation for this order. Please try again.');
+      err.statusCode = 500;
+      throw err;
+    }
+    validatedItems.forEach((it, idx) => { it.tax = orderTax.lines[idx]; });
+    const placeOfSupplyName = core.stateNameFromCode(orderTax.place_of_supply_code) || state.trim();
 
     // 8. Generate order number (CHP for CHIPAKK, MRSH for THE MARSHANS)
     const timestampPart = Date.now().toString().slice(-6);
@@ -1073,6 +1147,7 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
       hasTaxCols = colNames.includes('tax_amount');
       hasShippingMethodCol = colNames.includes('shipping_method');
     } catch (e) { }
+    const hasSnapshotCols = taxSupport.orderSnapshot;
 
     const orderColumns = [
       'order_number', 'customer_id', 'customer_email', 'customer_name'
@@ -1120,10 +1195,23 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
       orderColumns.push('tax_amount', 'cgst_amount', 'sgst_amount', 'igst_amount');
       orderPlaceholders.push('?', '?', '?', '?');
       orderParams.push(
-        orderTaxBreakdown.tax_amount,
-        orderTaxBreakdown.cgst_amount,
-        orderTaxBreakdown.sgst_amount,
-        orderTaxBreakdown.igst_amount
+        orderTax.totals.tax,
+        orderTax.totals.cgst,
+        orderTax.totals.sgst,
+        orderTax.totals.igst
+      );
+    }
+
+    if (hasSnapshotCols) {
+      orderColumns.push('supplier_legal_name', 'supplier_trade_name', 'supplier_gstin', 'supplier_address', 'supplier_state', 'supplier_state_code',
+        'place_of_supply', 'place_of_supply_code', 'tax_supply_type', 'tax_pricing_mode', 'recipient_gstin',
+        'shipping_taxable_value', 'shipping_tax_rate', 'shipping_tax_amount', 'shipping_cgst_amount', 'shipping_sgst_amount', 'shipping_igst_amount');
+      orderPlaceholders.push('?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?');
+      orderParams.push(
+        taxProfile.legal_supplier_name, taxProfile.trade_name, taxProfile.gstin, taxProfile.seller_address,
+        taxProfile.seller_state, taxProfile.seller_state_code,
+        placeOfSupplyName, orderTax.place_of_supply_code || null, orderTax.supply_type, orderTax.pricing_mode, recipientGstin,
+        orderTax.shipping.taxable, orderTax.shipping.rate, orderTax.shipping.tax, orderTax.shipping.cgst, orderTax.shipping.sgst, orderTax.shipping.igst
       );
     }
 
@@ -1152,13 +1240,7 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
     } catch (_) { }
 
     for (const it of validatedItems) {
-      const itemTax = calculateInclusiveGst({
-        amount: it.total_price,
-        gstRate,
-        sellerState,
-        customerState
-      });
-      const itemHsn = isHybridMarshans ? '3926' : '4911';
+      const itemTax = it.tax; // computed once for the whole order (line taxes sum exactly to the order tax)
 
       const itemCols = ['order_id', 'product_id'];
       const itemVals = ['?', '?'];
@@ -1177,7 +1259,13 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
       if (hasItemTaxCols) {
         itemCols.push('hsn_code', 'tax_rate', 'tax_amount');
         itemVals.push('?', '?', '?');
-        itemParams.push(itemHsn, gstRate, itemTax.tax_amount);
+        itemParams.push(it.tax_cfg.hsn, itemTax.rate, itemTax.tax);
+      }
+
+      if (taxSupport.itemSplit) {
+        itemCols.push('discount_allocated', 'taxable_value', 'cgst_amount', 'sgst_amount', 'igst_amount');
+        itemVals.push('?', '?', '?', '?', '?');
+        itemParams.push(itemTax.discount_allocated, itemTax.taxable, itemTax.cgst, itemTax.sgst, itemTax.igst);
       }
 
       itemCols.push('admin_product_id_snapshot', 'variant_options', 'unit_price', 'quantity', 'total_price');

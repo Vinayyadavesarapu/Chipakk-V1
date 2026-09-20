@@ -12,32 +12,26 @@
 
   const {
     getCategories,
+    categoryMediaHtml,
+    loader,
     escapeHtml,
     escapeAttr,
     $
   } = window.CHIPAKK;
 
-  function renderCategoryMedia(c) {
-    const raw = c.image_url || c.image;
-    const isUrl = typeof raw === "string" && (
-      raw.startsWith("http://") ||
-      raw.startsWith("https://") ||
-      raw.startsWith("/") ||
-      raw.startsWith("assets/") ||
-      raw.includes("/") ||
-      /\.(png|jpe?g|webp|gif|svg)(\?.*)?$/i.test(raw)
-    );
-    if (isUrl) {
-      return `<img src="${escapeAttr(raw)}" alt="${escapeAttr(c.name)} sticker category" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:block;" />`;
-    }
-    return `<span>${escapeHtml(c.icon || c.image || "✨")}</span>`;
-  }
-
   async function renderCategoriesPage() {
     const grid = $("#categoriesFullGrid");
     if (!grid) return;
 
-    const categories = await getCategories();
+    const releaseLoader = loader.hold("categories-content");
+    let categories = [];
+    try {
+      categories = await getCategories();
+    } catch (err) {
+      console.error("[CHIPAKK Categories] Failed to load categories:", err);
+    } finally {
+      releaseLoader();
+    }
 
     if (!categories || categories.length === 0) {
       grid.innerHTML = `
@@ -56,10 +50,10 @@
         <div>
           <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;">
             <span class="cat-full-icon-wrap" style="display: inline-flex; width: 68px; height: 68px; align-items: center; justify-content: center; background: var(--off-white); border: 2px solid var(--black); border-radius: var(--radius-md); font-size: 36px; box-shadow: 2px 2px 0 var(--black); overflow: hidden;">
-              ${renderCategoryMedia(c)}
+              ${categoryMediaHtml(c)}
             </span>
             <span style="font-family: var(--font-display); font-size: 13px; font-weight: 800; background: var(--yellow); padding: 4px 10px; border: 2px solid var(--black); border-radius: 999px; box-shadow: 2px 2px 0 var(--black);">
-              ${c.productCount || 0}+ DESIGNS
+              ${Number(c.productCount) || 0}+ DESIGNS
             </span>
           </div>
           <h2 style="font-family: var(--font-display); font-size: 24px; text-transform: uppercase; margin-bottom: 8px;">

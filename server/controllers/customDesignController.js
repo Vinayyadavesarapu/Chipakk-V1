@@ -194,7 +194,7 @@ const downloadCustomDesignFileHandler = async (req, res, next) => {
       return sendError(res, 'Invalid custom design filename format.', 400);
     }
 
-    const filePath = path.join(__dirname, '..', 'uploads', safeFilename);
+    const filePath = path.join(require('../config/uploads').uploadDir, safeFilename);
 
     if (!fs.existsSync(filePath)) {
       return sendError(res, `Custom artwork file '${safeFilename}' not found`, 404);

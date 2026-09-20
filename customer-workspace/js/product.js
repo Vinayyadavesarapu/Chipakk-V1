@@ -24,6 +24,9 @@
     starsMarkup,
     getRatingTier,
     renderProductCard,
+    renderProductGrid,
+    loader,
+    media,
     escapeHtml,
     escapeAttr,
     showToast,
@@ -46,6 +49,17 @@
      ========================================================= */
 
   async function renderProductPage() {
+    const releaseLoader = loader.hold("product-detail");
+    try {
+      await renderProductPageInner();
+    } catch (err) {
+      console.error("[CHIPAKK Product] Failed to render product page:", err);
+    } finally {
+      releaseLoader();
+    }
+  }
+
+  async function renderProductPageInner() {
     const productId = getProductIdFromUrl();
     currentProduct = await getProductById(productId);
 
@@ -98,13 +112,12 @@
     const twitterDesc = $("#twitterDescription") || document.querySelector('meta[name="twitter:description"]');
     if (twitterDesc) twitterDesc.setAttribute("content", prodDesc);
 
-    // Product image for stage & schema
-    const isImgUrl = (currentProduct.image && (currentProduct.image.startsWith("http") || currentProduct.image.includes("/"))) ||
-                     (currentProduct.images && currentProduct.images.length && (currentProduct.images[0].startsWith("http") || currentProduct.images[0].includes("/")));
-    const imgSrc = (currentProduct.image && (currentProduct.image.startsWith("http") || currentProduct.image.includes("/"))) ? currentProduct.image : (currentProduct.images && currentProduct.images[0]);
-    const resolveImg = window.CHIPAKK?.resolveImageUrl || (u => (u && u.startsWith('/') ? `https://api.chipakk.shop${u}` : u));
-    const resolvedImg = imgSrc ? resolveImg(imgSrc) : "";
-    const absoluteImgUrl = isImgUrl ? (resolvedImg.startsWith("http") ? resolvedImg : `https://chipakk.shop/${resolvedImg.replace(/^\/+/, "")}`) : "https://chipakk.shop/assets/images/logo.png";
+    // Product images: the normalized product already carries resolved URLs (js/media.js)
+    const gallery = Array.isArray(currentProduct.images) ? currentProduct.images.filter(Boolean) : [];
+    const primaryUrl = currentProduct.imageUrl || gallery[0] || "";
+    const absoluteImgUrl = primaryUrl
+      ? (/^https?:\/\//i.test(primaryUrl) ? primaryUrl : `https://chipakk.shop/${primaryUrl.replace(/^\/+/, "")}`)
+      : "https://chipakk.shop/assets/images/logo.png";
 
     const ogImg = $("#ogImage") || document.querySelector('meta[property="og:image"]');
     if (ogImg) ogImg.setAttribute("content", absoluteImgUrl);
@@ -120,7 +133,7 @@
       document.head.appendChild(schemaScript);
     }
 
-    const ratingVal = typeof currentProduct.rating === "number" ? currentProduct.rating : (parseFloat(currentProduct.rating) || 4.7);
+    const ratingVal = typeof currentProduct.rating === "number" ? currentProduct.rating : (parseFloat(currentProduct.rating) || 0);
     const ratingCount = currentProduct.ratingCount !== undefined ? currentProduct.ratingCount : (currentProduct.review_count !== undefined ? currentProduct.review_count : 0);
 
     const productSchema = {
@@ -130,7 +143,7 @@
           "@type": "Product",
           "@id": `${canonicalUrl}#product`,
           "name": currentProduct.name,
-          "image": [absoluteImgUrl],
+          "image": (gallery.length ? gallery : [absoluteImgUrl]),
           "description": prodDesc,
           "sku": String(currentProduct.id),
           "brand": {
@@ -184,7 +197,7 @@
     const catEl = $("#prodDetailCategory");
     if (catEl) {
       catEl.textContent = currentProduct.categoryName || "Stickers";
-      catEl.href = `shop.html?category=${encodeURIComponent(currentProduct.categoryId || 'all')}`;
+      catEl.href = `shop.html?category=${encodeURIComponent(currentProduct.categorySlug || 'all')}`;
     }
 
     // Title
@@ -216,43 +229,40 @@
     const descEl = $("#prodDetailDesc");
     if (descEl) descEl.textContent = currentProduct.description;
 
-    // Main Stage Artwork / Image / Emoji
+    // Main stage: the first image is the LCP element, so it loads eagerly with high priority
     const stageEl = $("#prodStageArt");
+    const stageImageHtml = (url, priority) => url
+      ? media.imgHtml({ src: url, alt: `${currentProduct.name} sticker`, cls: "product-stage-img", width: 600, height: 600, priority })
+      : `<span class="product-stage-emoji" aria-hidden="true">⚡</span>`;
     if (stageEl) {
       const tier = currentProduct.rating_tier || getRatingTier(currentProduct.rating);
       stageEl.innerHTML = `
-        ${isImgUrl
-          ? `<img src="${escapeAttr(imgSrc)}" alt="${escapeAttr(currentProduct.name)} sticker" class="product-stage-img" style="width: 100%; height: 100%; object-fit: contain; display: block;" />`
-          : `<span class="product-stage-emoji">${currentProduct.image || "⚡"}</span>`
-        }
-        <span class="product-stage-badge tier-${tier.toLowerCase()}">${escapeHtml(tier)}</span>
+        <span class="product-stage-slot">${stageImageHtml(primaryUrl, true)}</span>
+        <span class="product-stage-badge tier-${escapeHtml(tier.toLowerCase())}">${escapeHtml(tier)}</span>
       `;
     }
 
-    // Thumbnails
+    // Thumbnails: one per real image (nothing invented when a product has a single image)
     const thumbsContainer = $("#galleryThumbs");
     if (thumbsContainer) {
-      const thumbItems = isImgUrl ? [imgSrc] : [currentProduct.image || "⚡", "📦", "✨", "📐"];
-      thumbsContainer.innerHTML = thumbItems.map((item, idx) => `
-        <button type="button" class="gallery-thumb ${idx === 0 ? 'is-active' : ''}" data-thumb-val="${escapeAttr(item)}" aria-label="View angle ${idx + 1}">
-          ${isImgUrl ? `<img src="${escapeAttr(item)}" alt="Thumbnail ${idx + 1}" style="width:100%;height:100%;object-fit:cover;" />` : item}
-        </button>
-      `).join("");
+      if (gallery.length > 1) {
+        thumbsContainer.innerHTML = gallery.map((url, idx) => `
+          <button type="button" class="gallery-thumb ${idx === 0 ? 'is-active' : ''}" data-thumb-idx="${idx}" aria-label="View image ${idx + 1} of ${gallery.length}">
+            ${media.imgHtml({ src: url, alt: "", width: 80, height: 80 })}
+          </button>
+        `).join("");
 
-      thumbsContainer.querySelectorAll(".gallery-thumb").forEach(btn => {
-        btn.addEventListener("click", () => {
+        thumbsContainer.addEventListener("click", (e) => {
+          const btn = e.target.closest(".gallery-thumb");
+          if (!btn || !stageEl) return;
           thumbsContainer.querySelectorAll(".gallery-thumb").forEach(b => b.classList.remove("is-active"));
           btn.classList.add("is-active");
-          const val = btn.dataset.thumbVal;
-          if (isImgUrl) {
-            const imgEl = stageEl.querySelector(".product-stage-img");
-            if (imgEl) imgEl.src = val;
-          } else {
-            const emojiEl = stageEl.querySelector(".product-stage-emoji");
-            if (emojiEl) emojiEl.textContent = val;
-          }
+          const slot = stageEl.querySelector(".product-stage-slot");
+          if (slot) slot.innerHTML = stageImageHtml(gallery[Number(btn.dataset.thumbIdx)] || primaryUrl, false);
         });
-      });
+      } else {
+        thumbsContainer.innerHTML = "";
+      }
     }
 
     // Materials Selector
@@ -367,9 +377,13 @@
     if (!grid) return;
 
     const all = await getProducts();
-    const related = all.filter(p => String(p.id) !== String(prod.id)).slice(0, 4);
+    const others = all.filter(p => String(p.id) !== String(prod.id));
+    // Same category first, then the rest of the catalog
+    const sameCategory = others.filter(p => prod.categorySlug && p.categorySlug === prod.categorySlug);
+    const rest = others.filter(p => !sameCategory.includes(p));
+    const related = [...sameCategory, ...rest].slice(0, 4);
 
-    grid.innerHTML = related.map(p => renderProductCard(p, { isWishlisted: wishlist.has(p.id) })).join("");
+    grid.innerHTML = renderProductGrid(related, { isWishlisted: (p) => wishlist.has(p.id), priorityCount: 0 });
 
     grid.addEventListener("click", (e) => {
       // Add to cart delegation

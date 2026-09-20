@@ -46,7 +46,7 @@ SET @exist_items_hsn := (
 );
 SET @sql_items_hsn := IF(@exist_items_hsn = 0,
   'ALTER TABLE `order_items`
-     ADD COLUMN `hsn_code` VARCHAR(20) DEFAULT NULL COMMENT "Authoritative HSN snapshot (e.g. 4911 / 3926)" AFTER `sku`,
+     ADD COLUMN `hsn_code` VARCHAR(20) DEFAULT NULL COMMENT "HSN snapshot taken from the product/category configuration at purchase" AFTER `sku`,
      ADD COLUMN `tax_rate` DECIMAL(5,2) NOT NULL DEFAULT 18.00 COMMENT "Applicable GST percentage" AFTER `hsn_code`,
      ADD COLUMN `tax_amount` BIGINT NOT NULL DEFAULT 0 COMMENT "Allocated tax amount in store units" AFTER `tax_rate`;',
   'SELECT "Columns hsn_code, tax_rate, tax_amount already exist in order_items" AS msg;'
@@ -84,13 +84,9 @@ SET @sql_usage_status := IF(@exist_usage_status = 0,
 PREPARE stmt FROM @sql_usage_status; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- -----------------------------------------------------------------------------
--- 5. STORE_SETTINGS: DEFAULT SELLER STATE AND GSTIN AUDIT KEYS
+-- 5. STORE_SETTINGS: (removed) this section used to seed seller_state = "Delhi" for both stores, overwriting any
+--    configured value. The seller state is configuration (legal supplier record, migration 017), never a default.
 -- -----------------------------------------------------------------------------
-INSERT INTO `store_settings` (`store_id`, `setting_key`, `setting_value`)
-VALUES
-  (1, 'seller_state', '"Delhi"'),
-  (2, 'seller_state', '"Delhi"')
-ON DUPLICATE KEY UPDATE `setting_value` = VALUES(`setting_value`);
 
 SET FOREIGN_KEY_CHECKS = @OLD_FOREIGN_KEY_CHECKS;
 

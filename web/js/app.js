@@ -34,7 +34,7 @@ function initDataDefaults() {
             shipping_fee: 50,
             free_shipping_enabled: true,
             free_shipping_threshold: 300,
-            free_shipping_calculation: 'after_discounts',
+            free_shipping_calculation: 'gross_subtotal',
             announcement_text: '🚀 FREE SHIPPING ON ORDER DEPLOYMENTS ABOVE ₹300!',
             announcement_active: true,
             maintenance_active: false,
@@ -662,10 +662,8 @@ function renderCheckoutSummary() {
 
     let shipping = shippingFee;
     if (enabled) {
-        const calculationMode = siteSettings.free_shipping_calculation || 'after_discounts';
-        const eligibleSubtotal = calculationMode === 'after_discounts' ? (subtotal - discount) : subtotal;
-
-        if (eligibleSubtotal >= threshold) {
+        // Free shipping rule: Evaluated strictly on GROSS merchandise subtotal BEFORE discounts
+        if (subtotal >= threshold) {
             shipping = 0;
         }
     }
@@ -709,10 +707,8 @@ document.getElementById('place-order-btn').addEventListener('click', async () =>
 
     let shipping = shippingFee;
     if (enabled) {
-        const calculationMode = siteSettings.free_shipping_calculation || 'after_discounts';
-        const eligibleSubtotal = calculationMode === 'after_discounts' ? (subtotal - discount) : subtotal;
-
-        if (eligibleSubtotal >= threshold) {
+        // Free shipping rule: Evaluated strictly on GROSS merchandise subtotal BEFORE discounts
+        if (subtotal >= threshold) {
             shipping = 0;
         }
     }

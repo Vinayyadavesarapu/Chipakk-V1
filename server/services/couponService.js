@@ -1,6 +1,24 @@
 const { pool } = require('../config/database');
 const { isMarshansHybridCatalogEnabled } = require('../config/features');
 
+// The `users` table names its display column `full_name` (schema.sql) but very old installs used
+// `name`. Selecting a column that does not exist raised ER_BAD_FIELD_ERROR for EVERY existing
+// coupon code (unknown codes returned before that query), which customers saw as
+// "An internal error occurred". Detect the real column once instead of guessing.
+let usersNameColumn;
+const getUsersNameColumn = async () => {
+  if (usersNameColumn !== undefined) return usersNameColumn;
+  try {
+    const [cols] = await pool.execute("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME IN ('full_name', 'name')");
+    const names = (cols || []).map(c => c.COLUMN_NAME);
+    usersNameColumn = names.includes('full_name') ? 'full_name' : (names.includes('name') ? 'name' : null);
+  } catch (err) {
+    console.warn('[Coupon Service] users name-column lookup failed:', err.message);
+    usersNameColumn = null;
+  }
+  return usersNameColumn;
+};
+
 let hasStoreIdCol = null;
 const checkHasStoreId = async () => {
   if (hasStoreIdCol !== null) return hasStoreIdCol;
@@ -126,7 +144,7 @@ const getCoupons = async ({
 /**
  * Fetch a single coupon by numeric BIGINT ID or uppercase code string, including recent redemption usages
  */
-const getCouponById = async (couponIdOrCode, store_id = null) => {
+const getCouponById = async (couponIdOrCode, store_id = null, { includeUsages = true } = {}) => {
   if (!couponIdOrCode) return null;
 
   const numId = parseInt(couponIdOrCode, 10);
@@ -190,31 +208,41 @@ const getCouponById = async (couponIdOrCode, store_id = null) => {
   coupon.max_discount_amount_rupees = maxDiscountVal !== null ? (isStore2 ? Math.round(maxDiscountVal / 100) : maxDiscountVal) : null;
   coupon.discount_value_rupees = coupon.discount_type === 'fixed' ? (isStore2 ? Math.round(discountVal / 100) : discountVal) : null;
 
-  // Fetch recent usages
-  const usageQuery = `
-    SELECT
-      cu.id AS usage_id,
-      cu.order_id,
-      o.order_number,
-      cu.customer_id,
-      u.name AS customer_name,
-      u.email AS customer_email,
-      cu.discount_amount,
-      cu.used_at
-    FROM coupon_usage cu
-    JOIN orders o ON cu.order_id = o.id
-    LEFT JOIN users u ON cu.customer_id = u.id
-    WHERE cu.coupon_id = ?
-    ORDER BY cu.used_at DESC, cu.id DESC
-    LIMIT 20
-  `;
+  // Fetch recent usages safely if requested
+  coupon.recent_usages = [];
+  if (includeUsages) {
+    try {
+      const nameCol = await getUsersNameColumn();
+      const usageQuery = `
+        SELECT
+          cu.id AS usage_id,
+          cu.order_id,
+          o.order_number,
+          cu.customer_id,
+          ${nameCol ? `COALESCE(u.${nameCol}, '')` : "''"} AS customer_name,
+          u.email AS customer_email,
+          cu.discount_amount,
+          cu.used_at
+        FROM coupon_usage cu
+        JOIN orders o ON cu.order_id = o.id
+        LEFT JOIN users u ON cu.customer_id = u.id
+        WHERE cu.coupon_id = ?
+        ORDER BY cu.used_at DESC, cu.id DESC
+        LIMIT 20
+      `;
 
-  const [usageRows] = await pool.execute(usageQuery, [numCouponId]);
-
-  coupon.recent_usages = usageRows.map(u => ({
-    ...u,
-    discount_amount_rupees: Math.round((parseInt(u.discount_amount, 10) || 0) / 100)
-  }));
+      const [usageRows] = await pool.execute(usageQuery, [numCouponId]);
+      if (Array.isArray(usageRows)) {
+        coupon.recent_usages = usageRows.map(u => ({
+          ...u,
+          discount_amount_rupees: Math.round((parseInt(u.discount_amount, 10) || 0) / 100)
+        }));
+      }
+    } catch (usageErr) {
+      console.warn('[Coupon Service] Recent usages lookup notice:', usageErr.message);
+      coupon.recent_usages = [];
+    }
+  }
 
   return coupon;
 };
@@ -516,7 +544,7 @@ const validateCoupon = async (code, subtotalPaise = 0, store_id = null, customer
   }
 
   const normalizedCode = code.trim().toUpperCase();
-  const coupon = preloadedCoupon || await getCouponById(normalizedCode, store_id);
+  const coupon = preloadedCoupon || await getCouponById(normalizedCode, store_id, { includeUsages: false });
 
   if (!coupon || !coupon.active) {
     return { valid: false, message: 'Invalid or inactive coupon code.' };
@@ -539,7 +567,9 @@ const validateCoupon = async (code, subtotalPaise = 0, store_id = null, customer
       [coupon.id, current_order_id, current_order_id]
     );
     activeReservedCount = resRows[0]?.cnt || 0;
-  } catch (_) {}
+  } catch (err) {
+    console.warn('[Coupon Service] reservation count unavailable (coupon_usage.status/reserved_at missing?):', err.message);
+  }
 
   const effectiveGlobalUsage = (parseInt(coupon.usage_count, 10) || 0) + activeReservedCount;
   if (coupon.usage_limit && effectiveGlobalUsage >= coupon.usage_limit) {
@@ -559,14 +589,13 @@ const validateCoupon = async (code, subtotalPaise = 0, store_id = null, customer
         [coupon.id, customer_id, current_order_id, current_order_id]
       );
       customerUsageCount = custRows[0]?.cnt || 0;
-    } catch (_) {
-      try {
-        const [custRowsLegacy] = await pool.execute(
-          "SELECT COUNT(*) AS cnt FROM coupon_usage WHERE coupon_id = ? AND customer_id = ?",
-          [coupon.id, customer_id]
-        );
-        customerUsageCount = custRowsLegacy[0]?.cnt || 0;
-      } catch (_) {}
+    } catch (err) {
+      console.warn('[Coupon Service] per-customer status query failed, using legacy count:', err.message);
+      const [custRowsLegacy] = await pool.execute(
+        "SELECT COUNT(*) AS cnt FROM coupon_usage WHERE coupon_id = ? AND customer_id = ?",
+        [coupon.id, customer_id]
+      );
+      customerUsageCount = custRowsLegacy[0]?.cnt || 0;
     }
 
     if (customerUsageCount >= custLimit) {
@@ -612,7 +641,9 @@ const validateCoupon = async (code, subtotalPaise = 0, store_id = null, customer
       discount_type: coupon.discount_type,
       discount_value: coupon.discount_value,
       min_order_value: minOrderRequired,
+      min_order_value_rupees: isStore2 ? Math.round(minOrderRequired / 100) : minOrderRequired,
       max_discount_amount: maxDiscount,
+      max_discount_amount_rupees: maxDiscount !== null ? (isStore2 ? Math.round(maxDiscount / 100) : maxDiscount) : null,
       per_customer_limit: custLimit,
       discount: canonicalDiscount,
       discount_amount: canonicalDiscount,

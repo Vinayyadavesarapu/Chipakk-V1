@@ -3,23 +3,23 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>CHIPAKK — Custom Stickers &amp; Creative Sticker Packs</title>
-  <meta name="description" content="Shop premium waterproof vinyl stickers, anime stickers, holographic decals, and order custom sticker prints with fast pan-India shipping from CHIPAKK." />
+  <title>CHIPAKK — Stickers for Every Style</title>
+  <meta name="description" content="Discover stickers for every style — anime, cartoons, gaming, sports, god mode, holographic decals, and custom prints. Shop unique waterproof vinyl stickers from CHIPAKK." />
   <link rel="canonical" href="https://chipakk.shop/" />
   <meta name="robots" content="index, follow" />
 
   <!-- Open Graph / Facebook -->
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://chipakk.shop/" />
-  <meta property="og:title" content="CHIPAKK — Custom Stickers &amp; Creative Sticker Packs" />
-  <meta property="og:description" content="Shop premium waterproof vinyl stickers, anime stickers, holographic decals, and order custom sticker prints with fast pan-India shipping from CHIPAKK." />
+  <meta property="og:title" content="CHIPAKK — Stickers for Every Style" />
+  <meta property="og:description" content="Discover stickers for every style — anime, cartoons, gaming, sports, god mode, holographic decals, and custom prints. Shop unique waterproof vinyl stickers from CHIPAKK." />
   <meta property="og:image" content="https://chipakk.shop/assets/images/logo.png" />
   <meta property="og:site_name" content="CHIPAKK" />
 
   <!-- Twitter -->
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="CHIPAKK — Custom Stickers &amp; Creative Sticker Packs" />
-  <meta name="twitter:description" content="Shop premium waterproof vinyl stickers, anime stickers, holographic decals, and order custom sticker prints with fast pan-India shipping from CHIPAKK." />
+  <meta name="twitter:title" content="CHIPAKK — Stickers for Every Style" />
+  <meta name="twitter:description" content="Discover stickers for every style — anime, cartoons, gaming, sports, god mode, holographic decals, and custom prints. Shop unique waterproof vinyl stickers from CHIPAKK." />
   <meta name="twitter:image" content="https://chipakk.shop/assets/images/logo.png" />
 
   <!-- JSON-LD Structured Data -->
@@ -33,6 +33,7 @@
         "name": "CHIPAKK",
         "url": "https://chipakk.shop/",
         "logo": "https://chipakk.shop/assets/images/logo.png",
+        "description": "CHIPAKK — Waterproof vinyl stickers and custom sticker printing for every style.",
         "sameAs": [
           "https://themarshans.shop"
         ]
@@ -41,7 +42,8 @@
         "@type": "WebSite",
         "@id": "https://chipakk.shop/#website",
         "url": "https://chipakk.shop/",
-        "name": "CHIPAKK",
+        "name": "CHIPAKK — Stickers for Every Style",
+        "description": "Discover stickers for every style — anime, cartoons, gaming, sports, god mode, holographic decals, and custom prints. Shop unique waterproof vinyl stickers from CHIPAKK.",
         "publisher": {
           "@id": "https://chipakk.shop/#organization"
         },
@@ -56,9 +58,10 @@
   </script>
 
   <link rel="icon" type="image/png" href="assets/images/logo.png" />
-  <link rel="stylesheet" href="css/style.css" />
+  <link rel="stylesheet" href="css/style.css?v=1.1.0" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="preconnect" href="https://api.chipakk.shop" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700;800&family=Archivo+Black&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 </head>
 <body>
@@ -70,9 +73,11 @@
        ========================================================= -->
   <div class="loading-overlay" id="loadingOverlay" data-hidden="false" aria-hidden="true">
     <div class="loader-circle">
+      <div class="loader-badge" aria-hidden="true">⚡</div>
       <video
         src="assets/video/loading_01.mp4"
         autoplay
+        preload="metadata"
         muted
         loop
         playsinline
@@ -107,7 +112,7 @@
       </button>
 
       <a href="index.html" class="logo-link" aria-label="CHIPAKK home">
-        <img src="assets/images/logo.png" alt="CHIPAKK" width="180" height="120" />
+        <img src="assets/images/logo.png" alt="CHIPAKK" width="180" height="90" />
       </a>
 
       <nav class="main-nav" aria-label="Primary">
@@ -164,7 +169,7 @@
        ========================================================= -->
   <nav class="mobile-drawer" id="mobileDrawer" aria-label="Mobile" hidden>
     <div class="drawer-top">
-      <img src="assets/images/logo.png" alt="CHIPAKK" />
+      <img src="assets/images/logo.png" alt="CHIPAKK" width="140" height="70" />
       <button class="panel-close" id="drawerCloseBtn" aria-label="Close menu">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/></svg>
       </button>
@@ -197,7 +202,61 @@
   <main id="main">
 
     <!-- DYNAMIC BACKEND-DRIVEN HERO MOUNT (Rendered by js/home.js) -->
-    <div id="heroMount"></div>
+    <div id="heroMount">
+      <section class="hero hero-fixed" id="heroSection">
+        <div class="hero-inner">
+          <div class="hero-copy">
+            <span class="hero-tag">
+              <span class="dot"></span>
+              New designs every week
+            </span>
+            <h1 class="hero-title">
+              <span>STICK</span>
+              <span>YOUR</span>
+              <span class="line-accent">WORLD.</span>
+            </h1>
+            <p class="hero-desc">Premium stickers for a bolder, brighter, more you. Waterproof, scratch-resistant vinyl made for laptops, phones, bottles, and every surface that deserves personality.</p>
+            <div class="hero-ctas">
+              <a href="shop.html" class="btn btn-primary">Shop Now →</a>
+              <a href="custom-stickers.html" class="btn btn-custom-cta">Custom Stickers</a>
+            </div>
+            <div class="hero-stats">
+              <div class="hero-stat">
+                <b>500+</b>
+                <span>Original designs</span>
+              </div>
+              <div class="hero-stat">
+                <b>50k+</b>
+                <span>Stickers shipped</span>
+              </div>
+              <div class="hero-stat">
+                <b>4.8★</b>
+                <span>Average rating</span>
+              </div>
+            </div>
+          </div>
+          <div class="hero-visual" aria-hidden="true">
+            <svg class="hero-scribble scribble-1" viewBox="0 0 80 80" fill="none" stroke="#111" stroke-width="4" stroke-linecap="round">
+              <path d="M10 10 L70 70 M70 10 L10 70"/>
+            </svg>
+            <svg class="hero-scribble scribble-2" viewBox="0 0 100 40" fill="none" stroke="#111" stroke-width="4" stroke-linecap="round">
+              <path d="M2 20 Q 20 2, 38 20 T 74 20 T 98 20"/>
+            </svg>
+            <svg class="hero-scribble scribble-arrow" viewBox="0 0 60 60" fill="none" stroke="#111" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M50 12 Q 20 10 14 40 M14 40 l-8-10 M14 40 l12-4"/>
+            </svg>
+            <div class="hero-photo-frame">
+              <img src="assets/images/hero-fallback.svg" alt="CHIPAKK Sticker Culture" data-hero-img style="width:100%;height:100%;max-width:100%;max-height:100%;object-fit:cover;display:block;border-radius:inherit;" />
+            </div>
+            <div class="hero-doodle doodle-bubble">Small stickers.<br />Big personality.</div>
+            <div class="hero-doodle doodle-crown">👑</div>
+            <div class="hero-doodle doodle-burst">Good ideas<br />stick around</div>
+            <div class="hero-doodle doodle-note">Life is better<br />with stickers ♥</div>
+            <div class="hero-doodle doodle-star">★</div>
+          </div>
+        </div>
+      </section>
+    </div>
 
     <!-- TRUST STRIP -->
     <section class="trust-strip" aria-label="Store highlights">
@@ -284,7 +343,7 @@
             <div><b id="timerHours">14</b><span>Hours</span></div>
             <div><b id="timerMins">22</b><span>Mins</span></div>
           </div>
-          <a href="shop.html?category=retro" class="btn btn-primary">Shop The Drop →</a>
+          <a href="shop.html" class="btn btn-primary">Shop The Drop →</a>
         </div>
       </div>
     </section>
@@ -355,7 +414,7 @@
   <footer class="site-footer">
     <div class="footer-top">
       <div class="footer-brand">
-        <img src="assets/images/logo.png" alt="CHIPAKK" />
+        <img src="assets/images/logo.png" alt="CHIPAKK" width="140" height="70" />
         <p>Premium, creative stickers for a bolder, brighter, more you. Stick it. Own it.</p>
         <div class="footer-social">
           <a href="#" aria-label="Instagram"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1"/></svg></a>
@@ -369,7 +428,7 @@
         <ul>
           <li><a href="shop.html">Trending Stickers</a></li>
           <li><a href="categories.html">All Categories</a></li>
-          <li><a href="shop.html?category=retro">New Drops</a></li>
+          <li><a href="shop.html">New Drops</a></li>
           <li><a href="custom-stickers.html">Custom Stickers</a></li>
         </ul>
       </div>

@@ -152,21 +152,18 @@ function createMockFetch(storeId = 1) {
   };
 }
 
-const appJsContent = fs.readFileSync(path.join(__dirname, '../customer-workspace/js/app.js'), 'utf8');
-
-const extractCode = `
-function getRatingTier(r) { return 'LEGENDARY'; }
-function resolveCustomerImageUrl(url) { return url; }
-${appJsContent.slice(appJsContent.indexOf('function normalizeProduct('), appJsContent.indexOf('function normalizeCategory('))}
-${appJsContent.slice(appJsContent.indexOf('async function getProducts('), appJsContent.indexOf('async function getProductById('))}
-return { normalizeProduct, getProducts };
-`;
+const { loadStorefront, envelope } = require('./helpers/storefront_vm');
 
 async function testCatalogPagination() {
-  const mockFetch = createMockFetch(1);
-  const sandbox = new Function('fetchApi', 'CHIPAKK_DATA', 'getActiveStoreId', extractCode);
-  const CHIPAKK_DATA = { products: [] };
-  const { getProducts } = sandbox(mockFetch, CHIPAKK_DATA, () => 1);
+  const mockFetchApi = createMockFetch(1);
+  // The real storefront code runs; only the network layer is replaced.
+  const sf = loadStorefront({
+    fetch: async (url) => {
+      const endpoint = url.replace(/^https?:\/\/[^/]+\/api/, '');
+      try { return envelope(await mockFetchApi(endpoint)); } catch (e) { return envelope({ error: e.message }, 500); }
+    }
+  });
+  const { getProducts } = sf.CHIPAKK;
 
   // Test 1: Page 1 explicit request
   const page1 = await getProducts({ offset: 0, limit: 100 });
@@ -321,11 +318,12 @@ function testCustomStickerFlow() {
   );
 
   class MockCustomEvent { constructor(name, detail) { this.name = name; this.detail = detail; } }
-  const evalCartFn = new Function('window', 'localStorage', 'CustomEvent', 'renderGlobalCart', 'showToast', 'resolveCustomerImageUrl',
+  const evalCartFn = new Function('window', 'localStorage', 'CustomEvent', 'renderGlobalCart', 'showToast', 'resolveCustomerImageUrl', 'media',
     `${cartManagerSlice}; return new CartManager();`
   );
 
-  const cart = evalCartFn(mockWindow, mockLocalStorage, MockCustomEvent, () => {}, () => {}, (u) => u);
+  const cart = evalCartFn(mockWindow, mockLocalStorage, MockCustomEvent, () => {}, () => {}, (u) => u,
+    require('../customer-workspace/js/media.js').createMedia({ apiBase: 'https://api.chipakk.shop/api' }));
 
   const customItem = {
     id: 'custom-item-99',
@@ -387,8 +385,10 @@ function testCustomStickerFlow() {
 function testDoubleSubmissionAndRetry() {
   const checkoutContent = fs.readFileSync(path.join(__dirname, '../customer-workspace/js/checkout.js'), 'utf8');
 
-  const isSubmittingIndex = checkoutContent.indexOf('isSubmitting = true;');
-  const getProductsIndex = checkoutContent.indexOf('await window.CHIPAKK.getProducts();');
+  // Scoped to the place-order click handler (the page-load GST-rate refresh is a read-only fetch that places nothing).
+  const handlerIndex = checkoutContent.indexOf('placeBtn.addEventListener("click"');
+  const isSubmittingIndex = checkoutContent.indexOf('isSubmitting = true;', handlerIndex);
+  const getProductsIndex = checkoutContent.indexOf('await window.CHIPAKK.getProducts();', handlerIndex);
 
   record('6. Double-Submit', 'Single-flight isSubmitting lock is acquired before any async network call',
     isSubmittingIndex < getProductsIndex && isSubmittingIndex > 0

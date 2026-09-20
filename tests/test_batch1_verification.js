@@ -137,6 +137,7 @@ const evalCartFn = new Function(
   'renderGlobalCart',
   'showToast',
   'resolveCustomerImageUrl',
+  'media',
   `${cartManagerSlice}; return new CartManager();`
 );
 
@@ -146,7 +147,8 @@ const cart = evalCartFn(
   MockCustomEvent,
   () => {},
   () => {},
-  (url) => url
+  (url) => url,
+  require('../customer-workspace/js/media.js').createMedia({ apiBase: 'https://api.chipakk.shop/api' })
 );
 
 cart.clear();
@@ -317,8 +319,13 @@ console.log('\n--- 8. CHECKOUT FRONTEND: UI RESILIENCE ---');
 
 const checkoutJsContent = fs.readFileSync(path.join(__dirname, '../customer-workspace/js/checkout.js'), 'utf8');
 
-record('CK1: checkout.js locks submission BEFORE window.CHIPAKK.getProducts() call',
-  checkoutJsContent.indexOf('isSubmitting = true;') < checkoutJsContent.indexOf('await window.CHIPAKK.getProducts();')
+// Scoped to the submit handler: the page-load GST-rate refresh also reads the catalogue, but it is a read-only fetch
+// that places nothing, so only the order-placement path must take the single-flight lock first.
+const submitStart = checkoutJsContent.indexOf('placeBtn.addEventListener("click"');
+record('CK1: checkout.js locks submission BEFORE window.CHIPAKK.getProducts() call (inside the place-order handler)',
+  submitStart > 0 &&
+  checkoutJsContent.indexOf('isSubmitting = true;', submitStart) > 0 &&
+  checkoutJsContent.indexOf('isSubmitting = true;', submitStart) < checkoutJsContent.indexOf('await window.CHIPAKK.getProducts();', submitStart)
 );
 
 record('CK2: checkout.js tracks pendingOnlineOrder and reuses it on retry without creating duplicate orders',

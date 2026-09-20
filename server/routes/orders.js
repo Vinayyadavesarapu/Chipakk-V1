@@ -5,6 +5,7 @@ const {
   getCustomerOrdersHandler,
   getCustomerOrderByIdHandler
 } = require('../controllers/orderController');
+const { getCustomerInvoiceHandler } = require('../controllers/taxController');
 
 const router = express.Router();
 
@@ -15,5 +16,6 @@ router.use(verifyFirebaseToken);
 router.post('/', createCustomerOrderHandler);
 router.get('/', getCustomerOrdersHandler);
 router.get('/:id', getCustomerOrderByIdHandler);
+router.get('/:id/invoice', getCustomerInvoiceHandler);
 
 module.exports = router;

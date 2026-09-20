@@ -39,7 +39,7 @@
   </script>
 
   <link rel="icon" type="image/png" href="assets/images/logo.png" />
-  <link rel="stylesheet" href="css/style.css?v=1.1.0" />
+  <link rel="stylesheet" href="css/style.css?v=1.2.0" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="preconnect" href="https://api.chipakk.shop" crossorigin />
@@ -53,7 +53,7 @@
   <div class="loading-overlay" id="loadingOverlay" data-hidden="false" aria-hidden="true">
     <div class="loader-circle">
       <div class="loader-badge" aria-hidden="true">⚡</div>
-      <video src="assets/video/loading_01.mp4" preload="none" muted loop playsinline aria-hidden="true"></video>
+      <video src="assets/video/loading_01.mp4" autoplay preload="metadata" muted loop playsinline aria-hidden="true"></video>
     </div>
     <p class="loader-text">Loading catalog<span class="dots"></span></p>
   </div>
@@ -81,7 +81,7 @@
       </button>
 
       <a href="index.html" class="logo-link" aria-label="CHIPAKK home">
-        <img src="assets/images/logo.png" alt="CHIPAKK" width="180" height="120" />
+        <img src="assets/images/logo.png" alt="CHIPAKK" width="180" height="90" />
       </a>
 
       <nav class="main-nav" aria-label="Primary">
@@ -135,7 +135,7 @@
   <!-- Mobile Drawer -->
   <nav class="mobile-drawer" id="mobileDrawer" aria-label="Mobile" hidden>
     <div class="drawer-top">
-      <img src="assets/images/logo.png" alt="CHIPAKK" />
+      <img src="assets/images/logo.png" alt="CHIPAKK" width="140" height="70" />
       <button class="panel-close" id="drawerCloseBtn" aria-label="Close menu">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/></svg>
       </button>
@@ -217,7 +217,7 @@
   <footer class="site-footer">
     <div class="footer-top">
       <div class="footer-brand">
-        <img src="assets/images/logo.png" alt="CHIPAKK" />
+        <img src="assets/images/logo.png" alt="CHIPAKK" width="140" height="70" />
         <p>Premium, creative stickers for a bolder, brighter, more you. Stick it. Own it.</p>
       </div>
       <div class="footer-col">
@@ -300,8 +300,10 @@
 
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
-  <script src="js/auth.js?v=1.1.0"></script>
-  <script src="js/app.js?v=1.1.0"></script>
-  <script src="js/shop.js?v=1.1.0"></script>
+  <script src="js/auth.js?v=1.2.0"></script>
+  <script src="js/media.js?v=1.2.0"></script>
+  <script src="js/catalog.js?v=1.2.0"></script>
+  <script src="js/app.js?v=1.2.0"></script>
+  <script src="js/shop.js?v=1.2.0"></script>
 </body>
 </html>

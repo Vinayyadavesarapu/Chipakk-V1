@@ -3,23 +3,23 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Shop Stickers — CHIPAKK Catalog</title>
-  <meta name="description" content="Explore the full collection of waterproof vinyl stickers at CHIPAKK. Filter by anime, gaming, memes, tech, typography, and collect high-tier designs." />
+  <title>Shop Stickers for Every Style — CHIPAKK</title>
+  <meta name="description" content="Explore stickers for every style at CHIPAKK. Browse anime, toons, sports, gaming, god mode, and custom vinyl decals with waterproof finishes." />
   <link rel="canonical" href="https://chipakk.shop/shop.html" />
   <meta name="robots" content="index, follow" />
 
   <!-- Open Graph / Facebook -->
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://chipakk.shop/shop.html" />
-  <meta property="og:title" content="Shop Stickers — CHIPAKK Catalog" />
-  <meta property="og:description" content="Explore the full collection of waterproof vinyl stickers at CHIPAKK. Filter by anime, gaming, memes, tech, typography, and collect high-tier designs." />
+  <meta property="og:title" content="Shop Stickers for Every Style — CHIPAKK" />
+  <meta property="og:description" content="Explore stickers for every style at CHIPAKK. Browse anime, toons, sports, gaming, god mode, and custom vinyl decals with waterproof finishes." />
   <meta property="og:image" content="https://chipakk.shop/assets/images/logo.png" />
   <meta property="og:site_name" content="CHIPAKK" />
 
   <!-- Twitter -->
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="Shop Stickers — CHIPAKK Catalog" />
-  <meta name="twitter:description" content="Explore the full collection of waterproof vinyl stickers at CHIPAKK. Filter by anime, gaming, memes, tech, typography, and collect high-tier designs." />
+  <meta name="twitter:title" content="Shop Stickers for Every Style — CHIPAKK" />
+  <meta name="twitter:description" content="Explore stickers for every style at CHIPAKK. Browse anime, toons, sports, gaming, god mode, and custom vinyl decals with waterproof finishes." />
   <meta name="twitter:image" content="https://chipakk.shop/assets/images/logo.png" />
 
   <!-- JSON-LD Structured Data -->
@@ -27,9 +27,9 @@
   {
     "@context": "https://schema.org",
     "@type": "CollectionPage",
-    "name": "Shop Stickers — CHIPAKK Catalog",
+    "name": "Shop Stickers for Every Style — CHIPAKK",
     "url": "https://chipakk.shop/shop.html",
-    "description": "Explore the full collection of waterproof vinyl stickers at CHIPAKK. Filter by anime, gaming, memes, tech, typography, and collect high-tier designs.",
+    "description": "Explore stickers for every style at CHIPAKK. Browse anime, toons, sports, gaming, god mode, and custom vinyl decals with waterproof finishes.",
     "isPartOf": {
       "@type": "WebSite",
       "name": "CHIPAKK",
@@ -39,9 +39,10 @@
   </script>
 
   <link rel="icon" type="image/png" href="assets/images/logo.png" />
-  <link rel="stylesheet" href="css/style.css" />
+  <link rel="stylesheet" href="css/style.css?v=1.1.0" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="preconnect" href="https://api.chipakk.shop" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700;800&family=Archivo+Black&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 </head>
 <body>
@@ -51,7 +52,8 @@
   <!-- Loading Overlay -->
   <div class="loading-overlay" id="loadingOverlay" data-hidden="false" aria-hidden="true">
     <div class="loader-circle">
-      <video src="assets/video/loading_01.mp4" autoplay muted loop playsinline aria-hidden="true"></video>
+      <div class="loader-badge" aria-hidden="true">⚡</div>
+      <video src="assets/video/loading_01.mp4" autoplay preload="metadata" muted loop playsinline aria-hidden="true"></video>
     </div>
     <p class="loader-text">Loading catalog<span class="dots"></span></p>
   </div>
@@ -298,8 +300,8 @@
 
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
-  <script src="js/auth.js"></script>
-  <script src="js/app.js"></script>
-  <script src="js/shop.js"></script>
+  <script src="js/auth.js?v=1.1.0"></script>
+  <script src="js/app.js?v=1.1.0"></script>
+  <script src="js/shop.js?v=1.1.0"></script>
 </body>
 </html>

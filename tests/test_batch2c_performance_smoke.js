@@ -44,23 +44,30 @@ async function runTests() {
   assert(appJs.includes('isPlainCatalogQuery'), 'getProducts checks for plain un-filtered catalog query');
   assert(appJs.includes('Array.isArray(CHIPAKK_DATA.products) && CHIPAKK_DATA.products.length > 0'), 'getProducts reuses in-memory products on repeated calls');
 
-  // 4. Heavy video loading optimization
-  assert(indexHtml.includes('src="assets/video/loading_01.mp4"') && indexHtml.includes('preload="none"'), 'index.html video has preload="none" avoiding 3.6MB eager download');
-  assert(shopHtml.includes('src="assets/video/loading_01.mp4"') && shopHtml.includes('preload="none"'), 'shop.html video has preload="none"');
+  // 4. Branded video loading experience restored with lean metadata preload
+  assert(indexHtml.includes('src="assets/video/loading_01.mp4"') && indexHtml.includes('preload="metadata"') && indexHtml.includes('autoplay'), 'index.html video has autoplay and preload="metadata"');
+  assert(shopHtml.includes('src="assets/video/loading_01.mp4"') && shopHtml.includes('preload="metadata"') && shopHtml.includes('autoplay'), 'shop.html video has autoplay and preload="metadata"');
   assert(indexHtml.includes('class="loader-badge"'), 'index.html has lightweight CSS/SVG loader badge');
   assert(styleCss.includes('.loader-badge {'), 'style.css contains lightweight loader-badge animated styles');
 
-  // 5. Loading overlay artificial delay removal
-  assert(appJs.includes('document.readyState === "complete" || document.readyState === "interactive"'), 'initLoadingOverlay dismisses immediately on interactive/ready without 750ms wait');
+  // 5. Loading overlay artificial delay removal (no blocking 750ms timer)
+  assert(!appJs.includes('minTimer = setTimeout(hideOverlay, 750)'), 'initLoadingOverlay has zero artificial 750ms blocking delay');
 
   // 6. Preconnect to API origin
   assert(indexHtml.includes('<link rel="preconnect" href="https://api.chipakk.shop" crossorigin />'), 'index.html preconnects to api.chipakk.shop');
   assert(shopHtml.includes('<link rel="preconnect" href="https://api.chipakk.shop" crossorigin />'), 'shop.html preconnects to api.chipakk.shop');
 
   // 7. Product card image CLS prevention & async decoding
-  assert(appJs.includes('width="300" height="300"'), 'renderProductCard includes explicit width/height dimensions');
-  assert(appJs.includes('decoding="async"'), 'renderProductCard specifies async image decoding');
-  assert(appJs.includes('loading="lazy"'), 'renderProductCard specifies lazy loading for below-fold catalog cards');
+  const { createMedia } = require('../customer-workspace/js/media.js');
+  const { createCatalog } = require('../customer-workspace/js/catalog.js');
+  const cat = createCatalog({ media: createMedia({ apiBase: 'https://api.chipakk.shop/api' }), formatPrice: (n) => '₹' + n, storeId: 1 });
+  const p = cat.normalizeProduct({ id: 1, name: 'A', price: 15, primary_image_url: '/uploads/a.webp' });
+  const below = cat.productCardHtml(p, { priority: false });
+  const above = cat.productCardHtml(p, { priority: true });
+  assert(below.includes('width="300" height="300"'), 'rendered product card includes explicit width/height dimensions');
+  assert(below.includes('decoding="async"'), 'rendered product card specifies async image decoding');
+  assert(below.includes('loading="lazy"'), 'below-fold catalog cards load lazily');
+  assert(above.includes('loading="eager"') && above.includes('fetchpriority="high"'), 'above-the-fold card image is prioritised');
 
   // 8. Functional deduplication test in Node VM
   let networkCalls = 0;

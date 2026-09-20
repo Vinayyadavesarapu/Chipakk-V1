@@ -191,7 +191,7 @@ async function runSiteSettingsMigration() {
             shipping_fee: shippingFeeInCents,
             free_shipping_enabled: settings.free_shipping_enabled === true,
             free_shipping_threshold: shippingThresholdInCents,
-            free_shipping_calculation: settings.free_shipping_calculation !== undefined ? String(settings.free_shipping_calculation) : 'after_discounts',
+            free_shipping_calculation: settings.free_shipping_calculation !== undefined ? String(settings.free_shipping_calculation) : 'gross_subtotal',
             announcement_text: settings.announcement_text !== undefined ? String(settings.announcement_text) : '',
             announcement_active: settings.announcement_active === true,
             maintenance_active: settings.maintenance_active === true,

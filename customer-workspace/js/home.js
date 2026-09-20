@@ -22,7 +22,10 @@
     formatPrice,
     starsMarkup,
     renderProductCard,
-    resolveCustomerImageUrl,
+    renderProductGrid,
+    categoryMediaHtml,
+    loader,
+    media,
     escapeHtml,
     escapeAttr,
     showToast,
@@ -75,8 +78,8 @@
 
       const hasImg = Boolean(slideData.image_url || slideData.image);
       const rawImg = slideData.image_url || slideData.image || "assets/images/logo.png";
-      const imgSrc = typeof resolveCustomerImageUrl === "function" ? resolveCustomerImageUrl(rawImg) : rawImg;
-      const imgAlt = escapeAttr(slideData.imageAlt || slideData.title || "CHIPAKK Sticker Culture");
+      const imgSrc = media.resolve(rawImg) || "assets/images/hero-fallback.svg";
+      const imgAltRaw = slideData.imageAlt || slideData.title || "CHIPAKK Sticker Culture";
 
       const stats = Array.isArray(slideData.stats) ? slideData.stats : (hero.stats || [
         { value: "500+", label: "Original designs" },
@@ -155,7 +158,7 @@
 
               <!-- Main Artwork Photo Frame -->
               <div class="hero-photo-frame">
-                <img src="${escapeAttr(imgSrc || 'assets/images/hero-fallback.svg')}" alt="${imgAlt}" data-hero-img fetchpriority="high" decoding="async" width="600" height="600" onerror="if(!this.dataset.failed){this.dataset.failed='true';this.src='assets/images/hero-fallback.svg';}" style="width:100%;height:100%;max-width:100%;max-height:100%;object-fit:cover;display:block;border-radius:inherit;" />
+                ${media.imgHtml({ src: imgSrc, alt: imgAltRaw, cls: "hero-photo-img", width: 600, height: 600, priority: true, fallbackSrc: "assets/images/hero-fallback.svg" })}
               </div>
 
               <!-- Hand-Drawn Stickers, Speech Bubbles & Accents -->
@@ -200,32 +203,16 @@
      2. SHOP BY CATEGORY PREVIEW
      ========================================================= */
 
-  function renderCategoryMedia(c) {
-    const raw = c.image_url || c.image;
-    const isUrl = typeof raw === "string" && (
-      raw.startsWith("http://") ||
-      raw.startsWith("https://") ||
-      raw.startsWith("/") ||
-      raw.startsWith("assets/") ||
-      raw.includes("/") ||
-      /\.(png|jpe?g|webp|gif|svg)(\?.*)?$/i.test(raw)
-    );
-    if (isUrl) {
-      return `<img src="${escapeAttr(raw)}" alt="${escapeAttr(c.name)} sticker category" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:block;" />`;
-    }
-    return `<span>${escapeHtml(c.icon || c.image || "✨")}</span>`;
-  }
-
   function renderCategoriesPreview(categories) {
     const grid = $("#categoriesGrid");
     if (!grid) return;
 
     const list = (categories || []).filter(c => c.active !== false).slice(0, 8);
     grid.innerHTML = list.map(c => `
-      <a href="shop.html?category=${encodeURIComponent(c.slug)}" class="category-card" data-category-id="${c.id}">
-        <span class="cat-icon-wrap" aria-hidden="true">${renderCategoryMedia(c)}</span>
+      <a href="shop.html?category=${encodeURIComponent(c.slug)}" class="category-card" data-category-id="${escapeAttr(c.id)}">
+        <span class="cat-icon-wrap" aria-hidden="true">${categoryMediaHtml(c)}</span>
         <span class="cat-name">${escapeHtml(c.name)}</span>
-        <span style="font-size:11px;color:#777;margin-top:2px;">${c.productCount || 0}+ designs</span>
+        <span style="font-size:11px;color:#777;margin-top:2px;">${Number(c.productCount) || 0}+ designs</span>
       </a>
     `).join("");
   }
@@ -267,7 +254,7 @@
       return;
     }
 
-    grid.innerHTML = finalProducts.map(p => renderProductCard(p, { isWishlisted: wishlist.has(p.id) })).join("");
+    grid.innerHTML = renderProductGrid(finalProducts, { isWishlisted: (p) => wishlist.has(p.id) });
   }
 
   /* =========================================================
@@ -375,12 +362,20 @@
      ========================================================= */
 
   function initHome() {
+    // Critical initial content = categories + trending products. The static hero is already in
+    // the HTML and events are decorative, so neither holds the loader.
+    const releaseLoader = loader.hold("home-content");
     initProductEvents();
 
-    getHeroData().then(renderHero);
-    getCategories().then(renderCategoriesPreview);
-    getProducts().then(renderTrendingProducts);
-    getEvents().then(renderDropSection);
+    Promise.allSettled([
+      getCategories().then(renderCategoriesPreview),
+      getProducts().then(renderTrendingProducts)
+    ]).then((results) => {
+      results.forEach((r) => { if (r.status === "rejected") console.error("[CHIPAKK Home] Section failed to render:", r.reason); });
+    }).finally(releaseLoader);
+
+    getHeroData().then(renderHero).catch((err) => console.error("[CHIPAKK Home] Hero failed to render:", err));
+    getEvents().then(renderDropSection).catch((err) => console.error("[CHIPAKK Home] Drop section failed to render:", err));
   }
 
   if (document.readyState === "loading") {

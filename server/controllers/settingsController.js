@@ -1,4 +1,6 @@
 const settingsService = require('../services/settingsService');
+const shippingService = require('../services/shippingService');
+const taxProfileService = require('../services/taxProfileService');
 const { pool } = require('../config/database');
 const { writeAuditLog } = require('../services/auditService');
 const { sendSuccess, sendError } = require('../utils/responseHandler');
@@ -13,37 +15,18 @@ const getSettingsHandler = async (req, res, next) => {
     const storeId = req.storeId || 1;
     const settings = await settingsService.getStoreSettings(storeId);
 
-    // Look up authoritative active shipping rule from shipping_rules table if present
-    let activeShippingThreshold = settings.free_shipping_threshold !== undefined ? settings.free_shipping_threshold : (storeId === 2 ? 0 : 300);
-    let activeShippingFee = settings.shipping_fee || (storeId === 2 ? 10000 : 50);
-    let isFreeShippingEnabled = settings.free_shipping_enabled !== undefined ? Boolean(settings.free_shipping_enabled) : (storeId === 1);
+    // Shipping shown to customers comes from the SAME resolver that prices orders
+    // (shippingService.getShippingPolicy), so display and charge cannot disagree.
+    const policy = await shippingService.getShippingPolicy(storeId);
+    const activeShippingFee = policy.standard_fee;
+    const activeShippingThreshold = policy.free_shipping_threshold;
+    const isFreeShippingEnabled = policy.free_shipping_enabled;
+    const shippingFeeRupees = policy.standard_fee_rupees;
+    const freeShippingThresholdRupees = policy.free_shipping_threshold_rupees;
 
-    // If Store 2 (THE MARSHANS), strictly enforce NO free shipping
-    if (storeId === 2) {
-      isFreeShippingEnabled = false;
-      activeShippingThreshold = 0;
-    }
-
-    try {
-      // Check for store-specific shipping rule
-      const [rules] = await pool.execute(
-        'SELECT free_shipping_threshold, standard_fee FROM shipping_rules WHERE is_enabled = 1 AND (store_id = ? OR store_id IS NULL) ORDER BY store_id DESC, id DESC LIMIT 1',
-        [storeId]
-      );
-      if (rules.length > 0) {
-        if (storeId === 1 && rules[0].free_shipping_threshold !== null && rules[0].free_shipping_threshold !== undefined) {
-          activeShippingThreshold = parseInt(rules[0].free_shipping_threshold, 10);
-        }
-        if (rules[0].standard_fee !== null && rules[0].standard_fee !== undefined) {
-          activeShippingFee = parseInt(rules[0].standard_fee, 10);
-        }
-      }
-    } catch (ruleErr) {
-      // Non-blocking fallback
-    }
-
-    const freeShippingThresholdRupees = storeId === 1 ? Math.round(activeShippingThreshold) : Math.round(activeShippingThreshold / 100);
-    const shippingFeeRupees = storeId === 1 ? Math.round(activeShippingFee) : Math.round(activeShippingFee / 100);
+    // GST facts come from the same resolver the order service uses (never a second, drifting copy)
+    let tax = null;
+    try { tax = await taxProfileService.getTaxProfile(storeId, { settings }); } catch (taxErr) { console.warn('[Settings] tax profile unavailable:', taxErr.message); }
 
     // Filter to expose storefront-safe settings only
     const publicSettings = {
@@ -52,14 +35,22 @@ const getSettingsHandler = async (req, res, next) => {
       store_name: settings.store_name || (storeId === 2 ? 'THE MARSHANS' : 'CHIPAKK'),
       store_status: settings.store_status || 'OPEN',
       order_acceptance: settings.order_acceptance || 'ACCEPTING ORDERS',
-      gst_pct: settings.gst_pct !== undefined ? settings.gst_pct : 18,
-      gst_enabled: settings.gst_enabled !== undefined ? settings.gst_enabled : true,
+      gst_pct: tax ? tax.default_gst_rate : (settings.gst_pct !== undefined ? settings.gst_pct : 18),
+      gst_rate: tax ? tax.default_gst_rate : (settings.gst_pct !== undefined ? settings.gst_pct : 18),
+      gst_enabled: tax ? tax.gst_enabled : (settings.gst_enabled !== undefined ? settings.gst_enabled : true),
+      tax_pricing_mode: 'inclusive', // displayed prices already contain GST; it is never added on top
+      trade_name: tax ? tax.trade_name : (storeId === 2 ? 'THE MARSHANS' : 'CHIPAKK'),
+      // supplier identity is public information (it is printed on every invoice); shown only when it is real
+      legal_supplier_name: tax ? tax.legal_supplier_name : null,
+      gstin: tax ? tax.gstin : null,
+      // false = the legal supplier is not configured yet, so the API will refuse to create GST orders
+      checkout_tax_ready: tax ? tax.checkout_ready : true,
       shipping_fee: activeShippingFee,
       shipping_fee_rupees: shippingFeeRupees,
       free_shipping_enabled: isFreeShippingEnabled,
       free_shipping_threshold: activeShippingThreshold,
       free_shipping_threshold_rupees: freeShippingThresholdRupees,
-      free_shipping_calculation: settings.free_shipping_calculation || 'after_discounts',
+      free_shipping_calculation: 'gross_subtotal',
       announcement_text: settings.announcement_text || '',
       announcement_active: settings.announcement_active || false,
       maintenance_active: settings.maintenance_active || false,
@@ -95,7 +86,7 @@ const getSettingsHandler = async (req, res, next) => {
         free_shipping_enabled: !isMarshans,
         free_shipping_threshold: isMarshans ? 0 : 300,
         free_shipping_threshold_rupees: isMarshans ? 0 : 300,
-        free_shipping_calculation: 'after_discounts',
+        free_shipping_calculation: 'gross_subtotal',
         announcement_text: isMarshans ? 'PRECISION 3D PRINTING & RAPID PROTOTYPING' : 'WELCOME TO CHIPAKK!',
         announcement_active: true,
         maintenance_active: false,

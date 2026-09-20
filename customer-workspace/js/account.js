@@ -21,6 +21,9 @@
     getProducts,
     formatPrice,
     renderProductCard,
+    renderProductGrid,
+    media,
+    loader,
     showToast,
     escapeHtml,
     escapeAttr,
@@ -462,15 +465,10 @@
           <!-- Items Preview Rail -->
           <div style="display: flex; gap: 10px; margin: 14px 0; overflow-x: auto; padding-bottom: 4px;">
             ${items.map((item) => {
-              const rawImg = item.img || item.image_url || item.image;
-              const isImg = typeof rawImg === 'string' && (rawImg.startsWith('http') || rawImg.includes('/') || /\.(png|jpe?g|webp|gif|svg)/i.test(rawImg));
-              const resolved = isImg ? (window.CHIPAKK?.resolveImageUrl ? window.CHIPAKK.resolveImageUrl(rawImg) : rawImg) : null;
+              const thumb = media.imgHtml({ src: item.img || item.image_url || item.image, alt: "", cls: "order-thumb order-thumb-sm", width: 20, height: 20 });
               return `
                 <div style="display: flex; align-items: center; gap: 8px; background: var(--white); border: 1px solid var(--black); border-radius: 6px; padding: 6px 10px; font-size: 12px; font-weight: 600; flex-shrink: 0;">
-                  ${resolved
-                    ? `<img src="${escapeAttr(resolved)}" alt="" style="width: 20px; height: 20px; object-fit: cover; border-radius: 4px; display: block;" />`
-                    : `<span style="font-size: 18px;">${escapeHtml(rawImg || '⚡')}</span>`
-                  }
+                  ${thumb}
                   <span>${escapeHtml(item.product_title || item.name || 'Sticker')} (x${item.quantity || item.qty || 1})</span>
                 </div>
               `;
@@ -573,16 +571,11 @@
           const variant = item.variant_name || item.material || "Standard Vinyl";
           const qty = item.quantity || item.qty || 1;
           const price = item.unit_price_rupees ?? item.unit_price ?? item.unit_price_inr ?? item.price ?? 0;
-          const rawImg = item.img || item.image_url || item.image;
-          const isImg = typeof rawImg === 'string' && (rawImg.startsWith('http') || rawImg.includes('/') || /\.(png|jpe?g|webp|gif|svg)/i.test(rawImg));
-          const resolved = isImg ? (window.CHIPAKK?.resolveImageUrl ? window.CHIPAKK.resolveImageUrl(rawImg) : rawImg) : null;
+          const thumb = media.imgHtml({ src: item.img || item.image_url || item.image, alt: "", cls: "order-thumb order-thumb-md", width: 28, height: 28 });
           return `
             <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #eee;">
               <div style="display: flex; align-items: center; gap: 10px;">
-                ${resolved
-                  ? `<img src="${escapeAttr(resolved)}" alt="" style="width: 28px; height: 28px; object-fit: cover; border-radius: 4px; display: block;" />`
-                  : `<span style="font-size: 24px;">${escapeHtml(rawImg || '⚡')}</span>`
-                }
+                ${thumb}
                 <div>
                   <div style="font-weight: 700; font-size: 13px;">${escapeHtml(title)}</div>
                   <div style="font-size: 11px; color: #666;">${escapeHtml(variant)} • Qty: ${qty}</div>
@@ -633,7 +626,7 @@
       return;
     }
 
-    grid.innerHTML = wishProducts.map((p) => renderProductCard(p, { mode: "wishlist" })).join("");
+    grid.innerHTML = renderProductGrid(wishProducts, { mode: "wishlist", isWishlisted: () => true, priorityCount: 0 });
 
     grid.querySelectorAll(".move-to-cart-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -1045,6 +1038,12 @@
 
   function initAccount() {
     initAuthForms();
+    // The page content depends on whether a customer is signed in: hold the loader until the
+    // first auth state is known (success or failure), then release.
+    const releaseLoader = loader.hold("account-auth");
+    const authReady = window.CHIPAKK?.auth?.isAuthReady ? window.CHIPAKK.auth.isAuthReady() : Promise.resolve();
+    authReady.catch((err) => console.error("[CHIPAKK Account] Auth did not initialise:", err)).finally(releaseLoader);
+
     initTabs();
     initOrderModal();
     initAddressModal();

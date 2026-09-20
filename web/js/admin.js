@@ -161,7 +161,6 @@ let siteSettings = {
     business_address: "Cyber City, DLF Phase 2, Gurgaon, Haryana - 122002",
     gst_enabled: true,
     gst_pct: 18,
-    gstin: "07AAAAA0000A1Z5",
     currency_symbol: "₹ (INR)",
     order_prefix: "CHP-",
     default_rating: 4.7,
@@ -230,7 +229,11 @@ function normalizeProduct(p) {
         lumo_light_image: p.lumo_light_image || null,
         lumo_dark_image: p.lumo_dark_image || null,
         lumo_light_360_url: p.lumo_light_360_url || null,
-        lumo_dark_360_url: p.lumo_dark_360_url || null
+        lumo_dark_360_url: p.lumo_dark_360_url || null,
+        hsn_code: p.hsn_code || '',
+        gst_rate: p.gst_rate === null || p.gst_rate === undefined ? '' : p.gst_rate,
+        category_hsn_code: p.category_hsn_code || '',
+        category_gst_rate: p.category_gst_rate === null || p.category_gst_rate === undefined ? '' : p.category_gst_rate
     };
 }
 
@@ -757,11 +760,16 @@ async function refreshReviewsFromAPI() {
     }
 }
 
+const STORE_TAX_CONFIG_KEYS = ['custom_sticker_hsn_code', 'custom_sticker_gst_rate', 'trade_name', 'invoice_prefix', 'default_gst_rate', 'gst_pct', 'gst_rate', 'gst_enabled'];
+
 async function refreshSettingsFromAPI() {
     try {
         const res = await apiClient.get('/admin/settings');
         const rawSettings = res?.data?.settings || res?.settings || res?.data || (typeof res === 'object' ? res : null);
         if (rawSettings && typeof rawSettings === 'object') {
+            // Per-store tax configuration must be REPLACED, never merged: a key the active store does not have (for example
+            // a custom-sticker HSN saved on another store or in an earlier session) must not survive and be shown / re-saved here.
+            for (const k of STORE_TAX_CONFIG_KEYS) delete siteSettings[k];
             siteSettings = { ...siteSettings, ...rawSettings };
             loadSystemSettings();
         }
@@ -1635,6 +1643,13 @@ function openProductForm(product = null) {
     if (document.getElementById('prod-is-best-seller')) {
         document.getElementById('prod-is-best-seller').checked = Boolean(product && (product.is_best_seller === 1 || product.is_best_seller === true));
     }
+    if (document.getElementById('prod-hsn-code')) document.getElementById('prod-hsn-code').value = product ? (product.hsn_code || '') : '';
+    if (document.getElementById('prod-gst-rate')) document.getElementById('prod-gst-rate').value = product ? product.gst_rate : '';
+    if (document.getElementById('prod-tax-hint')) {
+        // Wording is fixed: no "fallback" / default HSN is ever suggested. A category value is shown only when one is really configured.
+        const catHsn = product && product.category_hsn_code ? ` Category HSN currently: ${product.category_hsn_code}.` : '';
+        document.getElementById('prod-tax-hint').textContent = `Leave blank to inherit category HSN. HSN is never guessed. An invoice cannot be issued until the order line has an HSN.${catHsn} GST rate: leave blank to inherit the category rate, then the store default.`;
+    }
     document.getElementById('prod-release-date').value = product ? (product.scheduled_drop_time || '') : '';
     document.getElementById('prod-active').value = product ? String(product.is_active) : 'true';
 
@@ -1886,7 +1901,10 @@ async function saveProductForm() {
         images: cleanImagePayload,
         scheduled_drop_time: document.getElementById('prod-release-date').value || null,
         active: document.getElementById('prod-active').value === 'true' ? 1 : 0,
-        is_best_seller: isBestSeller
+        is_best_seller: isBestSeller,
+        // empty string = clear (inherit from the category / store default); the API validates 4/6/8 digits and 0-100
+        hsn_code: document.getElementById('prod-hsn-code')?.value.trim() ?? '',
+        gst_rate: document.getElementById('prod-gst-rate')?.value.trim() ?? ''
     };
 
     if (activeStoreId === 2) {
@@ -2045,6 +2063,8 @@ function openCategoryForm(category = null) {
     document.getElementById('cat-name').value = category ? category.name : '';
     document.getElementById('cat-slug').value = category ? category.slug : '';
     document.getElementById('cat-desc').value = category ? (category.description || '') : '';
+    if (document.getElementById('cat-hsn-code')) document.getElementById('cat-hsn-code').value = category ? (category.hsn_code || '') : '';
+    if (document.getElementById('cat-gst-rate')) document.getElementById('cat-gst-rate').value = category && category.gst_rate !== null && category.gst_rate !== undefined ? category.gst_rate : '';
 
     const catImageInput = document.getElementById('cat-image');
     if (catImageInput) catImageInput.value = category?.image_url || '';
@@ -2152,6 +2172,8 @@ async function saveCategoryForm() {
         active: 1,
         experience_code: experienceCode,
         experience_settings: experienceSettings,
+        hsn_code: document.getElementById('cat-hsn-code')?.value.trim() ?? '',
+        gst_rate: document.getElementById('cat-gst-rate')?.value.trim() ?? '',
         hero_light: heroLight,
         hero_dark: heroDark,
         media: {
@@ -4457,7 +4479,12 @@ function loadSystemSettings() {
     if (document.getElementById('set-store-name')) document.getElementById('set-store-name').value = siteSettings.store_name || '';
     if (document.getElementById('set-support-email')) document.getElementById('set-support-email').value = siteSettings.business_email || siteSettings.support_email || '';
     if (document.getElementById('set-support-phone')) document.getElementById('set-support-phone').value = siteSettings.support_phone || '';
-    if (document.getElementById('set-gstin')) document.getElementById('set-gstin').value = siteSettings.gstin || '';
+    if (document.getElementById('set-trade-name')) document.getElementById('set-trade-name').value = siteSettings.trade_name || '';
+    if (document.getElementById('set-gst-enabled')) document.getElementById('set-gst-enabled').value = String(siteSettings.gst_enabled !== false);
+    if (document.getElementById('set-invoice-prefix')) document.getElementById('set-invoice-prefix').value = siteSettings.invoice_prefix || '';
+    if (document.getElementById('set-custom-hsn')) document.getElementById('set-custom-hsn').value = siteSettings.custom_sticker_hsn_code || '';
+    if (document.getElementById('set-custom-gst-rate')) document.getElementById('set-custom-gst-rate').value = siteSettings.custom_sticker_gst_rate === undefined || siteSettings.custom_sticker_gst_rate === null ? '' : siteSettings.custom_sticker_gst_rate;
+    loadLegalSupplierPanel();
     if (document.getElementById('set-gst-rate')) document.getElementById('set-gst-rate').value = siteSettings.gst_pct !== undefined ? siteSettings.gst_pct : (siteSettings.gst_rate || 18);
     if (document.getElementById('set-currency')) document.getElementById('set-currency').value = siteSettings.currency_symbol || '₹ (INR)';
     if (document.getElementById('set-order-prefix')) document.getElementById('set-order-prefix').value = siteSettings.order_prefix || 'CHP-';
@@ -5224,16 +5251,23 @@ function setupEventListeners() {
         if (btn) { btn.disabled = true; btn.textContent = "SAVING..."; }
 
         const email = document.getElementById('set-support-email').value.trim();
-        const gstVal = Number(document.getElementById('set-gst-rate').value) || 18;
+        const gstRaw = document.getElementById('set-gst-rate').value;
+        const gstVal = gstRaw === '' || isNaN(Number(gstRaw)) ? 18 : Number(gstRaw); // 0 is a valid rate
 
         const payload = {
             store_name: document.getElementById('set-store-name').value.trim(),
             business_email: email,
             support_email: email,
             support_phone: document.getElementById('set-support-phone').value.trim(),
-            gstin: document.getElementById('set-gstin').value.trim(),
+            // the supplier identity (GSTIN, legal name, address) is saved separately: it is ONE record for both stores
+            trade_name: document.getElementById('set-trade-name')?.value.trim() || undefined,
+            gst_enabled: document.getElementById('set-gst-enabled')?.value !== 'false',
             gst_pct: gstVal,
             gst_rate: gstVal,
+            default_gst_rate: gstVal,
+            invoice_prefix: (document.getElementById('set-invoice-prefix')?.value.trim() || '').toUpperCase() || undefined,
+            custom_sticker_hsn_code: document.getElementById('set-custom-hsn')?.value.trim() || '',
+            custom_sticker_gst_rate: document.getElementById('set-custom-gst-rate')?.value.trim() || '',
             currency_symbol: document.getElementById('set-currency').value.trim(),
             order_prefix: document.getElementById('set-order-prefix').value.trim(),
             default_rating: Number(document.getElementById('set-default-rating').value) || 4.7
@@ -5867,3 +5901,57 @@ function setupEventListeners() {
 window.updateState = updateState;
 window.saveState = saveState;
 window.showToast = showToast;
+
+
+/* =========================================================
+   LEGAL SUPPLIER (shared by CHIPAKK and THE MARSHANS) + GST READINESS
+   ========================================================= */
+async function loadLegalSupplierPanel() {
+    const box = document.getElementById('supplier-readiness');
+    if (!box) return;
+    try {
+        const [supRes, taxRes] = await Promise.all([apiClient.get('/admin/legal-supplier'), apiClient.get('/admin/tax-profile')]);
+        const sup = (supRes && (supRes.data || supRes)).supplier || null;
+        const readiness = ((taxRes && (taxRes.data || taxRes)).readiness) || {};
+        const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ''; };
+        set('set-supplier-name', sup && sup.legal_name);
+        set('set-supplier-gstin', sup && sup.gstin);
+        set('set-supplier-address', sup && sup.address);
+        set('set-supplier-state', sup && sup.state ? `${sup.state} (${sup.state_code})` : '');
+        set('set-supplier-pin', sup && sup.pincode);
+        const miss = (list) => (list && list.length ? list.join(', ') : 'nothing');
+        const okCheckout = readiness.checkout_ready, okInvoice = readiness.invoice_ready;
+        box.style.borderColor = okCheckout ? (okInvoice ? '#15803d' : '#b45309') : '#b91c1c';
+        box.style.background = okCheckout ? (okInvoice ? '#f0fdf4' : '#fffbeb') : '#fef2f2';
+        box.textContent = `Checkout: ${okCheckout ? 'READY' : 'BLOCKED (missing: ' + miss(readiness.missing_for_checkout) + ')'}  |  Invoices: ${okInvoice ? 'READY' : 'NOT READY (missing: ' + miss(readiness.missing_for_invoice) + ')'}`;
+    } catch (err) {
+        box.textContent = 'Could not load the tax configuration: ' + err.message;
+    }
+}
+
+document.getElementById('set-supplier-gstin')?.addEventListener('input', (e) => {
+    const v = e.target.value.toUpperCase().replace(/[^0-9A-Z]/g, '');
+    e.target.value = v;
+    const hint = document.getElementById('set-supplier-gstin-hint');
+    if (hint && v.length >= 2) hint.textContent = `State code ${v.slice(0, 2)} is read from the GSTIN; the full number is verified when you save.`;
+});
+
+document.getElementById('save-supplier-btn')?.addEventListener('click', async () => {
+    const btn = document.getElementById('save-supplier-btn');
+    const original = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'SAVING...'; }
+    try {
+        await apiClient.put('/admin/legal-supplier', {
+            legal_name: document.getElementById('set-supplier-name').value.trim(),
+            gstin: document.getElementById('set-supplier-gstin').value.trim(),
+            address: document.getElementById('set-supplier-address').value.trim(),
+            pincode: document.getElementById('set-supplier-pin').value.trim()
+        });
+        showToast('Legal supplier saved. It now applies to both CHIPAKK and THE MARSHANS.');
+        await loadLegalSupplierPanel();
+    } catch (err) {
+        showToast(`Could not save the legal supplier: ${err.message}`, 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = original || 'SAVE LEGAL SUPPLIER'; }
+    }
+});

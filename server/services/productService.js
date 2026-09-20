@@ -1,5 +1,6 @@
 const { pool } = require('../config/database');
 const { sanitizeProductImageUrl, safelyDeleteUploadedFile } = require('../utils/imageUtils');
+const taxProfileService = require('./taxProfileService');
 
 /**
  * Cache available columns in products table for backward-compatible queries
@@ -23,8 +24,15 @@ const checkProductColumns = async () => {
       lumo_light_image: names.has('lumo_light_image'),
       lumo_dark_image: names.has('lumo_dark_image'),
       lumo_light_360_url: names.has('lumo_light_360_url'),
-      lumo_dark_360_url: names.has('lumo_dark_360_url')
+      lumo_dark_360_url: names.has('lumo_dark_360_url'),
+      hsn_code: names.has('hsn_code') && names.has('gst_rate'),
+      category_hsn_code: false
     };
+    try {
+      const [catCols] = await pool.execute("SHOW COLUMNS FROM categories");
+      const cn = new Set((catCols || []).map(c => c.Field));
+      checkedColumns.category_hsn_code = cn.has('hsn_code') && cn.has('gst_rate');
+    } catch (_) { /* categories not migrated */ }
   } catch (err) {
     checkedColumns = {
       store_id: false,
@@ -39,7 +47,9 @@ const checkProductColumns = async () => {
       lumo_light_image: false,
       lumo_dark_image: false,
       lumo_light_360_url: false,
-      lumo_dark_360_url: false
+      lumo_dark_360_url: false,
+      hsn_code: false,
+      category_hsn_code: false
     };
   }
   return checkedColumns;
@@ -161,6 +171,10 @@ const getProducts = async ({
     cols.lumo_dark_image ? 'p.lumo_dark_image' : 'NULL AS lumo_dark_image',
     cols.lumo_light_360_url ? 'p.lumo_light_360_url' : 'NULL AS lumo_light_360_url',
     cols.lumo_dark_360_url ? 'p.lumo_dark_360_url' : 'NULL AS lumo_dark_360_url',
+    cols.hsn_code ? 'p.hsn_code' : 'NULL AS hsn_code',
+    cols.hsn_code ? 'p.gst_rate' : 'NULL AS gst_rate',
+    cols.category_hsn_code ? 'c.hsn_code AS category_hsn_code' : 'NULL AS category_hsn_code',
+    cols.category_hsn_code ? 'c.gst_rate AS category_gst_rate' : 'NULL AS category_gst_rate',
     'p.tags',
     'p.active',
     'p.featured',
@@ -230,7 +244,8 @@ const getProducts = async ({
       lumo_light_image: r.lumo_light_image || null,
       lumo_dark_image: r.lumo_dark_image || null,
       lumo_light_360_url: r.lumo_light_360_url || null,
-      lumo_dark_360_url: r.lumo_dark_360_url || null
+      lumo_dark_360_url: r.lumo_dark_360_url || null,
+      ...taxProfileService.shapeTaxConfig(r)
     };
   });
 
@@ -276,6 +291,10 @@ const getProductById = async (productIdOrAdminId, storeId = null) => {
     cols.lumo_dark_image ? 'p.lumo_dark_image' : 'NULL AS lumo_dark_image',
     cols.lumo_light_360_url ? 'p.lumo_light_360_url' : 'NULL AS lumo_light_360_url',
     cols.lumo_dark_360_url ? 'p.lumo_dark_360_url' : 'NULL AS lumo_dark_360_url',
+    cols.hsn_code ? 'p.hsn_code' : 'NULL AS hsn_code',
+    cols.hsn_code ? 'p.gst_rate' : 'NULL AS gst_rate',
+    cols.category_hsn_code ? 'c.hsn_code AS category_hsn_code' : 'NULL AS category_hsn_code',
+    cols.category_hsn_code ? 'c.gst_rate AS category_gst_rate' : 'NULL AS category_gst_rate',
     'p.tags',
     'p.active',
     'p.featured',
@@ -327,6 +346,7 @@ const getProductById = async (productIdOrAdminId, storeId = null) => {
   product.lumo_dark_image = product.lumo_dark_image || null;
   product.lumo_light_360_url = product.lumo_light_360_url || null;
   product.lumo_dark_360_url = product.lumo_dark_360_url || null;
+  Object.assign(product, taxProfileService.shapeTaxConfig(product));
   product.tags = typeof product.tags === 'string' ? JSON.parse(product.tags) : (product.tags || []);
   product.dimensions_mm = typeof product.dimensions_mm === 'string' ? JSON.parse(product.dimensions_mm) : (product.dimensions_mm || null);
 
@@ -476,11 +496,14 @@ const createProduct = async (productData) => {
     lumo_dark_image = null,
     lumo_light_360_url = null,
     lumo_dark_360_url = null,
+    hsn_code,
+    gst_rate,
     images = [],
     materials = [],
     finishing_options = [],
     stock
   } = productData;
+  const taxCfg = taxProfileService.parseTaxConfigInput(productData); // validated HSN / GST rate (400 on bad input)
 
   if (!name || typeof name !== 'string' || !name.trim()) {
     throw new Error('Product name is required');
@@ -568,6 +591,10 @@ const createProduct = async (productData) => {
     if (cols.lumo_dark_360_url) {
       insertFields.push('lumo_dark_360_url');
       insertValues.push(lumo_dark_360_url ? String(lumo_dark_360_url).trim() : null);
+    }
+    if (cols.hsn_code) {
+      insertFields.push('hsn_code', 'gst_rate');
+      insertValues.push(taxCfg.hsn_code.value, taxCfg.gst_rate.value);
     }
 
     const placeholders = insertFields.map(() => '?').join(', ');
@@ -696,11 +723,14 @@ const updateProduct = async (id, updateData, storeId = null) => {
     lumo_dark_image,
     lumo_light_360_url,
     lumo_dark_360_url,
+    hsn_code,
+    gst_rate,
     images,
     materials,
     finishing_options,
     stock
   } = updateData;
+  const taxCfg = taxProfileService.parseTaxConfigInput(updateData);
 
   const connection = await pool.getConnection();
 
@@ -786,6 +816,8 @@ const updateProduct = async (id, updateData, storeId = null) => {
       updates.push('lumo_dark_360_url = ?');
       params.push(lumo_dark_360_url ? String(lumo_dark_360_url).trim() : null);
     }
+    if (cols.hsn_code && taxCfg.hsn_code.provided) { updates.push('hsn_code = ?'); params.push(taxCfg.hsn_code.value); }
+    if (cols.hsn_code && taxCfg.gst_rate.provided) { updates.push('gst_rate = ?'); params.push(taxCfg.gst_rate.value); }
 
     if (updates.length > 0) {
       const updateQuery = `UPDATE products SET ${updates.join(', ')} WHERE id = ?`;

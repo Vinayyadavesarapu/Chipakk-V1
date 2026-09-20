@@ -34,7 +34,7 @@ RewriteRule ^js/(admin|api|firebase-config|migration)\.js$ web/js/$1.js [L]
 RewriteRule ^css/style\.css$ customer-workspace/css/style.css [L]
 
 # Customer scripts
-RewriteRule ^js/(app|auth|home|shop|categories|custom-stickers|product|checkout|account|reset-password)\.js$ customer-workspace/js/$1.js [L]
+RewriteRule ^js/(app|auth|media|catalog|tax|home|shop|categories|custom-stickers|product|checkout|account|reset-password)\.js$ customer-workspace/js/$1.js [L]
 
 # ---------------------------------------------------------
 # 4. CUSTOMER MEDIA ASSETS
@@ -117,13 +117,16 @@ RewriteRule ^index\.html$ customer-workspace/index.html [L]
         Header set Expires "0"
     </FilesMatch>
 
-    # 2. Static CSS, JS: Cache for 7 days (version query string ?v=1.1.0 forces immediate refresh)
+    # 2. Static CSS, JS: ALWAYS revalidate (ETag/Last-Modified => cheap 304).
+    #    The ?v= query string is not bumped automatically on every deploy, so a long max-age would
+    #    leave returning customers on OLD code. `no-cache` = the browser may store the file but must
+    #    ask the server first, so a deployment is picked up on the very next page view.
     <FilesMatch "\.(js|css)$">
-        Header set Cache-Control "public, max-age=604800, stale-while-revalidate=86400"
+        Header set Cache-Control "public, no-cache"
     </FilesMatch>
 
-    # 3. Static Media Assets (Images, WebP, SVGs, Fonts)
-    <FilesMatch "\.(jpg|jpeg|png|gif|webp|svg|ico|woff|woff2|ttf|eot)$">
+    # 3. Static Media Assets (Images, WebP, SVGs, Fonts, the loading video)
+    <FilesMatch "\.(jpg|jpeg|png|gif|webp|svg|ico|woff|woff2|ttf|eot|mp4)$">
         Header set Cache-Control "public, max-age=2592000"
     </FilesMatch>
 

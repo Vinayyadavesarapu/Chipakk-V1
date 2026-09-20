@@ -104,24 +104,22 @@
 
   const API_BASE = resolveApiBaseUrl();
 
+  /* ---------------------------------------------------------
+     SHARED MEDIA + CATALOG MODULES (js/media.js, js/catalog.js)
+     One image resolver, one <img> builder, one product model and
+     one product-card renderer for the whole storefront.
+     --------------------------------------------------------- */
+  if (!window.CHIPAKK_MEDIA || !window.CHIPAKK_CATALOG) {
+    console.error("[CHIPAKK] js/media.js and js/catalog.js must load before js/app.js");
+  }
+  const media = window.CHIPAKK_MEDIA.createMedia({ apiBase: API_BASE });
+  window.CHIPAKK_MEDIA.installFallback(document, (failedSrc) => {
+    console.warn("[CHIPAKK Media] Image unavailable, showing placeholder:", failedSrc);
+  });
+
+  // Back-compat alias: every image reference is resolved by media.resolve()
   function resolveCustomerImageUrl(url) {
-    if (!url || typeof url !== 'string') return '';
-    const trimmed = url.trim();
-    if (!trimmed) return '';
-
-    // Handle Google Drive links to direct view URLs
-    if (trimmed.includes('drive.google.com')) {
-      const fileIdMatch = trimmed.match(/\/file\/d\/([a-zA-Z0-9_-]+)/) || trimmed.match(/[?&]id=([a-zA-Z0-9_-]+)/);
-      if (fileIdMatch && fileIdMatch[1]) {
-        return `https://drive.google.com/uc?export=view&id=${fileIdMatch[1]}`;
-      }
-    }
-
-    if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('data:') || trimmed.startsWith('blob:')) {
-      return trimmed;
-    }
-    const apiOrigin = API_BASE.replace(/\/api\/?$/, '');
-    return trimmed.startsWith('/') ? `${apiOrigin}${trimmed}` : `${apiOrigin}/${trimmed}`;
+    return media.resolve(url);
   }
 
   function getActiveStoreId() {
@@ -292,6 +290,10 @@
 
       const json = await res.json().catch(() => ({}));
 
+      if (res.status >= 500) {
+        // Never surface server wording for unexpected failures
+        return { valid: false, serverError: true, message: "We couldn't check that code right now. Please try again in a moment." };
+      }
       if (!res.ok || !json.success) {
         return {
           valid: false,
@@ -424,172 +426,60 @@
      DATA NORMALIZATION HELPERS
      --------------------------------------------------------- */
 
+  const catalog = window.CHIPAKK_CATALOG.createCatalog({
+    media,
+    formatPrice: (n) => "₹" + Math.round(Number(n || 0)).toLocaleString("en-IN"),
+    storeId: () => getActiveStoreId()
+  });
+
   function normalizeProduct(p) {
-    if (!p) return null;
-
-    const id = String(p.id);
-    const adminProductId = p.admin_product_id || p.sku || id;
-    const name = p.name || p.title || "Sticker";
-    const slug = p.slug || adminProductId.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-
-    // Canonical price handling: For CHIPAKK (Store 1), prices are stored in WHOLE RUPEES (₹1 = DB 1, ₹15 = DB 15).
-    // Storefront operates in whole rupees for display and cart totals.
-    let price;
-    if (p.price_rupees !== undefined && p.price_rupees !== null) {
-      price = Number(p.price_rupees);
-    } else {
-      const rawPrice = typeof p.price === "number" ? p.price : (parseFloat(p.price) || 0);
-      price = Math.round(rawPrice);
-    }
-
-    let compareAtPrice = null;
-    if (p.compare_at_price_rupees !== undefined && p.compare_at_price_rupees !== null) {
-      compareAtPrice = Number(p.compare_at_price_rupees);
-    } else if (p.compare_at_price !== undefined && p.compare_at_price !== null && p.compare_at_price !== '') {
-      const rawComp = typeof p.compare_at_price === "number" ? p.compare_at_price : (parseFloat(p.compare_at_price) || 0);
-      compareAtPrice = Math.round(rawComp);
-    } else if (p.compareAtPrice !== undefined && p.compareAtPrice !== null) {
-      compareAtPrice = typeof p.compareAtPrice === "number" ? p.compareAtPrice : (parseFloat(p.compareAtPrice) || null);
-    }
-
-    const pricePaise = typeof p.price_paise === "number" ? p.price_paise : (typeof p.price === "number" ? p.price : price * 100);
-    const compPricePaise = typeof p.compare_at_price_paise === "number" ? p.compare_at_price_paise : (compareAtPrice !== null ? compareAtPrice * 100 : null);
-
-    const rating = typeof p.average_rating === "number" ? p.average_rating : (typeof p.rating === "number" ? p.rating : (parseFloat(p.rating) || 4.7));
-    const ratingCount = p.review_count !== undefined ? parseInt(p.review_count, 10) : (p.ratingCount !== undefined ? parseInt(p.ratingCount, 10) : 0);
-    const ratingTier = p.rating_tier || getRatingTier(rating);
-    const active = p.active === 1 || p.active === true || p.active === undefined;
-    const featured = p.featured === 1 || p.featured === true;
-
-    // Image resolution: primary image, images array, or fallback emoji
-    let images = [];
-    if (Array.isArray(p.images) && p.images.length > 0) {
-      images = p.images.map(img => {
-        const rawUrl = typeof img === "string" ? img : (img.image_url || img.external_url || img.url || "");
-        return resolveCustomerImageUrl(rawUrl);
-      }).filter(Boolean);
-    } else if (p.primary_image_url) {
-      images = [resolveCustomerImageUrl(p.primary_image_url)];
-    } else if (p.image && (p.image.startsWith("http") || p.image.includes("/"))) {
-      images = [resolveCustomerImageUrl(p.image)];
-    }
-
-    const primaryImg = (images.length > 0 ? images[0] : null) || resolveCustomerImageUrl(p.primary_image_url) || p.image || "⚡";
-
-    // Category mapping
-    const categoryId = p.category_id !== undefined ? String(p.category_id) : (p.categoryId || "");
-    const categoryName = p.category_name || p.categoryName || "";
-    const categorySlug = p.category_slug || (categoryName ? categoryName.toLowerCase().replace(/[^a-z0-9]+/g, "-") : "");
-
-    // Options mapping (materials & sizes)
-    let materials = ["Glossy", "Matte", "Holographic", "Transparent"];
-    let sizes = ['2"', '3"', '4"'];
-    if (Array.isArray(p.options) && p.options.length > 0) {
-      const matOpt = p.options.find(o => /material|finish/i.test(o.name));
-      if (matOpt && Array.isArray(matOpt.values) && matOpt.values.length > 0) {
-        materials = matOpt.values.map(v => typeof v === "string" ? v : (v.value || v.name));
-      }
-      const szOpt = p.options.find(o => /size|dimension/i.test(o.name));
-      if (szOpt && Array.isArray(szOpt.values) && szOpt.values.length > 0) {
-        sizes = szOpt.values.map(v => typeof v === "string" ? v : (v.value || v.name));
-      }
-    } else if (Array.isArray(p.materials) && p.materials.length > 0) {
-      materials = p.materials;
-    }
-
-    const inStock = p.stock !== undefined ? p.stock > 0 : (p.inStock !== undefined ? p.inStock : true);
-
-    return {
-      id,
-      admin_product_id: adminProductId,
-      name,
-      slug,
-      price,
-      price_rupees: price,
-      price_paise: pricePaise,
-      compareAtPrice,
-      compare_at_price: compareAtPrice,
-      compare_at_price_rupees: compareAtPrice,
-      compare_at_price_paise: compPricePaise,
-      rating,
-      ratingCount,
-      rating_tier: ratingTier,
-      active,
-      featured,
-      image: primaryImg,
-      images: images.length > 0 ? images : (primaryImg.startsWith("http") || primaryImg.includes("/") ? [primaryImg] : []),
-      categoryId,
-      categoryName,
-      categorySlug,
-      tags: Array.isArray(p.tags) ? p.tags : (typeof p.tags === "string" ? (function() { try { return JSON.parse(p.tags); } catch(e) { return []; } })() : []),
-      description: p.description || "",
-      materials,
-      sizes,
-      inStock,
-      stock: p.stock !== undefined ? p.stock : 100,
-      is_best_seller: p.is_best_seller === 1 || p.is_best_seller === true,
-      isBestSeller: p.is_best_seller === 1 || p.is_best_seller === true
-    };
+    return catalog.normalizeProduct(p);
   }
 
   function normalizeCategory(c) {
-    if (!c) return null;
-    const id = String(c.id);
-    const name = c.name || "Category";
-    const slug = c.slug || name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-    const active = c.active === 1 || c.active === true || c.active === undefined;
-    const rawImg = c.image_url || (typeof c.image === "string" && (c.image.startsWith("http") || c.image.includes("/")) ? c.image : null);
-    const imageUrl = rawImg ? resolveCustomerImageUrl(rawImg) : null;
-    const productCount = parseInt(c.product_count !== undefined ? c.product_count : (c.productCount || 0), 10) || 0;
-    const icon = c.icon || c.image || "✨";
-
-    return {
-      id,
-      name,
-      slug,
-      active,
-      description: c.description || "",
-      image_url: imageUrl,
-      image: imageUrl || icon,
-      icon,
-      productCount
-    };
+    return catalog.normalizeCategory(c);
   }
 
   function normalizeSettings(s) {
     if (!s) return CHIPAKK_DATA.settings;
+    const actual = (s.settings && typeof s.settings === "object") ? s.settings : s;
 
-    const storeName = s.store_name || s.storeName || "CHIPAKK";
-    const storeStatus = (s.store_status || "OPEN").toUpperCase();
-    const maintenanceActive = s.maintenance_active === true || s.maintenance_active === "true" || storeStatus === "MAINTENANCE";
+    const storeName = actual.store_name || actual.storeName || "CHIPAKK";
+    const storeStatus = (actual.store_status || "OPEN").toUpperCase();
+    const maintenanceActive = actual.maintenance_active === true || actual.maintenance_active === "true" || storeStatus === "MAINTENANCE";
     const storeClosed = storeStatus === "TEMPORARILY CLOSED";
     const storeOpen = !maintenanceActive && !storeClosed;
-    const maintenanceMessage = s.maintenance_message || s.maintenance_msg || (storeClosed ? "Storefront is temporarily closed." : "We are currently down for scheduled maintenance.");
+    const maintenanceMessage = actual.maintenance_message || actual.maintenance_msg || (storeClosed ? "Storefront is temporarily closed." : "We are currently down for scheduled maintenance.");
 
     let freeShippingThreshold = 300;
-    if (s.free_shipping_threshold_rupees !== undefined && s.free_shipping_threshold_rupees !== null) {
-      freeShippingThreshold = Number(s.free_shipping_threshold_rupees);
-    } else if (s.free_shipping_threshold !== undefined && s.free_shipping_threshold !== null) {
-      const raw = Number(s.free_shipping_threshold);
+    if (actual.free_shipping_threshold_rupees !== undefined && actual.free_shipping_threshold_rupees !== null) {
+      freeShippingThreshold = Number(actual.free_shipping_threshold_rupees);
+    } else if (actual.free_shipping_threshold !== undefined && actual.free_shipping_threshold !== null) {
+      const raw = Number(actual.free_shipping_threshold);
       // For Store 1, values are whole rupees (e.g. 300). Only legacy paise > 10000 might need scaling.
       freeShippingThreshold = raw >= 10000 ? Math.round(raw / 100) : raw;
-    } else if (s.freeShippingThreshold !== undefined && s.freeShippingThreshold !== null) {
-      freeShippingThreshold = Number(s.freeShippingThreshold);
+    } else if (actual.freeShippingThreshold !== undefined && actual.freeShippingThreshold !== null) {
+      freeShippingThreshold = Number(actual.freeShippingThreshold);
     }
 
     let shippingFee = 50;
-    if (s.shipping_fee_rupees !== undefined && s.shipping_fee_rupees !== null) {
-      shippingFee = Number(s.shipping_fee_rupees);
-    } else if (s.shipping_fee !== undefined && s.shipping_fee !== null) {
-      const raw = Number(s.shipping_fee);
+    if (actual.shipping_fee_rupees !== undefined && actual.shipping_fee_rupees !== null) {
+      shippingFee = Number(actual.shipping_fee_rupees);
+    } else if (actual.shipping_fee !== undefined && actual.shipping_fee !== null) {
+      const raw = Number(actual.shipping_fee);
       shippingFee = raw >= 1000 ? Math.round(raw / 100) : raw;
     }
 
-    const gstRate = s.gst_pct !== undefined ? Number(s.gst_pct) : (s.gst_rate !== undefined ? Number(s.gst_rate) : 18);
-    const gstin = s.gstin || "";
+    const gstRate = actual.gst_pct !== undefined ? Number(actual.gst_pct) : (actual.gst_rate !== undefined ? Number(actual.gst_rate) : 18);
+    const gstin = actual.gstin || "";
+    // GST facts: prices are GST-inclusive (tax_pricing_mode) and gst_enabled/checkout_tax_ready come from the API
+    const gstEnabled = actual.gst_enabled !== false;
+    const checkoutTaxReady = actual.checkout_tax_ready !== false;
+    const tradeName = actual.trade_name || storeName;
+    const legalSupplierName = actual.legal_supplier_name || "";
 
-    const announcementActive = s.announcement_active !== false && Boolean(s.announcement_text);
-    const announcementText = s.announcement_text || "";
+    const announcementActive = actual.announcement_active !== false && Boolean(actual.announcement_text);
+    const announcementText = actual.announcement_text || "";
 
     return {
       storeName,
@@ -598,13 +488,17 @@
       maintenanceActive,
       storeClosed,
       maintenanceMessage,
-      maintenanceImage: s.maintenance_image || "",
+      maintenanceImage: actual.maintenance_image || "",
       freeShippingThreshold,
       shippingFee,
-      currency: s.currency || "INR",
+      currency: actual.currency || "INR",
       currencySymbol: "₹",
       gstRate,
       gstin,
+      gstEnabled,
+      checkoutTaxReady,
+      tradeName,
+      legalSupplierName,
       announcementActive,
       announcementText
     };
@@ -724,6 +618,9 @@
 
     // 4. Update Cart display with new threshold
     renderGlobalCart();
+
+    // 5. Let page scripts (checkout totals) recompute with the real store settings
+    try { window.dispatchEvent(new CustomEvent("chipakk-settings-updated", { detail: { settings } })); } catch (_) {}
   }
 
   function checkMaintenanceGate(settings) {
@@ -786,38 +683,83 @@
   }
 
   function syncShippingThresholdUi(settings) {
+    // Free shipping is INCLUSIVE: a gross subtotal >= threshold ships free ("₹300+"), never "> ₹300".
     const thresh = (settings && settings.freeShippingThreshold !== undefined && settings.freeShippingThreshold !== null)
       ? Number(settings.freeShippingThreshold)
       : 300;
     const formatted = formatPrice(thresh);
+    const fee = (settings && settings.shippingFee !== undefined && settings.shippingFee !== null) ? Number(settings.shippingFee) : 50;
 
     const trustEl = $("#trustFreeShippingSub");
     if (trustEl) {
-      trustEl.textContent = thresh > 0 ? `On orders above ${formatted}` : `On all orders`;
+      trustEl.textContent = thresh > 0 ? `On orders of ${formatted}+` : `On all orders`;
     }
 
     const prodBadge = $("#prodFreeShippingBadge");
     if (prodBadge) {
-      prodBadge.textContent = thresh > 0 ? `Free Shipping on Orders > ${formatted}` : `Free Shipping on All Orders`;
+      prodBadge.textContent = thresh > 0 ? `Free Shipping on Orders of ${formatted}+` : `Free Shipping on All Orders`;
     }
 
     const checkoutBadge = $("#checkoutShippingRuleBadge");
     if (checkoutBadge) {
-      checkoutBadge.textContent = thresh > 0 ? `FREE on orders > ${formatted}` : `FREE Shipping`;
+      checkoutBadge.textContent = thresh > 0 ? `${formatPrice(fee)} · FREE ${formatted}+` : `FREE Shipping`;
+    }
+    const checkoutNote = $("#checkoutShippingRuleNote");
+    if (checkoutNote) {
+      checkoutNote.textContent = thresh > 0
+        ? `Rigid stay-flat cardboard mailer • Free on orders ${formatted}+`
+        : `Rigid stay-flat cardboard mailer • Free shipping on all orders`;
     }
 
     $$(".cart-note").forEach(el => {
-      el.textContent = thresh > 0 ? `Free shipping automatically applied on orders above ${formatted}.` : `Free shipping applied on all orders.`;
+      el.textContent = thresh > 0 ? `Free shipping automatically applied on orders of ${formatted} or more.` : `Free shipping applied on all orders.`;
     });
-
-    if (typeof renderCartDrawer === "function") {
-      renderCartDrawer();
-    }
   }
 
   /* ---------------------------------------------------------
      ASYNC REPOSITORY FUNCTIONS (API-BACKED)
      --------------------------------------------------------- */
+
+  // One in-flight catalog load shared by every caller on the page (home, cart checks, ...)
+  let catalogInflight = null;
+
+  function forActiveStore(list) {
+    const storeId = getActiveStoreId();
+    return list.filter((p) => p && (p.store_id === undefined || p.store_id === null || Number(p.store_id) === Number(storeId)));
+  }
+
+  async function loadFullCatalog(params, fetchOpts) {
+    const PAGE_CHUNK = 100;
+    const MAX_PAGES = 20; // safe termination ceiling
+    const seenIds = new Set();
+    const all = [];
+    const pageUrl = (offset) => {
+      const p = new URLSearchParams(params.toString());
+      p.set("limit", PAGE_CHUNK);
+      p.set("offset", offset);
+      return `/products?${p.toString()}`;
+    };
+    const rowsOf = (data) => (Array.isArray(data) ? data : (data && Array.isArray(data.products) ? data.products : []));
+    const take = (data) => {
+      for (const item of rowsOf(data)) {
+        const norm = normalizeProduct(item);
+        if (norm && !seenIds.has(norm.id)) { seenIds.add(norm.id); all.push(norm); }
+      }
+    };
+
+    // Page 1 reveals `total`; every remaining page is then requested IN PARALLEL, so the loader waits for two
+    // round-trips whatever the catalogue size (sequential paging cost one round-trip per 100 products).
+    const first = await fetchApi(pageUrl(0), fetchOpts);
+    const firstRows = rowsOf(first);
+    const total = (first && typeof first.total === "number") ? first.total : firstRows.length;
+    take(first);
+    if (firstRows.length >= PAGE_CHUNK && total > firstRows.length) {
+      const pages = Math.min(Math.ceil(total / PAGE_CHUNK), MAX_PAGES);
+      const rest = await Promise.all(Array.from({ length: pages - 1 }, (_, i) => fetchApi(pageUrl((i + 1) * PAGE_CHUNK), fetchOpts)));
+      rest.forEach(take); // in offset order, so the catalogue order is identical to sequential paging
+    }
+    return forActiveStore(all);
+  }
 
   async function getProducts(options = {}) {
     try {
@@ -831,7 +773,9 @@
       if (options.is_best_seller !== undefined && options.is_best_seller !== null) params.set('is_best_seller', options.is_best_seller);
       if (options.drop_status) params.set('drop_status', options.drop_status);
 
-      // If single-page pagination is explicitly requested
+      const fetchOpts = { ...(options.fetchOptions || {}), ...(options.refresh ? { refresh: true } : {}) };
+
+      // Single-page pagination explicitly requested
       if (options.offset !== undefined || options.page !== undefined) {
         const limit = Math.min(Math.max(parseInt(options.limit, 10) || 50, 1), 100);
         const offset = options.offset !== undefined
@@ -841,72 +785,38 @@
         params.set('limit', limit);
         params.set('offset', offset);
 
-        const data = await fetchApi(`/products?${params.toString()}`, options.fetchOptions || {});
+        const data = await fetchApi(`/products?${params.toString()}`, fetchOpts);
         const rawList = Array.isArray(data) ? data : (data && Array.isArray(data.products) ? data.products : []);
         const total = (data && typeof data.total === 'number') ? data.total : rawList.length;
-        const normalized = rawList.map(normalizeProduct).filter(Boolean);
-        const hasMore = offset + rawList.length < total;
-
         return {
-          products: normalized,
+          products: forActiveStore(rawList.map(normalizeProduct).filter(Boolean)),
           total,
           limit,
           offset,
-          hasMore
+          hasMore: offset + rawList.length < total
         };
       }
 
-      // Check if this is a general un-filtered catalog query and we already have products cached in session
       const isPlainCatalogQuery = (options.category_id === undefined || options.category_id === null || options.category_id === '') &&
         !options.search && options.active === undefined && options.featured === undefined &&
-        options.is_best_seller === undefined && !options.drop_status &&
-        options.offset === undefined && options.page === undefined;
+        options.is_best_seller === undefined && !options.drop_status;
 
-      if (isPlainCatalogQuery && !options.refresh && Array.isArray(CHIPAKK_DATA.products) && CHIPAKK_DATA.products.length > 0) {
-        return CHIPAKK_DATA.products;
+      if (isPlainCatalogQuery && !options.refresh) {
+        if (Array.isArray(CHIPAKK_DATA.products) && CHIPAKK_DATA.products.length > 0) return CHIPAKK_DATA.products;
+        if (catalogInflight) return await catalogInflight;
       }
 
-      // Default: fetch the complete catalog for this query via safe server pagination (limit=100 per page)
-      const PAGE_CHUNK = 100;
-      let currentOffset = 0;
-      let allFetched = [];
-      let total = 0;
-      const seenIds = new Set();
-      const MAX_PAGES = 20; // Safe termination ceiling: prevents infinite loops under all circumstances
-      let pageCount = 0;
-
-      while (pageCount < MAX_PAGES) {
-        pageCount++;
-        params.set('limit', PAGE_CHUNK);
-        params.set('offset', currentOffset);
-
-        const data = await fetchApi(`/products?${params.toString()}`, options.fetchOptions || {});
-        const rawList = Array.isArray(data) ? data : (data && Array.isArray(data.products) ? data.products : []);
-        total = (data && typeof data.total === 'number') ? data.total : (total || rawList.length);
-
-        if (!rawList || rawList.length === 0) {
-          break; // Empty page, completed
-        }
-
-        for (const item of rawList) {
-          const norm = normalizeProduct(item);
-          if (norm && !seenIds.has(norm.id)) {
-            seenIds.add(norm.id);
-            allFetched.push(norm);
-          }
-        }
-
-        currentOffset += rawList.length;
-
-        // Termination condition: reached total or returned fewer items than requested
-        if (currentOffset >= total || rawList.length < PAGE_CHUNK) {
-          break;
-        }
+      const run = loadFullCatalog(params, fetchOpts).then((list) => {
+        if (isPlainCatalogQuery) CHIPAKK_DATA.products = list;
+        return list;
+      });
+      if (isPlainCatalogQuery) {
+        catalogInflight = run.finally(() => { catalogInflight = null; });
+        return await catalogInflight;
       }
-
-      CHIPAKK_DATA.products = allFetched;
-      return allFetched;
+      return await run;
     } catch (err) {
+      if (options.strict) throw err;
       console.warn("[CHIPAKK] Falling back to local products repository:", err.message);
       return CHIPAKK_DATA.products.map(normalizeProduct).filter(Boolean);
     }
@@ -1016,14 +926,18 @@
       try {
         const raw = localStorage.getItem(CART_STORAGE_KEY);
         const parsed = raw ? JSON.parse(raw) : [];
-        // NOTE: do not "self-heal" cart item prices by dividing values >= 1000 by 100.
-        // CHIPAKK legitimately prices products at and above ₹1000 (e.g. ₹1500, ₹9999),
-        // and that heuristic cannot distinguish a real high-value rupee price from stale
-        // pre-migration paise data, silently corrupting the former. Cart items only ever
-        // carry `product_id`/`quantity` to the backend at checkout (see checkout.js), which
-        // recomputes the authoritative price server-side, so displaying a stored price as-is
-        // here is safe; any genuinely stale cached price is harmless once re-added to cart.
-        return Array.isArray(parsed) ? parsed : [];
+        if (!Array.isArray(parsed)) return [];
+        // NOTE: do not "self-heal" prices by dividing values >= 1000 by 100 (CHIPAKK legitimately
+        // sells at >= ₹1000). The server recomputes every price from product_id at checkout.
+        // Images ARE re-resolved on load: older carts persisted URLs that were resolved against the
+        // wrong origin (https://chipakk.shop/uploads/...) - the shared resolver rewrites those.
+        return parsed
+          .filter((item) => item && typeof item === "object" && item.variantKey)
+          .map((item) => {
+            const qty = parseInt(item.qty, 10);
+            const image = typeof item.image === "string" ? media.resolve(item.image) : "";
+            return { ...item, qty: qty > 0 ? qty : 1, image };
+          });
       } catch (e) {
         console.warn("[CHIPAKK] Failed to load cart from localStorage", e);
         return [];
@@ -1053,11 +967,8 @@
         ? `custom_${product.id || Date.now()}_${material}_${size}`.toLowerCase().replace(/[^a-z0-9]/g, "_")
         : (variantId ? `${product.id}_v${variantId}` : `${product.id}_${material}_${size}`).toLowerCase().replace(/[^a-z0-9]/g, "_");
 
-      // Robust image resolution: check images array first, then image URL or emoji
-      const rawImage = (product.images && product.images.length > 0 && product.images[0]) || product.image || "⚡";
-      const resolvedImage = (typeof rawImage === "string" && (rawImage.startsWith("http") || rawImage.includes("/")))
-        ? resolveCustomerImageUrl(rawImage)
-        : rawImage;
+      // One resolver for every image reference (gallery first, then the primary image)
+      const resolvedImage = media.resolveFirst(product.images) || media.resolve(product.imageUrl) || media.resolve(product.image) || "";
 
       const existingIndex = this.items.findIndex(i => i.variantKey === variantKey);
       if (existingIndex > -1) {
@@ -1072,6 +983,8 @@
           variantKey,
           name: product.name,
           price: product.price,
+          // GST rate of this product (product > category); null = the store default. The server re-resolves it.
+          gstRate: product.gstRate === undefined ? null : product.gstRate,
           image: resolvedImage,
           material,
           size,
@@ -1203,19 +1116,10 @@
     return "₹" + Math.round(Number(n || 0)).toLocaleString("en-IN");
   }
 
-  function starsMarkup(rating) {
-    const full = Math.round(rating || 5);
-    let out = "";
-    for (let i = 0; i < 5; i++) {
-      out += i < full
-        ? '<svg viewBox="0 0 24 24"><polygon points="12 2 15 9 22 9.5 16.5 14 18 22 12 18 6 22 7.5 14 2 9.5 9 9"/></svg>'
-        : '<svg class="star-empty" viewBox="0 0 24 24"><polygon points="12 2 15 9 22 9.5 16.5 14 18 22 12 18 6 22 7.5 14 2 9.5 9 9"/></svg>';
-    }
-    return out;
-  }
+  const { starsMarkup, getRatingTier } = window.CHIPAKK_CATALOG;
 
   function escapeHtml(str) {
-    return String(str || "").replace(/[&<>"']/g, (c) => ({
+    return String(str === undefined || str === null ? "" : str).replace(/[&<>"']/g, (c) => ({
       "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
     }[c]));
   }
@@ -1225,92 +1129,23 @@
   }
 
   /* =========================================================
-     AUTHENTIC RATING TIER & REUSABLE PRODUCT CARD CONTRACT
+     REUSABLE PRODUCT CARD (single renderer: js/catalog.js)
      ========================================================= */
-
-  function getRatingTier(rating) {
-    const r = Math.round((parseFloat(rating) || 0.0) * 10) / 10;
-    if (r >= 4.9) return "LEGENDARY";
-    if (r >= 4.7) return "RARE";
-    if (r >= 4.4) return "EPIC";
-    if (r >= 4.0) return "UNCOMMON";
-    if (r >= 3.0) return "COMMON";
-    return "BASIC";
-  }
 
   function renderProductCard(p, options = {}) {
     if (!p) return "";
     const isWishlisted = options.isWishlisted !== undefined ? options.isWishlisted : wishlist.has(p.id);
-    const mode = options.mode || "standard"; // 'standard' or 'wishlist'
+    return catalog.productCardHtml(p, { ...options, isWishlisted });
+  }
 
-    const ratingVal = typeof p.rating === "number" ? p.rating : (parseFloat(p.rating) || 4.7);
-    const ratingCount = p.ratingCount !== undefined ? p.ratingCount : (p.review_count !== undefined ? p.review_count : 0);
-    const ratingTier = p.rating_tier || getRatingTier(ratingVal);
-
-    const isImgUrl = (p.image && (p.image.startsWith("http") || p.image.includes("/"))) ||
-                     (p.images && p.images.length && (p.images[0].startsWith("http") || p.images[0].includes("/")));
-    const imgSrc = (p.image && (p.image.startsWith("http") || p.image.includes("/"))) ? p.image : (p.images && p.images[0]);
-
-    return `
-      <article class="product-card" data-product-id="${p.id}">
-        <!-- 1. LARGE SQUARE PRODUCT IMAGE (DOMINANT ELEMENT) -->
-        <div class="product-media">
-          ${mode !== "wishlist" ? `
-            <button class="product-wishlist ${isWishlisted ? 'is-active' : ''}" type="button" data-wishlist-id="${p.id}" aria-label="Wishlist ${escapeAttr(p.name)}" aria-pressed="${isWishlisted}">
-              <svg viewBox="0 0 24 24"><path d="M12 21s-7-4.6-10-9.2C0 8 1.8 4 6 4c2.2 0 3.8 1.2 6 4 2.2-2.8 3.8-4 6-4 4.2 0 6 4 4 7.8C19 16.4 12 21 12 21z"/></svg>
-            </button>
-          ` : ""}
-          <a href="product.html?id=${encodeURIComponent(p.id)}" class="product-media-link" aria-label="${escapeAttr(p.name)}">
-            ${isImgUrl
-              ? `<img src="${escapeAttr(imgSrc)}" alt="${escapeAttr(p.name)}" width="300" height="300" loading="lazy" decoding="async" onerror="if(!this.dataset.failed){this.dataset.failed='true';this.src='assets/images/logo.png';}" />`
-              : `<div class="product-media-art"><span class="product-media-emoji">${p.image || "⚡"}</span></div>`
-            }
-          </a>
-        </div>
-
-        <div class="product-body">
-          <!-- 2. RATING + RATING TIER (ABOVE PRODUCT NAME) -->
-          <div class="product-rating" aria-label="${ratingVal.toFixed(1)} out of 5 stars, tier ${ratingTier}">
-            <span class="stars">${starsMarkup(ratingVal)}</span>
-            <span class="rating-val">${ratingVal.toFixed(1)}</span>
-            ${ratingCount ? `<span class="rating-count">(${ratingCount})</span>` : ""}
-            <span class="rating-divider" aria-hidden="true">·</span>
-            <span class="rating-tier tier-${ratingTier.toLowerCase()}">${escapeHtml(ratingTier)}</span>
-          </div>
-
-          <!-- 3. PRODUCT NAME -->
-          <h3 class="product-name">
-            <a href="product.html?id=${encodeURIComponent(p.id)}">
-              ${escapeHtml(p.name)}
-            </a>
-          </h3>
-
-          <!-- 4. PRICE / COMPARE-AT PRICE -->
-          <div class="product-pricing">
-            <span class="product-price">${formatPrice(p.price)}</span>
-            ${(p.compareAtPrice && p.compareAtPrice > p.price) ? `<span class="product-price-orig">${formatPrice(p.compareAtPrice)}</span>` : ""}
-          </div>
-
-          <!-- 5. ADD TO CART / ACTIONS -->
-          ${mode === "wishlist" ? `
-            <div class="product-card-actions" style="display: flex; gap: 8px; margin-top: 4px;">
-              <button class="product-add move-to-cart-btn" type="button" data-move-cart="${p.id}" style="flex: 1; margin-top: 0;">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 4h2l2.4 12.2a2 2 0 0 0 2 1.6h7.6a2 2 0 0 0 2-1.6L21 8H6"/><circle cx="9.5" cy="21" r="1.4"/><circle cx="17.5" cy="21" r="1.4"/></svg>
-                <span>Move to Cart</span>
-              </button>
-              <button type="button" class="btn-icon remove-wish-btn" data-remove-wish="${p.id}" style="border: 3px solid var(--black); border-radius: var(--radius-sm); box-shadow: 2px 2px 0 var(--black); padding: 10px;" aria-label="Remove from wishlist">
-                ✕
-              </button>
-            </div>
-          ` : `
-            <button class="product-add" type="button" data-add-to-cart="${p.id}">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 4h2l2.4 12.2a2 2 0 0 0 2 1.6h7.6a2 2 0 0 0 2-1.6L21 8H6"/><circle cx="9.5" cy="21" r="1.4"/><circle cx="17.5" cy="21" r="1.4"/></svg>
-              <span>Add to Cart</span>
-            </button>
-          `}
-        </div>
-      </article>
-    `;
+  /** Whole grid: tolerant of non-arrays, de-duplicates ids, eager-loads the first row. */
+  function renderProductGrid(list, options = {}) {
+    return catalog.productGridHtml(list, {
+      mode: options.mode,
+      emptyHtml: options.emptyHtml,
+      priorityCount: options.priorityCount,
+      isWishlisted: options.isWishlisted || ((p) => wishlist.has(p.id))
+    });
   }
 
   let toastTimer = null;
@@ -1431,31 +1266,25 @@
     }
 
     list.innerHTML = cart.items.map(item => {
-      const isImgUrl = typeof item.image === "string" && (item.image.startsWith("http") || item.image.includes("/"));
-      const resolvedSrc = isImgUrl ? resolveCustomerImageUrl(item.image) : "";
       const lineTotal = item.price * item.qty;
+      const thumb = media.imgHtml({ src: item.image, alt: "", width: 64, height: 64 });
 
       return `
-        <div class="cart-item" data-variant-key="${item.variantKey}">
-          <div class="cart-item-media" aria-hidden="true">
-            ${isImgUrl
-              ? `<img src="${escapeAttr(resolvedSrc)}" alt="${escapeAttr(item.name)}" loading="lazy" />`
-              : `<span class="cart-item-emoji">${item.image || "⚡"}</span>`
-            }
-          </div>
+        <div class="cart-item" data-variant-key="${escapeAttr(item.variantKey)}">
+          <div class="cart-item-media">${thumb}</div>
           <div class="cart-item-info">
             <div class="cart-item-header">
               <h4 class="cart-item-name">${escapeHtml(item.name)}</h4>
-              <button class="cart-item-remove" type="button" data-remove-item="${item.variantKey}" aria-label="Remove ${escapeAttr(item.name)}" title="Remove item">
+              <button class="cart-item-remove" type="button" data-remove-item="${escapeAttr(item.variantKey)}" aria-label="Remove ${escapeAttr(item.name)}" title="Remove item">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
               </button>
             </div>
             <div class="cart-item-variant">${escapeHtml(item.material || "Glossy")} • ${escapeHtml(item.size || '3"')}</div>
             <div class="cart-item-bottom">
               <div class="cart-qty-stepper">
-                <button type="button" class="cart-qty-btn" data-qty-decrease="${item.variantKey}" aria-label="Decrease quantity">−</button>
+                <button type="button" class="cart-qty-btn" data-qty-decrease="${escapeAttr(item.variantKey)}" aria-label="Decrease quantity">−</button>
                 <span class="cart-qty-val">${item.qty}</span>
-                <button type="button" class="cart-qty-btn" data-qty-increase="${item.variantKey}" aria-label="Increase quantity">+</button>
+                <button type="button" class="cart-qty-btn" data-qty-increase="${escapeAttr(item.variantKey)}" aria-label="Increase quantity">+</button>
               </div>
               <div class="cart-item-prices">
                 ${item.qty > 1 ? `<span class="cart-item-unit-price">${formatPrice(item.price)} ea</span>` : ""}
@@ -1710,28 +1539,106 @@
      9. CIRCULAR LOADING OVERLAY LIFECYCLE
      ========================================================= */
 
-  function initLoadingOverlay() {
-    const overlay = $("#loadingOverlay");
-    if (!overlay) return;
-
+  /**
+   * State-driven loader shared by every storefront page.
+   *
+   *   const done = CHIPAKK.loader.hold("products");   // synchronously, at script start
+   *   try { await ...critical work... } finally { done(); }
+   *
+   * The overlay fades out as soon as (a) the DOM is ready AND (b) every hold has been
+   * released. There is no fixed delay. Holds must be released in a `finally`, so a failed
+   * API request can never keep the overlay up; a hard ceiling (MAX_WAIT_MS) is the last
+   * line of defence against a hung request/handler, not part of the normal lifecycle.
+   * Nothing here waits for the window "load" event, so large non-critical assets (images,
+   * the loader video itself) can never delay the content.
+   */
+  const loader = (() => {
+    const MAX_WAIT_MS = Number(window.CHIPAKK_LOADER_MAX_WAIT_MS) || 8000; // override only in tests
+    const holds = new Map();
+    let seq = 0;
+    let domReady = document.readyState !== "loading";
     let hidden = false;
-    function hideOverlay() {
+    let checkQueued = false;
+
+    const overlayEl = () => document.getElementById("loadingOverlay");
+
+    function startVideo() {
+      const vid = overlayEl()?.querySelector("video");
+      if (!vid) return;
+      // iOS/Android autoplay policy: the *property* must be muted + inline before play()
+      vid.muted = true;
+      vid.defaultMuted = true;
+      vid.playsInline = true;
+      vid.setAttribute("webkit-playsinline", "");
+      const played = vid.play();
+      if (played && typeof played.catch === "function") played.catch(() => { /* badge stays visible */ });
+    }
+
+    function hide(reason) {
       if (hidden) return;
       hidden = true;
+      const overlay = overlayEl();
+      if (!overlay) return;
       overlay.setAttribute("data-hidden", "true");
       overlay.setAttribute("aria-hidden", "true");
-      setTimeout(() => {
+      overlay.setAttribute("data-hide-reason", reason);
+      const vid = overlay.querySelector("video");
+      const finish = () => {
         overlay.style.display = "none";
-      }, 300);
+        if (vid) { try { vid.pause(); } catch (_) {} }
+      };
+      overlay.addEventListener("transitionend", finish, { once: true });
+      setTimeout(finish, 600); // cleanup only: the overlay is already fading
     }
 
-    if (document.readyState === "complete" || document.readyState === "interactive") {
-      hideOverlay();
-    } else {
-      document.addEventListener("DOMContentLoaded", hideOverlay, { once: true });
-      window.addEventListener("load", hideOverlay, { once: true });
-      setTimeout(hideOverlay, 1200);
+    function check() {
+      checkQueued = false;
+      if (hidden) return;
+      if (domReady && holds.size === 0) hide("ready");
     }
+
+    // Evaluate on the frame *after* the current task so every synchronous hold() taken by
+    // page scripts during DOMContentLoaded is visible before we decide.
+    function queueCheck() {
+      if (checkQueued || hidden) return;
+      checkQueued = true;
+      requestAnimationFrame(check);
+    }
+
+    function hold(name) {
+      const id = ++seq;
+      holds.set(id, name || "task");
+      let released = false;
+      return function release() {
+        if (released) return;
+        released = true;
+        holds.delete(id);
+        queueCheck();
+      };
+    }
+
+    function init() {
+      startVideo();
+      // init() runs from the DOMContentLoaded handler (or later), never while parsing, so the
+      // DOM is ready here. Re-read the state instead of relying on the value captured at load.
+      domReady = document.readyState !== "loading";
+      if (domReady) queueCheck();
+      else document.addEventListener("DOMContentLoaded", () => { domReady = true; queueCheck(); }, { once: true });
+      setTimeout(() => {
+        if (!hidden) {
+          console.warn("[CHIPAKK Loader] Ceiling reached; releasing overlay. Pending:", Array.from(holds.values()));
+          hide("ceiling");
+        }
+      }, MAX_WAIT_MS);
+      // Back/forward cache restore must never resurrect a stale overlay
+      window.addEventListener("pageshow", (e) => { if (e.persisted) hide("pageshow"); });
+    }
+
+    return { hold, init, isHidden: () => hidden, pending: () => Array.from(holds.values()) };
+  })();
+
+  function initLoadingOverlay() {
+    loader.init();
   }
 
   /* =========================================================
@@ -1756,14 +1663,36 @@
      11. INIT APP ENGINE
      ========================================================= */
 
+  function initHeaderCollapse() {
+    const header = document.querySelector(".site-header");
+    if (!header) return;
+    const apply = () => {
+      const bars = header.querySelectorAll("#globalAnnouncementBar, .brand-family-bar");
+      let h = 0;
+      bars.forEach((el) => { if (el.offsetParent !== null) h += el.getBoundingClientRect().height; });
+      document.documentElement.style.setProperty("--header-collapse", `${Math.round(h)}px`);
+    };
+    apply();
+    window.addEventListener("resize", apply, { passive: true });
+    window.addEventListener("chipakk-settings-updated", apply);
+    if (typeof ResizeObserver !== "undefined") {
+      const ro = new ResizeObserver(apply);
+      header.querySelectorAll("#globalAnnouncementBar, .brand-family-bar").forEach((el) => ro.observe(el));
+    }
+  }
+
   function initApp() {
     initLoadingOverlay();
+    initHeaderCollapse();
     initPanels();
     initActiveNav();
     initHeaderAuth();
     initFooter();
     renderGlobalCart();
-    getStoreSettings().catch(err => console.warn("[CHIPAKK] Settings init notice:", err.message));
+    const releaseSettings = loader.hold("settings");
+    getStoreSettings()
+      .catch(err => console.warn("[CHIPAKK] Settings init notice:", err.message))
+      .finally(releaseSettings);
   }
 
   if (document.readyState === "loading") {
@@ -1822,10 +1751,16 @@
     starsMarkup,
     getRatingTier,
     renderProductCard,
+    renderProductGrid,
+    categoryMediaHtml: catalog.categoryMediaHtml,
+    media,
+    imgHtml: media.imgHtml,
+    loader,
     showToast,
     escapeHtml,
     escapeAttr,
     resolveImageUrl: resolveCustomerImageUrl,
+    resolveCustomerImageUrl,
     openCart: () => openPanel($("#cartDrawer")),
     $,
     $$

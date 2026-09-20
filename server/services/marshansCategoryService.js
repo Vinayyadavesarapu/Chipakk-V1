@@ -87,6 +87,20 @@ const fetchProductCountsForCategories = async (catIds) => {
 /**
  * Get list of Marshans categories with experience & media mappings
  */
+const taxProfileService = require('./taxProfileService');
+
+/** Optional GST configuration columns (migration 017), detected lazily so an un-migrated database keeps working. */
+let hasTaxColumns = null;
+const checkHasTaxColumns = async () => {
+  if (hasTaxColumns !== null) return hasTaxColumns;
+  try {
+    const [cols] = await pool.execute("SHOW COLUMNS FROM marshans_categories LIKE 'hsn_code'");
+    hasTaxColumns = Array.isArray(cols) && cols.length > 0;
+  } catch (_) { hasTaxColumns = false; }
+  return hasTaxColumns;
+};
+const taxOut = (r) => ((r && r.hsn_code !== undefined) ? { hsn_code: r.hsn_code || null, gst_rate: r.gst_rate === null || r.gst_rate === undefined ? null : Number(r.gst_rate) } : {});
+
 const getCategories = async ({ activeOnly = false } = {}) => {
   try {
     const conditions = [];
@@ -98,6 +112,7 @@ const getCategories = async ({ activeOnly = false } = {}) => {
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
+    const taxCols = (await checkHasTaxColumns()) ? '\n        c.hsn_code,\n        c.gst_rate,' : '';
     const query = `
       SELECT 
         c.id,
@@ -109,7 +124,7 @@ const getCategories = async ({ activeOnly = false } = {}) => {
         c.experience_id,
         c.active,
         c.created_at,
-        c.updated_at,
+        c.updated_at,${taxCols}
         ce.id AS exp_id,
         ce.experience_code,
         ce.name AS experience_name,
@@ -147,6 +162,7 @@ const getCategories = async ({ activeOnly = false } = {}) => {
           image_url: r.image_url || '',
           experience_id: r.experience_id || null,
           active: r.active === 1,
+          ...taxOut(r),
           product_count: countMap[r.id] || 0,
           experience: {
             id: r.exp_id || null,
@@ -188,6 +204,7 @@ const getCategoryBySlug = async (slug) => {
   const cleanSlug = String(slug).trim().toLowerCase();
 
   try {
+    const taxCols = (await checkHasTaxColumns()) ? '\n        c.hsn_code,\n        c.gst_rate,' : '';
     const query = `
       SELECT 
         c.id,
@@ -199,7 +216,7 @@ const getCategoryBySlug = async (slug) => {
         c.experience_id,
         c.active,
         c.created_at,
-        c.updated_at,
+        c.updated_at,${taxCols}
         ce.id AS exp_id,
         ce.experience_code,
         ce.name AS experience_name,
@@ -232,6 +249,7 @@ const getCategoryBySlug = async (slug) => {
         image_url: r.image_url || '',
         experience_id: r.experience_id || null,
         active: r.active === 1,
+        ...taxOut(r),
         product_count: countMap[r.id] || 0,
         experience: {
           id: r.exp_id || null,
@@ -396,6 +414,7 @@ const createCategory = async (categoryData) => {
     hero_light,
     hero_dark
   } = categoryData;
+  const taxCfg = taxProfileService.parseTaxConfigInput(categoryData);
 
   if (!name || typeof name !== 'string' || !name.trim()) {
     throw new Error('Category name is required');
@@ -415,6 +434,9 @@ const createCategory = async (categoryData) => {
     );
 
     const newId = res.insertId;
+    if ((taxCfg.hsn_code.provided || taxCfg.gst_rate.provided) && await checkHasTaxColumns()) {
+      await connection.execute('UPDATE marshans_categories SET hsn_code = ?, gst_rate = ? WHERE id = ? AND store_id = 2', [taxCfg.hsn_code.value, taxCfg.gst_rate.value, newId]);
+    }
 
     // Insert hero_light media if provided
     if (hero_light) {
@@ -460,6 +482,7 @@ const updateCategory = async (id, updateData) => {
     hero_light,
     hero_dark
   } = updateData;
+  const taxCfg = taxProfileService.parseTaxConfigInput(updateData);
 
   const connection = await pool.getConnection();
 
@@ -475,6 +498,10 @@ const updateCategory = async (id, updateData) => {
     if (image_url !== undefined) { updates.push('image_url = ?'); params.push(image_url || null); }
     if (experience_id !== undefined) { updates.push('experience_id = ?'); params.push(experience_id || null); }
     if (active !== undefined) { updates.push('active = ?'); params.push(active ? 1 : 0); }
+    if ((taxCfg.hsn_code.provided || taxCfg.gst_rate.provided) && await checkHasTaxColumns()) {
+      if (taxCfg.hsn_code.provided) { updates.push('hsn_code = ?'); params.push(taxCfg.hsn_code.value); }
+      if (taxCfg.gst_rate.provided) { updates.push('gst_rate = ?'); params.push(taxCfg.gst_rate.value); }
+    }
 
     if (updates.length > 0) {
       params.push(numId);

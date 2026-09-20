@@ -34,12 +34,12 @@ function initDataDefaults() {
             shipping_fee: 50,
             free_shipping_enabled: true,
             free_shipping_threshold: 300,
-            free_shipping_calculation: 'after_discounts',
+            free_shipping_calculation: 'gross_subtotal',
             announcement_text: '🚀 FREE SHIPPING ON ORDER DEPLOYMENTS ABOVE ₹300!',
             announcement_active: true,
             maintenance_active: false,
             hero_headline: 'STICKERS FOR YOUR CHAOTIC WORLD.',
-            hero_subheadline: 'High-grade, durable vinyl decals featuring underground internet culture, retro gaming, and pixel aesthetics.'
+            hero_subheadline: 'High-grade, durable vinyl decals featuring anime, cartoons, sports, gaming, and custom aesthetic designs.'
         };
         localStorage.setItem('site_settings', JSON.stringify(defaultSettings));
         siteSettings = defaultSettings;
@@ -270,7 +270,7 @@ function startCountdownTimer() {
 // --- ROUTING ENGINE ---
 window.navigateToRoute = function(route) {
     currentRoute = route;
-    
+
     document.getElementById('page-home').style.display = 'none';
     document.getElementById('page-shop').style.display = 'none';
     document.getElementById('page-details').style.display = 'none';
@@ -321,7 +321,7 @@ function renderCatalog() {
         if (tab.dataset.category === categoryFilter) {
             tab.classList.add('active');
         }
-        
+
         tab.onclick = (e) => {
             categoryFilter = e.target.dataset.category;
             renderCatalog();
@@ -517,7 +517,7 @@ function updateCartUI() {
     if (progressEl) {
         const threshold = siteSettings.free_shipping_threshold || 300;
         const enabled = siteSettings.free_shipping_enabled !== false;
-        
+
         if (!enabled) {
             progressEl.style.display = 'none';
         } else {
@@ -572,7 +572,7 @@ async function applyCouponCode() {
         const response = await fetch(`${apiHost}/api/coupons/validate`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ code, subtotal: subtotal * 100 })
+            body: JSON.stringify({ code, subtotal_in_rupees: subtotal })
         });
 
         const data = await response.json();
@@ -659,13 +659,11 @@ function renderCheckoutSummary() {
     const threshold = siteSettings.free_shipping_threshold || 300;
     const shippingFee = siteSettings.shipping_fee || 50;
     const enabled = siteSettings.free_shipping_enabled !== false;
-    
+
     let shipping = shippingFee;
     if (enabled) {
-        const calculationMode = siteSettings.free_shipping_calculation || 'after_discounts';
-        const eligibleSubtotal = calculationMode === 'after_discounts' ? (subtotal - discount) : subtotal;
-        
-        if (eligibleSubtotal >= threshold) {
+        // Free shipping rule: Evaluated strictly on GROSS merchandise subtotal BEFORE discounts
+        if (subtotal >= threshold) {
             shipping = 0;
         }
     }
@@ -701,18 +699,16 @@ document.getElementById('place-order-btn').addEventListener('click', async () =>
             discount = appliedCoupon.amount;
         }
     }
-    
+
     // Apply Shipping charges rules
     const threshold = siteSettings.free_shipping_threshold || 300;
     const shippingFee = siteSettings.shipping_fee || 50;
     const enabled = siteSettings.free_shipping_enabled !== false;
-    
+
     let shipping = shippingFee;
     if (enabled) {
-        const calculationMode = siteSettings.free_shipping_calculation || 'after_discounts';
-        const eligibleSubtotal = calculationMode === 'after_discounts' ? (subtotal - discount) : subtotal;
-        
-        if (eligibleSubtotal >= threshold) {
+        // Free shipping rule: Evaluated strictly on GROSS merchandise subtotal BEFORE discounts
+        if (subtotal >= threshold) {
             shipping = 0;
         }
     }
@@ -752,7 +748,7 @@ document.getElementById('place-order-btn').addEventListener('click', async () =>
     // Success Screen
     document.getElementById('success-order-id').textContent = orderId;
     navigateToRoute('success');
-    
+
     // Clear cart & variables
     cart = [];
     appliedCoupon = null;
@@ -769,9 +765,9 @@ function reloadDatabase() {
     siteSettings = JSON.parse(localStorage.getItem('site_settings') || '{}');
     activeEvents = JSON.parse(localStorage.getItem('events') || '[]');
     couponsList = JSON.parse(localStorage.getItem('coupons') || '[]');
-    
+
     checkMaintenanceGate();
-    
+
     // Update shop notice banner
     const thresholdText = document.getElementById('shop-shipping-threshold-text');
     const noticeEl = document.getElementById('shop-shipping-notice');

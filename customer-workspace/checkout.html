@@ -23,7 +23,7 @@
   <meta name="twitter:image" content="https://chipakk.shop/assets/images/logo.png" />
 
   <link rel="icon" type="image/png" href="assets/images/logo.png" />
-  <link rel="stylesheet" href="css/style.css?v=1.1.0" />
+  <link rel="stylesheet" href="css/style.css?v=1.2.0" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="preconnect" href="https://api.chipakk.shop" crossorigin />
@@ -37,13 +37,13 @@
   <div class="loading-overlay" id="loadingOverlay" data-hidden="false" aria-hidden="true">
     <div class="loader-circle">
       <div class="loader-badge" aria-hidden="true">⚡</div>
-      <video src="assets/video/loading_01.mp4" preload="none" muted loop playsinline aria-hidden="true"></video>
+      <video src="assets/video/loading_01.mp4" autoplay preload="metadata" muted loop playsinline aria-hidden="true"></video>
     </div>
     <p class="loader-text">Securing checkout<span class="dots"></span></p>
   </div>
 
   <!-- Header -->
-  <header class="site-header">
+  <header class="site-header checkout-header">
     <div id="globalAnnouncementBar" class="global-announcement-bar" style="display: none;"></div>
     <div class="brand-family-bar">
       <div class="brand-family-inner">
@@ -60,32 +60,32 @@
       </div>
     </div>
     <div class="header-inner">
-      <a href="index.html" class="logo-link" aria-label="CHIPAKK home">
-        <img src="assets/images/logo.png" alt="CHIPAKK" width="180" height="120" />
+      <a href="index.html" class="logo-link checkout-logo" aria-label="CHIPAKK home">
+        <img src="assets/images/logo.png" alt="CHIPAKK" width="180" height="90" />
       </a>
 
-      <div style="font-family: var(--font-display); font-size: 14px; font-weight: 800; display: flex; align-items: center; gap: 8px;">
+      <div class="checkout-security-badge" aria-label="Secure encrypted checkout">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-        <span>SECURE ENCRYPTED CHECKOUT</span>
+        <span class="checkout-security-text checkout-security-long">SECURE ENCRYPTED CHECKOUT</span><span class="checkout-security-text checkout-security-short">SECURE</span>
       </div>
 
-      <div class="header-actions" style="display: flex; align-items: center; gap: 10px;">
+      <div class="header-actions">
         <button class="btn-account-nav" id="accountBtn" aria-label="Account - Sign In">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg>
           <span class="header-account-text">ACCOUNT / SIGN IN</span>
         </button>
-        <a href="shop.html" class="btn btn-secondary" style="padding: 8px 14px; font-size: 12px;">
-          ← Back to Shop
+        <a href="shop.html" class="btn btn-secondary btn-back-shop">
+          <span class="back-shop-arrow" aria-hidden="true">←</span><span class="back-shop-text back-shop-long">Back to Shop</span><span class="back-shop-text back-shop-short">Shop</span>
         </a>
       </div>
     </div>
   </header>
 
   <!-- Main Checkout Content -->
-  <main id="main" class="section" style="padding-top: 36px;">
+  <main id="main" class="section checkout-main">
     <div class="container">
 
-      <div style="margin-bottom: 28px;">
+      <div class="checkout-heading">
         <span class="eyebrow">Order Processing</span>
         <h1 class="section-title">Checkout</h1>
       </div>
@@ -138,7 +138,8 @@
               </div>
               <div class="form-field">
                 <label for="custState">State *</label>
-                <input type="text" id="custState" placeholder="State" required value="" />
+                <input type="text" id="custState" placeholder="Start typing your state" list="gstStateList" autocomplete="address-level1" required value="" />
+                <datalist id="gstStateList"><option value="Andaman and Nicobar Islands"></option><option value="Andhra Pradesh"></option><option value="Arunachal Pradesh"></option><option value="Assam"></option><option value="Bihar"></option><option value="Chandigarh"></option><option value="Chhattisgarh"></option><option value="Dadra and Nagar Haveli and Daman and Diu"></option><option value="Delhi"></option><option value="Goa"></option><option value="Gujarat"></option><option value="Haryana"></option><option value="Himachal Pradesh"></option><option value="Jammu and Kashmir"></option><option value="Jharkhand"></option><option value="Karnataka"></option><option value="Kerala"></option><option value="Ladakh"></option><option value="Lakshadweep"></option><option value="Madhya Pradesh"></option><option value="Maharashtra"></option><option value="Manipur"></option><option value="Meghalaya"></option><option value="Mizoram"></option><option value="Nagaland"></option><option value="Odisha"></option><option value="Puducherry"></option><option value="Punjab"></option><option value="Rajasthan"></option><option value="Sikkim"></option><option value="Tamil Nadu"></option><option value="Telangana"></option><option value="Tripura"></option><option value="Uttar Pradesh"></option><option value="Uttarakhand"></option><option value="West Bengal"></option></datalist>
               </div>
             </div>
             <div class="form-field" style="max-width: 240px;">
@@ -153,16 +154,14 @@
               <span class="checkout-step-badge">3</span>
               Shipping Method
             </h2>
-            <div style="display: flex; flex-direction: column; gap: 12px;">
-              <label style="display: flex; align-items: center; justify-content: space-between; border: 2px solid var(--black); border-radius: var(--radius-sm); padding: 14px 16px; background: #fff8d6; cursor: pointer;">
-                <div style="display: flex; align-items: center; gap: 10px;">
-                  <input type="radio" name="shippingMethod" id="shipStandard" value="standard" checked />
-                  <div>
-                    <strong style="font-size: 14px;">Standard Tracked Delivery (3-5 days)</strong>
-                    <div style="font-size: 12px; color: #555;">Rigid stay-flat cardboard mailer • Free on orders ₹300+</div>
-                  </div>
-                </div>
-                <strong id="checkoutShippingRuleBadge" style="font-size: 14px; color: #166534;">₹50 / FREE</strong>
+            <div class="shipping-options">
+              <label class="shipping-option" for="shipStandard">
+                <input type="radio" name="shippingMethod" id="shipStandard" value="standard" checked />
+                <span class="shipping-option-body">
+                  <strong class="shipping-option-title">Standard Tracked Delivery (3-5 days)</strong>
+                  <span class="shipping-option-note" id="checkoutShippingRuleNote">Rigid stay-flat cardboard mailer • Free on orders ₹300+</span>
+                </span>
+                <strong class="shipping-option-badge" id="checkoutShippingRuleBadge">₹50 · FREE ₹300+</strong>
               </label>
             </div>
           </div>
@@ -217,7 +216,7 @@
           </h2>
 
           <!-- Items Rail -->
-          <div class="checkout-order-items" id="checkoutItemsList">
+          <div class="checkout-order-items" id="checkoutItemsList" aria-live="polite">
             <!-- Populated by js/checkout.js -->
           </div>
 
@@ -248,7 +247,7 @@
             </div>
 
             <div class="summary-row" style="font-size: 12px; color: #666;">
-              <span>GST (18% inclusive):</span>
+              <span id="checkoutGstLabel">GST (18% inclusive):</span>
               <span id="checkoutTax">₹0</span>
             </div>
 
@@ -258,13 +257,18 @@
             </div>
           </div>
 
+          <p id="checkoutTaxNotice" role="alert" style="display: none; font-size: 13px; font-weight: 600; color: #991b1b; background: #fef2f2; border: 2px solid #991b1b; border-radius: 8px; padding: 10px 12px; margin-bottom: 12px;">
+            Checkout is temporarily unavailable while our tax details are being updated. Please try again shortly.
+          </p>
+
           <button type="button" class="btn btn-primary" id="placeOrderBtn" style="width: 100%; padding: 18px; font-size: 16px;">
             Place Order 🚀
           </button>
 
           <p style="font-size: 11px; color: #666; text-align: center; margin-top: 14px; line-height: 1.4;">
-            By placing your order, you agree to CHIPAKK's Terms of Service and Privacy Policy. Demo mode active.
+            By placing your order, you agree to CHIPAKK's Terms of Service and Privacy Policy.
           </p>
+          <p id="checkoutSoldBy" style="display: none; font-size: 11px; color: #666; text-align: center; margin-top: 8px; line-height: 1.4; overflow-wrap: anywhere;"></p>
         </div>
 
       </div>
@@ -332,8 +336,11 @@
   <!-- Scripts -->
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
-  <script src="js/auth.js?v=1.1.0"></script>
-  <script src="js/app.js?v=1.1.0"></script>
-  <script src="js/checkout.js?v=1.1.0"></script>
+  <script src="js/auth.js?v=1.2.0"></script>
+  <script src="js/media.js?v=1.2.0"></script>
+  <script src="js/catalog.js?v=1.2.0"></script>
+  <script src="js/tax.js?v=1.2.0"></script>
+  <script src="js/app.js?v=1.2.0"></script>
+  <script src="js/checkout.js?v=1.2.0"></script>
 </body>
 </html>

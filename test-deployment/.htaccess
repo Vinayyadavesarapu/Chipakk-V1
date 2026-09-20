@@ -27,7 +27,7 @@ RewriteRule ^js/(admin|api|firebase-config|migration)\.js$ web/js/$1.js [L]
 RewriteRule ^css/style\.css$ customer-workspace/css/style.css [L]
 
 # Customer scripts: /js/app.js, /js/auth.js, /js/home.js, /js/shop.js, etc.
-RewriteRule ^js/(app|auth|home|shop|categories|custom-stickers|product|checkout|account|reset-password)\.js$ customer-workspace/js/$1.js [L]
+RewriteRule ^js/(app|auth|media|catalog|tax|home|shop|categories|custom-stickers|product|checkout|account|reset-password)\.js$ customer-workspace/js/$1.js [L]
 
 # Customer media assets: /assets/* -> customer-workspace/assets/*
 RewriteRule ^assets/(.*)$ customer-workspace/assets/$1 [L]

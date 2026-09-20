@@ -58,7 +58,7 @@
   </script>
 
   <link rel="icon" type="image/png" href="assets/images/logo.png" />
-  <link rel="stylesheet" href="css/style.css?v=1.1.0" />
+  <link rel="stylesheet" href="css/style.css?v=1.2.0" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="preconnect" href="https://api.chipakk.shop" crossorigin />
@@ -76,7 +76,8 @@
       <div class="loader-badge" aria-hidden="true">⚡</div>
       <video
         src="assets/video/loading_01.mp4"
-        preload="none"
+        autoplay
+        preload="metadata"
         muted
         loop
         playsinline
@@ -245,7 +246,7 @@
               <path d="M50 12 Q 20 10 14 40 M14 40 l-8-10 M14 40 l12-4"/>
             </svg>
             <div class="hero-photo-frame">
-              <img src="assets/images/hero-fallback.svg" alt="CHIPAKK Sticker Culture" data-hero-img style="width:100%;height:100%;max-width:100%;max-height:100%;object-fit:cover;display:block;border-radius:inherit;" />
+              <img src="assets/images/hero-fallback.svg" alt="CHIPAKK Sticker Culture" class="hero-photo-img" data-hero-img width="560" height="560" fetchpriority="high" decoding="async" />
             </div>
             <div class="hero-doodle doodle-bubble">Small stickers.<br />Big personality.</div>
             <div class="hero-doodle doodle-crown">👑</div>
@@ -525,8 +526,10 @@
   <!-- Scripts -->
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
-  <script src="js/auth.js?v=1.1.0"></script>
-  <script src="js/app.js?v=1.1.0"></script>
-  <script src="js/home.js?v=1.1.0"></script>
+  <script src="js/auth.js?v=1.2.0"></script>
+  <script src="js/media.js?v=1.2.0"></script>
+  <script src="js/catalog.js?v=1.2.0"></script>
+  <script src="js/app.js?v=1.2.0"></script>
+  <script src="js/home.js?v=1.2.0"></script>
 </body>
 </html>

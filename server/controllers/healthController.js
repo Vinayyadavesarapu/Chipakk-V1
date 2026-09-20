@@ -1,15 +1,25 @@
 const { testConnection } = require('../config/database');
+const { describeUploads } = require('../config/uploads');
 const { sendSuccess, sendError } = require('../utils/responseHandler');
 
 /**
  * Health Endpoint Handler
  * GET /api/health
  */
-const getHealth = (req, res) => {
+const getHealth = async (req, res) => {
+  // GST readiness per store: booleans and field NAMES only (no GSTIN, no address) so it is safe on a public endpoint
+  let tax = null;
+  try {
+    const taxProfileService = require('../services/taxProfileService');
+    tax = {};
+    for (const [code, id] of [['chipakk', 1], ['marshans', 2]]) tax[code] = taxProfileService.describeReadiness(await taxProfileService.getTaxProfile(id));
+  } catch (_) { tax = null; }
   return sendSuccess(res, {
     service: 'CHIPAKK API',
     status: 'online',
-    environment: process.env.NODE_ENV || 'development'
+    environment: process.env.NODE_ENV || 'development',
+    uploads: describeUploads(),
+    tax
   }, 'CHIPAKK API is operational');
 };
 

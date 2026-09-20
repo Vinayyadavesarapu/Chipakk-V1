@@ -976,6 +976,17 @@
                                 </div>
                                 <small class="form-hint" style="color: #8c5300; margin: 0 0 0 26px;">Marks this product as a Best Seller. This is a product label/showcase filter, not a category.</small>
                             </div>
+                            <div class="retro-field" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 6px 0;">
+                                <div>
+                                    <label for="prod-hsn-code">HSN Code</label>
+                                    <input type="text" id="prod-hsn-code" class="retro-input" inputmode="numeric" maxlength="8" placeholder="unset" autocomplete="off">
+                                </div>
+                                <div>
+                                    <label for="prod-gst-rate">GST Rate (%)</label>
+                                    <input type="number" id="prod-gst-rate" class="retro-input" min="0" max="100" step="0.01" placeholder="store default" autocomplete="off">
+                                </div>
+                                <small class="form-hint" id="prod-tax-hint" style="grid-column: 1 / -1;">Leave blank to inherit category HSN. HSN is never guessed. An invoice cannot be issued until the order line has an HSN. GST rate: leave blank to inherit the category rate, then the store default.</small>
+                            </div>
                         </div>
 
                         <div>
@@ -1187,6 +1198,17 @@
                         <label for="cat-desc">Description</label>
                         <input type="text" id="cat-desc" class="retro-input" placeholder="Short sector description">
                         <small class="form-hint">Short category summary displayed on category headers and previews.</small>
+                    </div>
+                    <div class="retro-field" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                        <div>
+                            <label for="cat-hsn-code">Default HSN Code</label>
+                            <input type="text" id="cat-hsn-code" class="retro-input" inputmode="numeric" maxlength="8" placeholder="unset" autocomplete="off">
+                        </div>
+                        <div>
+                            <label for="cat-gst-rate">Default GST Rate (%)</label>
+                            <input type="number" id="cat-gst-rate" class="retro-input" min="0" max="100" step="0.01" placeholder="store default" autocomplete="off">
+                        </div>
+                        <small class="form-hint" style="grid-column: 1 / -1;">Applied to products in this category that have no HSN / rate of their own. Leave the HSN blank to leave it unset (it is never guessed); a blank rate uses the store default rate.</small>
                     </div>
                     <div class="retro-field">
                         <label for="cat-image">Category Banner / Thumbnail Image (URL or Upload)</label>
@@ -2433,11 +2455,18 @@
                                 class="retro-input" value="support@chipakk.shop"><small class="form-hint">Customer support address displayed in the storefront footer and order confirmation emails.</small></div>
                         <div class="retro-field"><label>Support Phone</label><input type="text" id="set-support-phone"
                                 class="retro-input" value="+91 98765 00000"></div>
-                        <div class="retro-field"><label>GSTIN Number <small style="color:#666;">(Internal Business
-                                    Setting)</small></label><input type="text" id="set-gstin" class="retro-input"
-                                value="07AAAAA0000A1Z5"><small class="form-hint">15-character Goods and Services Tax Identification Number for invoicing and compliance.</small></div>
-                        <div class="retro-field"><label>GST Rate (%) <span style="color:red;">*</span></label><input
-                                type="number" id="set-gst-rate" class="retro-input" value="18" min="0" max="100"><small class="form-hint">Standard GST rate percentage applied to order subtotals (e.g. 18%).</small></div>
+                        <div class="retro-field"><label>Trade Name</label><input type="text" id="set-trade-name"
+                                class="retro-input" placeholder="CHIPAKK"><small class="form-hint">The brand this store trades under. Printed on invoices next to the legal supplier name.</small></div>
+                        <div class="retro-field"><label>GST</label><select id="set-gst-enabled" class="retro-input"><option value="true">Enabled</option><option value="false">Disabled</option></select><small class="form-hint">Prices are always GST-inclusive: GST is never added on top of a displayed price.</small></div>
+                        <div class="retro-field"><label>Default GST Rate (%) <span style="color:red;">*</span></label><input
+                                type="number" id="set-gst-rate" class="retro-input" value="18" min="0" max="100"><small class="form-hint">Used for products/categories with no GST rate of their own. The tax shown is the part of the price that is GST (e.g. 18% -> price x 18 / 118).</small></div>
+                        <div class="retro-field"><label>Invoice Number Prefix</label><input type="text" id="set-invoice-prefix"
+                                class="retro-input" maxlength="3" placeholder="CHP"><small class="form-hint">1-3 letters/digits. Invoices are numbered PREFIX/YY-YY/000001, sequential per financial year.</small></div>
+                        <div class="retro-field" style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                            <div><label>Custom Sticker HSN</label><input type="text" id="set-custom-hsn" class="retro-input" inputmode="numeric" maxlength="8" placeholder="unset" autocomplete="off"></div>
+                            <div><label>Custom Sticker GST %</label><input type="number" id="set-custom-gst-rate" class="retro-input" min="0" max="100" step="0.01" placeholder="store default" autocomplete="off"></div>
+                            <small class="form-hint" style="grid-column: 1 / -1;">Custom sticker orders have no catalogue record. The HSN is <strong>unset</strong> until you enter one here (it is never guessed; without it those orders cannot be invoiced). The GST rate falls back to the store default.</small>
+                        </div>
                         <div class="retro-field"><label>Currency Symbol</label><input type="text" id="set-currency"
                                 class="retro-input" value="₹ (INR)"><small class="form-hint">Currency symbol displayed alongside prices across the storefront (e.g. ₹ for INR).</small></div>
                         <div class="retro-field"><label>Order ID Prefix</label><input type="text" id="set-order-prefix"
@@ -2448,6 +2477,23 @@
                             <button class="retro-btn retro-btn-primary" id="save-business-settings-btn"
                                 style="width: 100%; padding: 10px; font-size: 0.85rem;">SAVE BUSINESS & TAX
                                 SETTINGS</button>
+                        </div>
+                    </div>
+
+                    <!-- Legal Supplier (shared by CHIPAKK and THE MARSHANS) -->
+                    <div class="retro-panel" style="background-color: #fff; display: flex; flex-direction: column;">
+                        <h3 style="margin-bottom: 8px; font-weight: bold; color: #0f766e;">[LEGAL SUPPLIER &amp; GST REGISTRATION]</h3>
+                        <p style="font-size: 0.8rem; color: #555; margin: 0 0 14px 0; line-height: 1.4;">CHIPAKK is a trade name of the same GST-registered legal entity as THE MARSHANS. There is <strong>one</strong> registration: enter it once and both stores use it. Nothing here is pre-filled; enter the details exactly as on the GST registration certificate.</p>
+                        <div id="supplier-readiness" role="status" style="font-size: 0.8rem; font-weight: 700; padding: 8px 10px; border: 1.5px solid #ccc; background: #f8f8f8; margin-bottom: 12px;">Checking tax configuration...</div>
+                        <div class="retro-field"><label for="set-supplier-name">Registered Legal Name <span style="color:red;">*</span></label><input type="text" id="set-supplier-name" class="retro-input" maxlength="255" autocomplete="off"></div>
+                        <div class="retro-field"><label for="set-supplier-gstin">GSTIN <span style="color:red;">*</span></label><input type="text" id="set-supplier-gstin" class="retro-input" maxlength="15" autocomplete="off" style="text-transform: uppercase;"><small class="form-hint" id="set-supplier-gstin-hint">15 characters. The state is read from the first two digits and the check character is verified.</small></div>
+                        <div class="retro-field"><label for="set-supplier-address">Registered Address <span style="color:red;">*</span></label><textarea id="set-supplier-address" class="retro-input" rows="3" maxlength="1000"></textarea></div>
+                        <div class="retro-field" style="display:grid; grid-template-columns: 2fr 1fr; gap: 10px;">
+                            <div><label for="set-supplier-state">State (from GSTIN)</label><input type="text" id="set-supplier-state" class="retro-input" readonly tabindex="-1"></div>
+                            <div><label for="set-supplier-pin">PIN Code</label><input type="text" id="set-supplier-pin" class="retro-input" inputmode="numeric" maxlength="6"></div>
+                        </div>
+                        <div style="margin-top: auto; padding-top: 15px;">
+                            <button class="retro-btn retro-btn-primary" id="save-supplier-btn" style="width: 100%; padding: 10px; font-size: 0.85rem;">SAVE LEGAL SUPPLIER</button>
                         </div>
                     </div>
 

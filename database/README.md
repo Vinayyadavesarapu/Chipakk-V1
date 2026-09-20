@@ -257,3 +257,21 @@
    │                │
    └───< N          └───< N [coupon_usage] >─── 1 [coupons]
 ```
+
+---
+
+## GST, legal supplier and invoices (migration 017)
+
+Money units are unchanged (Store 1 whole rupees, Store 2 integer paise). See `docs/GST_AND_DEPLOYMENT.md` for the full model.
+
+- `legal_suppliers`: the ONE GST-registered entity shared by CHIPAKK and THE MARSHANS (`legal_name`, `gstin`, `address`,
+  `state`, `state_code`). Linked from `stores.legal_supplier_id`. Nothing is seeded.
+- `products` / `categories` / `marshans_products` / `marshans_categories`: nullable `hsn_code` (4/6/8 digits) and `gst_rate`
+  (NULL = inherit product > category > store default). An unset HSN is never guessed.
+- `orders`: purchase-time snapshot of supplier legal/trade name, GSTIN, address, state, place of supply, supply type
+  (`INTRA`/`INTER`/`NONE`), pricing mode, buyer GSTIN and the taxable shipping line. `order_items`: HSN, rate, discount
+  allocation, taxable value and CGST/SGST/IGST per line.
+- `invoice_sequences` + `invoices`: gap-free numbering per (series prefix, financial year); one invoice per order; the
+  supplier and recipient identity are snapshotted on the invoice row.
+- `database/ops/verify_gst_configuration.sql` is read-only and safe to run in production.
+

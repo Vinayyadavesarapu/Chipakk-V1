@@ -1,6 +1,20 @@
 const { pool } = require('../config/database');
 
 // Cache column check results
+const taxProfileService = require('./taxProfileService');
+
+let hasTaxColumns = null;
+const checkHasTaxColumns = async () => {
+  if (hasTaxColumns !== null) return hasTaxColumns;
+  try {
+    const [cols] = await pool.execute("SHOW COLUMNS FROM categories LIKE 'hsn_code'");
+    hasTaxColumns = Array.isArray(cols) && cols.length > 0;
+  } catch (_) {
+    hasTaxColumns = false;
+  }
+  return hasTaxColumns;
+};
+
 let hasImageUrlColumn = null;
 const checkHasImageUrl = async () => {
   if (hasImageUrlColumn !== null) return hasImageUrlColumn;
@@ -304,6 +318,7 @@ const getCategories = async ({ activeOnly = true, storeId = null } = {}) => {
         return {
           ...r,
           image_url: r.image_url || null,
+          ...(r.hsn_code !== undefined ? { hsn_code: r.hsn_code || null, gst_rate: r.gst_rate === null || r.gst_rate === undefined ? null : Number(r.gst_rate) } : {}),
           product_count: parseInt(r.product_count, 10) || 0,
           experience: {
             id: isChipakk ? null : (r.exp_id || null),
@@ -653,8 +668,11 @@ const createCategory = async ({
   experience_settings = null,
   media = null,
   hero_light = null,
-  hero_dark = null
+  hero_dark = null,
+  hsn_code,
+  gst_rate
 }) => {
+  const taxCfg = taxProfileService.parseTaxConfigInput({ hsn_code, gst_rate });
   if (!name || typeof name !== 'string') {
     throw new Error('Category name is required');
   }
@@ -701,6 +719,12 @@ const createCategory = async ({
     cols.push('experience_id');
     placeholders.push('?');
     params.push(resolvedExpId);
+  }
+
+  if ((taxCfg.hsn_code.provided || taxCfg.gst_rate.provided) && await checkHasTaxColumns()) {
+    cols.push('hsn_code', 'gst_rate');
+    placeholders.push('?', '?');
+    params.push(taxCfg.hsn_code.value, taxCfg.gst_rate.value);
   }
 
   const query = `
@@ -766,8 +790,11 @@ const updateCategory = async (id, {
   experience_settings,
   media,
   hero_light,
-  hero_dark
+  hero_dark,
+  hsn_code,
+  gst_rate
 }, storeId = null) => {
+  const taxCfg = taxProfileService.parseTaxConfigInput({ hsn_code, gst_rate });
   const numId = parseInt(id, 10);
   if (isNaN(numId)) {
     throw new Error('Invalid category ID');
@@ -839,6 +866,11 @@ const updateCategory = async (id, {
   if (hasExpId && resolvedExpId !== undefined) {
     updates.push('experience_id = ?');
     params.push(resolvedExpId);
+  }
+
+  if ((taxCfg.hsn_code.provided || taxCfg.gst_rate.provided) && await checkHasTaxColumns()) {
+    if (taxCfg.hsn_code.provided) { updates.push('hsn_code = ?'); params.push(taxCfg.hsn_code.value); }
+    if (taxCfg.gst_rate.provided) { updates.push('gst_rate = ?'); params.push(taxCfg.gst_rate.value); }
   }
 
   // Sync in-memory fallback category (e.g. LUMO) for development resilience

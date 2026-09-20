@@ -315,10 +315,21 @@ const deleteShippingRule = async (id, storeId = null) => {
 };
 
 /**
- * Calculate applicable shipping fee for a given order subtotal and optional region
+ * Built-in shipping defaults (money in each store's native unit).
+ *  - CHIPAKK (store 1): whole rupees  => < ₹300 pays ₹50, >= ₹300 ships free
+ *  - THE MARSHANS (store 2): paise    => flat heavy-parcel fee, effectively never free
  */
-const calculateShippingFee = async ({ subtotal, region, rule_id, storeId = 1 } = {}) => {
-  const parsedSubtotal = Math.max(parseInt(subtotal, 10) || 0, 0);
+const SHIPPING_DEFAULTS = {
+  1: { name: 'Default Standard Shipping', free_shipping_threshold: 300, standard_fee: 50 },
+  2: { name: 'Default Marshans 3D Shipping', free_shipping_threshold: 99999900, standard_fee: 8000 }
+};
+
+/**
+ * THE single place that decides which shipping rule applies to a store.
+ * Used by BOTH the order calculation and the public /api/settings response, so what a
+ * customer is shown can never differ from what an order is charged.
+ */
+const resolveShippingRule = async ({ storeId = 1, rule_id = null } = {}) => {
   const activeStoreId = parseInt(storeId, 10) === 2 ? 2 : 1;
 
   let rule = null;
@@ -330,40 +341,55 @@ const calculateShippingFee = async ({ subtotal, region, rule_id, storeId = 1 } =
     try {
       const hasStoreId = await checkHasStoreId();
       let query = 'SELECT * FROM shipping_rules WHERE is_enabled = 1';
-      const params = [];
       if (hasStoreId) {
-        if (activeStoreId === 2) {
-          query += ' AND store_id = 2';
-        } else {
-          query += ' AND (store_id = 1 OR store_id IS NULL)';
-        }
+        query += activeStoreId === 2 ? ' AND store_id = 2' : ' AND (store_id = 1 OR store_id IS NULL)';
       }
       query += ' ORDER BY id DESC LIMIT 1';
-      const [rows] = await pool.execute(query, params);
+      const [rows] = await pool.execute(query, []);
       if (rows && rows.length > 0) {
-        const r = rows[0];
-        rule = {
-          ...r,
-          regional_overrides: safeJsonParse(r.regional_overrides, null)
-        };
+        rule = { ...rows[0], regional_overrides: safeJsonParse(rows[0].regional_overrides, null) };
       }
-    } catch (_) {
-      // Fall back gracefully to store defaults if database is unreachable
+    } catch (err) {
+      console.warn('[Shipping] Rule lookup failed, using built-in defaults:', err.message);
     }
   }
 
-  // Fallback defaults if no rule exists in database
   if (!rule) {
-    const isMarshans = activeStoreId === 2;
-    rule = {
-      id: null,
-      name: isMarshans ? 'Default Marshans 3D Shipping' : 'Default Standard Shipping',
-      free_shipping_threshold: isMarshans ? 99999900 : 300,
-      standard_fee: isMarshans ? 8000 : 50,
-      is_enabled: 1,
-      regional_overrides: null
-    };
+    const d = SHIPPING_DEFAULTS[activeStoreId];
+    rule = { id: null, name: d.name, free_shipping_threshold: d.free_shipping_threshold, standard_fee: d.standard_fee, is_enabled: 1, regional_overrides: null };
   }
+  return { rule, storeId: activeStoreId };
+};
+
+/**
+ * Public shipping policy for a store: what customers are shown and what orders are charged.
+ */
+const getShippingPolicy = async (storeId = 1) => {
+  const { rule, storeId: sid } = await resolveShippingRule({ storeId });
+  const isStore2 = sid === 2;
+  const fee = Math.max(parseInt(rule.standard_fee, 10) || 0, 0);
+  const threshold = Math.max(parseInt(rule.free_shipping_threshold, 10) || 0, 0);
+  return {
+    store_id: sid,
+    source: rule.id ? 'rule' : 'default',
+    rule_id: rule.id || null,
+    standard_fee: fee,
+    standard_fee_rupees: isStore2 ? Math.round(fee / 100) : fee,
+    free_shipping_threshold: isStore2 ? 0 : threshold,
+    free_shipping_threshold_rupees: isStore2 ? 0 : threshold,
+    // THE MARSHANS never inherits CHIPAKK's free-shipping rule
+    free_shipping_enabled: !isStore2 && threshold > 0
+  };
+};
+
+/**
+ * Calculate applicable shipping fee for a given order subtotal and optional region.
+ * `subtotal` MUST be the gross merchandise subtotal (before any coupon/product discount):
+ * discounts never reduce free-shipping eligibility.
+ */
+const calculateShippingFee = async ({ subtotal, region, rule_id, storeId = 1 } = {}) => {
+  const parsedSubtotal = Math.max(parseInt(subtotal, 10) || 0, 0);
+  const { rule, storeId: activeStoreId } = await resolveShippingRule({ storeId, rule_id });
 
   let effectiveStandardFee = parseInt(rule.standard_fee, 10) || 0;
   let effectiveThreshold = parseInt(rule.free_shipping_threshold, 10) || 0;
@@ -427,23 +453,41 @@ const calculateShippingFee = async ({ subtotal, region, rule_id, storeId = 1 } =
  * Unified store shipping config (fees, policy, thresholds)
  */
 const getStoreShippingConfig = async (storeId = 1) => {
-  const settingsService = require('./settingsService');
-  const settings = await settingsService.getStoreSettings(storeId);
+  // Reports the policy that is actually charged (rule > built-in default), not a second copy of it.
+  const policy = await getShippingPolicy(storeId);
   const rulesResult = await getShippingRules({ storeId, limit: 20 });
-  const isStore2 = parseInt(storeId, 10) === 2;
-  const defaultFee = isStore2 ? 8000 : 50;
-  const defaultThreshold = isStore2 ? 99999900 : 300;
-  const rawFee = settings.shipping_fee !== undefined ? settings.shipping_fee : defaultFee;
-  const rawThreshold = settings.free_shipping_threshold !== undefined ? settings.free_shipping_threshold : defaultThreshold;
   return {
-    store_id: storeId,
-    standard_fee: rawFee,
-    standard_fee_rupees: isStore2 ? Math.round(rawFee / 100) : rawFee,
-    free_shipping_enabled: settings.free_shipping_enabled !== false,
-    free_shipping_threshold: rawThreshold,
-    free_shipping_threshold_rupees: isStore2 ? Math.round(rawThreshold / 100) : rawThreshold,
+    store_id: policy.store_id,
+    source: policy.source,
+    standard_fee: policy.standard_fee,
+    standard_fee_rupees: policy.standard_fee_rupees,
+    free_shipping_enabled: policy.free_shipping_enabled,
+    free_shipping_threshold: policy.store_id === 2 ? 0 : policy.free_shipping_threshold,
+    free_shipping_threshold_rupees: policy.free_shipping_threshold_rupees,
     rules: rulesResult.rules || []
   };
+};
+
+/**
+ * Keep the enforced shipping rule in step with what an admin saves in Settings.
+ * Order totals are charged from the shipping rule (see resolveShippingRule), so a fee/threshold
+ * edited in the Settings screen must update that rule or it would silently do nothing.
+ * Amounts are in the store's native unit (rupees for CHIPAKK, paise for THE MARSHANS).
+ */
+const syncDefaultRuleFromSettings = async (storeId, { shipping_fee, free_shipping_threshold } = {}) => {
+  const sid = parseInt(storeId, 10) === 2 ? 2 : 1;
+  const hasFee = shipping_fee !== undefined && shipping_fee !== null && shipping_fee !== '' && !isNaN(Number(shipping_fee));
+  const hasThr = free_shipping_threshold !== undefined && free_shipping_threshold !== null && free_shipping_threshold !== '' && !isNaN(Number(free_shipping_threshold));
+  if (!hasFee && !hasThr) return null;
+
+  const { rule } = await resolveShippingRule({ storeId: sid });
+  const fee = hasFee ? Math.max(Math.round(Number(shipping_fee)), 0) : parseInt(rule.standard_fee, 10) || 0;
+  const thr = hasThr ? Math.max(Math.round(Number(free_shipping_threshold)), 0) : parseInt(rule.free_shipping_threshold, 10) || 0;
+
+  if (rule.id) {
+    return updateShippingRule(rule.id, { standard_fee: fee, free_shipping_threshold: thr }, sid);
+  }
+  return createShippingRule({ name: 'Standard Shipping', standard_fee: fee, free_shipping_threshold: thr, is_enabled: 1, store_id: sid });
 };
 
 const updateStoreShippingConfig = async (storeId = 1, { standard_fee, free_shipping_enabled, free_shipping_threshold }) => {
@@ -458,6 +502,9 @@ const updateStoreShippingConfig = async (storeId = 1, { standard_fee, free_shipp
 };
 
 module.exports = {
+  SHIPPING_DEFAULTS,
+  resolveShippingRule,
+  getShippingPolicy,
   getShippingRules,
   getShippingRuleById,
   createShippingRule,
@@ -465,5 +512,6 @@ module.exports = {
   deleteShippingRule,
   calculateShippingFee,
   getStoreShippingConfig,
+  syncDefaultRuleFromSettings,
   updateStoreShippingConfig
 };

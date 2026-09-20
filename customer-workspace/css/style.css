@@ -328,7 +328,9 @@ input:focus-visible {
   height: 14px;
   fill: var(--yellow);
   stroke: var(--black);
-  stroke-width: 20;
+  /* viewBox is 24 units: a 20-unit stroke painted the whole icon black */
+  stroke-width: 1.4;
+  stroke-linejoin: round;
 }
 
 .stars .star-empty {
@@ -3459,33 +3461,6 @@ input:focus-visible {
   gap: 12px;
 }
 
-.checkout-item-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  font-size: 14px;
-}
-
-.checkout-item-left {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.checkout-item-thumb {
-  width: 44px;
-  height: 44px;
-  border: 1px solid var(--black);
-  border-radius: 4px;
-  background: var(--off-white);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 22px;
-  flex-shrink: 0;
-}
-
 .order-success-modal {
   position: fixed;
   inset: 0;
@@ -4110,3 +4085,248 @@ input:focus-visible {
 
 
 
+
+
+/* =========================================================
+   STOREFRONT QUALITY PASS
+   (shared media placeholders, product-card states, sticky header,
+    responsive checkout). Kept last so it wins the cascade.
+   ========================================================= */
+
+/* ---- Shared image placeholder (js/media.js) ---------------------------------
+   Shown when a product/category has no usable image OR when its image failed to
+   load. It is a <span>, so it can never fire another image error (no onerror loop). */
+.img-placeholder {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  background-color: #fff3b0;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='10' y='10' width='44' height='44' rx='9' fill='%23fff' stroke='%23111' stroke-width='3'/%3E%3Cpath d='M54 36 44 54 36 44z' fill='%23ffd400' stroke='%23111' stroke-width='3' stroke-linejoin='round'/%3E%3Cpath d='M33 20 25 34h7l-2 10 9-15h-7z' fill='%23111'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 52%;
+  border-radius: inherit;
+}
+.checkout-item-thumb .img-placeholder,
+.cart-item-media .img-placeholder,
+.order-thumb-sm.img-placeholder,
+.order-thumb-md.img-placeholder { background-size: 78%; }
+
+.cat-media-img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.product-stage-slot { display: block; width: 100%; height: 100%; }
+/* .product-stage img (0,1,1) caps at 85% and would win over a plain class; match its specificity */
+.product-stage .product-stage-img { width: 100%; height: 100%; max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+.order-thumb { object-fit: cover; border-radius: 4px; display: block; flex-shrink: 0; }
+.order-thumb-sm { width: 20px; height: 20px; }
+.order-thumb-md { width: 28px; height: 28px; }
+.cart-item-media img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* ---- Product card states ---------------------------------------------------- */
+.product-badge {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 2;
+  padding: 3px 8px;
+  border: 2px solid var(--black);
+  border-radius: 999px;
+  background: var(--yellow);
+  font-family: var(--font-display);
+  font-size: 10.5px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  box-shadow: 2px 2px 0 var(--black);
+}
+.product-card.is-sold-out .product-media { opacity: 0.55; }
+.product-add[disabled] { opacity: 0.55; cursor: not-allowed; }
+.product-card-actions { display: flex; gap: 8px; margin-top: 4px; }
+.product-card-actions .product-add { flex: 1; margin-top: 0; }
+.product-card-actions .remove-wish-btn {
+  border: 3px solid var(--black);
+  border-radius: var(--radius-sm);
+  box-shadow: 2px 2px 0 var(--black);
+  padding: 10px;
+  background: var(--white);
+  cursor: pointer;
+  min-width: 44px;
+}
+.catalog-error-state {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: 48px 20px;
+  background: var(--white);
+  border: var(--border-w) solid var(--black);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-hard);
+}
+.catalog-error-state h3 { font-family: var(--font-display); font-size: 24px; text-transform: uppercase; margin: 8px 0; }
+.catalog-error-state p { color: #666; margin-bottom: 18px; }
+.catalog-error-icon { font-size: 44px; }
+
+/* ---- Sticky header: only the main row stays pinned ---------------------------
+   The announcement + storefront-switcher bars scroll away (js/app.js sets
+   --header-collapse to their combined height), so the pinned header is one row
+   (64-84px) instead of 200px+ on a phone. */
+.site-header { top: calc(-1 * var(--header-collapse, 0px)); }
+html { scroll-padding-top: calc(var(--header-h) + 8px); }
+
+/* ---- Checkout ---------------------------------------------------------------- */
+.checkout-main { padding-top: 36px; }
+.checkout-heading { margin-bottom: 28px; }
+.checkout-grid { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); }
+.checkout-form-panel,
+.checkout-section-card,
+.checkout-summary-box,
+.checkout-order-items { min-width: 0; }
+.checkout-summary-box { top: calc(var(--header-h) + 16px); }
+.form-field input,
+.form-field select,
+.form-field textarea { width: 100%; min-width: 0; max-width: 100%; }
+.coupon-row input { flex: 1 1 auto; min-width: 0; }
+.coupon-row .btn { flex: 0 0 auto; }
+.summary-row { gap: 12px; }
+.summary-row > :first-child { min-width: 0; overflow-wrap: anywhere; }
+
+/* Order summary rows: [thumb] [name + meta (wraps, max 2 lines)] [price] */
+.checkout-item-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  font-size: 14px;
+  width: 100%;
+}
+.checkout-item-thumb {
+  width: 52px;
+  height: 52px;
+  border: 2px solid var(--black);
+  border-radius: 6px;
+  background: var(--off-white);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.checkout-item-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.checkout-item-details { min-width: 0; }
+.checkout-item-name {
+  font-weight: 700;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.checkout-item-meta { font-size: 12px; color: #666; margin-top: 2px; }
+.checkout-item-price { font-weight: 700; white-space: nowrap; text-align: right; }
+
+/* Shipping method card */
+.shipping-options { display: flex; flex-direction: column; gap: 12px; }
+.shipping-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  border: 2px solid var(--black);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+  background: #fff8d6;
+  cursor: pointer;
+}
+.shipping-option-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.shipping-option-title { font-size: 14px; overflow-wrap: anywhere; }
+.shipping-option-note { font-size: 12px; color: #555; overflow-wrap: anywhere; }
+.shipping-option-badge { font-size: 13px; color: #166534; text-align: right; white-space: nowrap; }
+
+/* Checkout header: logo | security label | actions -- never overlapping */
+.checkout-header .header-inner { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.checkout-header .logo-link { flex: 0 0 auto; position: static; transform: none; }
+.checkout-header .logo-link img { height: 44px; width: auto; max-width: 150px; object-fit: contain; }
+.checkout-security-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 1 auto;
+  min-width: 0;
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--black);
+  white-space: nowrap;
+}
+.checkout-security-badge svg { flex: 0 0 auto; }
+.checkout-security-short { display: none; }
+.checkout-header .header-actions { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; }
+.btn-back-shop { padding: 8px 14px; font-size: 12px; white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; }
+.back-shop-short { display: none; }
+
+@media (max-width: 1024px) {
+  .checkout-grid { grid-template-columns: minmax(0, 1fr); gap: 24px; }
+  .checkout-summary-box { position: static; top: auto; }
+}
+@media (max-width: 900px) {
+  .checkout-security-long { display: none; }
+  .checkout-security-short { display: inline; }
+}
+@media (max-width: 640px) {
+  .checkout-header .header-inner { padding: 0 16px; gap: 8px; }
+  .checkout-header .logo-link img { height: 34px; max-width: 120px; }
+  .checkout-security-text { display: none; } /* lock icon stays; the container keeps its aria-label */
+  .checkout-main { padding-top: 20px; }
+  .checkout-heading { margin-bottom: 18px; }
+  .checkout-section-card,
+  .checkout-summary-box { padding: 20px 16px; border-radius: var(--radius-md); }
+  .checkout-step-title { font-size: 17px; margin-bottom: 14px; }
+  .payment-options-grid { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .checkout-order-items { max-height: 340px; }
+}
+@media (max-width: 480px) {
+  .shipping-option { grid-template-columns: auto minmax(0, 1fr); padding: 12px; }
+  .shipping-option-badge { grid-column: 2; text-align: left; white-space: normal; }
+  .checkout-item-row { gap: 10px; }
+  .checkout-item-thumb { width: 46px; height: 46px; }
+  .coupon-row { flex-wrap: wrap; }
+  .coupon-row input { flex: 1 1 100%; }
+  .coupon-row .btn { flex: 1 1 100%; }
+}
+@media (max-width: 420px) {
+  .back-shop-long { display: none; }
+  .back-shop-short { display: inline; }
+  .btn-back-shop { padding: 0 12px; height: 40px; }
+  .checkout-header .btn-account-nav { height: 40px; min-width: 40px; padding: 0 10px; }
+}
+@media (max-width: 340px) {
+  .checkout-header .header-inner { padding: 0 12px; gap: 6px; }
+  .checkout-header .logo-link img { height: 30px; max-width: 96px; }
+  .checkout-header .header-actions { gap: 6px; }
+}
+
+/* Toast: a fixed element at left:50% shrinks to fit only the right half of the viewport, which wrapped
+   short messages into 5 narrow lines on phones. Size to the content, capped to the viewport. */
+.toast {
+  width: max-content;
+  max-width: min(92vw, 440px);
+  text-align: center;
+  line-height: 1.35;
+}
+
+/* Gallery thumbnails: the <img width/height> attributes made the image shrink horizontally inside the
+   72px flex button while keeping its height, squeezing the picture. Fit it to the button instead. */
+.gallery-thumb img {
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  object-fit: cover;
+  display: block;
+  border-radius: inherit;
+}
+
+/* Logos: the CSS fixes the HEIGHT only, so the width must follow the image's own aspect ratio. A width
+   attribute (kept for layout-shift protection) would otherwise stay at its literal value and squash the logo. */
+.footer-brand img,
+.drawer-top img,
+.logo-link img {
+  width: auto;
+  object-fit: contain;
+}

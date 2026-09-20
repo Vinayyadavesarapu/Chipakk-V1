@@ -96,7 +96,13 @@ app.use('/uploads', (req, res, next) => {
 });
 
 // Serve static uploaded public files (Hostinger / local storage)
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// Filenames are unique (timestamp + random suffix), so a long immutable cache is safe.
+app.use('/uploads', express.static(require('./config/uploads').uploadDir, {
+  maxAge: '30d',
+  immutable: true,
+  dotfiles: 'ignore',
+  index: false
+}));
 
 const webDir = path.join(__dirname, '../web');
 const customerDir = path.join(__dirname, '../customer-workspace');

@@ -2,11 +2,8 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 
-// Ensure upload directory exists locally
-const uploadDir = path.join(__dirname, '..', 'uploads');
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
+// Upload directory is defined once in config/uploads.js (UPLOADS_DIR aware, created on load)
+const { uploadDir } = require('../config/uploads');
 
 // Product image storage configuration
 const productStorage = multer.diskStorage({

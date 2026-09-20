@@ -44,6 +44,27 @@ const resolveMarshansCategoryId = async (connection, categoryIdOrName) => {
   return res.insertId;
 };
 
+const taxProfileService = require('./taxProfileService');
+
+/** Optional GST configuration columns (migration 017): queried lazily so an un-migrated database keeps working. */
+let taxColumnSupport = null;
+const checkTaxColumns = async () => {
+  if (taxColumnSupport !== null) return taxColumnSupport;
+  const support = { products: false, categories: false };
+  try {
+    const [p] = await pool.execute("SHOW COLUMNS FROM marshans_products LIKE 'hsn_code'");
+    support.products = Array.isArray(p) && p.length > 0;
+    const [c] = await pool.execute("SHOW COLUMNS FROM marshans_categories LIKE 'hsn_code'");
+    support.categories = Array.isArray(c) && c.length > 0;
+  } catch (_) { /* not migrated */ }
+  taxColumnSupport = support;
+  return support;
+};
+const taxSelectCols = (t) => [
+  t.products ? 'p.hsn_code' : 'NULL AS hsn_code', t.products ? 'p.gst_rate' : 'NULL AS gst_rate',
+  t.categories ? 'c.hsn_code AS category_hsn_code' : 'NULL AS category_hsn_code', t.categories ? 'c.gst_rate AS category_gst_rate' : 'NULL AS category_gst_rate'
+];
+
 /**
  * Fetch list of Marshans 3D products with pagination, search, and category filters
  */
@@ -123,6 +144,7 @@ const getProducts = async ({
   const total = countRows[0].total || 0;
 
   // Main products query
+  const taxSupport = await checkTaxColumns();
   const selectCols = [
     'p.id',
     'p.store_id',
@@ -147,6 +169,7 @@ const getProducts = async ({
     'p.lumo_dark_image',
     'p.lumo_light_360_url',
     'p.lumo_dark_360_url',
+    ...taxSelectCols(taxSupport),
     'p.tags',
     'p.active',
     'p.featured',
@@ -212,6 +235,7 @@ const getProducts = async ({
       experience_override: r.experience_override || null,
       effective_experience: r.experience_override || 'normal',
       is_best_seller: r.is_best_seller === 1,
+      ...taxProfileService.shapeTaxConfig(r),
       view_360_url: r.view_360_url || null,
       lumo_light_image: r.lumo_light_image || null,
       lumo_dark_image: r.lumo_dark_image || null,
@@ -237,6 +261,7 @@ const getProductById = async (productIdOrAdminId) => {
   const numId = parseInt(productIdOrAdminId, 10);
   const isNumeric = !isNaN(numId) && String(numId) === String(productIdOrAdminId).trim();
 
+  const taxSupport = await checkTaxColumns();
   const selectCols = [
     'p.id',
     'p.store_id',
@@ -261,6 +286,7 @@ const getProductById = async (productIdOrAdminId) => {
     'p.lumo_dark_image',
     'p.lumo_light_360_url',
     'p.lumo_dark_360_url',
+    ...taxSelectCols(taxSupport),
     'p.tags',
     'p.active',
     'p.featured',
@@ -295,6 +321,7 @@ const getProductById = async (productIdOrAdminId) => {
   product.experience_override = product.experience_override || null;
   product.effective_experience = product.experience_override || 'normal';
   product.is_best_seller = product.is_best_seller === 1;
+  Object.assign(product, taxProfileService.shapeTaxConfig(product));
   product.view_360_url = product.view_360_url || null;
   product.lumo_light_image = product.lumo_light_image || null;
   product.lumo_dark_image = product.lumo_dark_image || null;
@@ -406,6 +433,8 @@ const createProduct = async (productData) => {
     lumo_dark_image,
     lumo_light_360_url,
     lumo_dark_360_url,
+    hsn_code,
+    gst_rate,
     tags = [],
     images = [],
     material_ids = [],
@@ -414,6 +443,7 @@ const createProduct = async (productData) => {
     active = 1,
     featured = 0
   } = productData;
+  const taxCfg = taxProfileService.parseTaxConfigInput(productData);
 
   if (!name || typeof name !== 'string' || !name.trim()) {
     throw new Error('Product name is required');
@@ -488,6 +518,9 @@ const createProduct = async (productData) => {
       featured ? 1 : 0,
       safeDropTime
     ];
+    if (taxCfg.hsn_code.provided || taxCfg.gst_rate.provided) {
+      if ((await checkTaxColumns()).products) { insertFields.push('hsn_code', 'gst_rate'); insertValues.push(taxCfg.hsn_code.value, taxCfg.gst_rate.value); }
+    }
 
     const placeholders = insertFields.map(() => '?').join(', ');
     const insertQuery = `INSERT INTO marshans_products (${insertFields.join(', ')}) VALUES (${placeholders})`;
@@ -578,6 +611,8 @@ const updateProduct = async (id, updateData) => {
     lumo_dark_image,
     lumo_light_360_url,
     lumo_dark_360_url,
+    hsn_code,
+    gst_rate,
     tags,
     images,
     material_ids,
@@ -586,6 +621,7 @@ const updateProduct = async (id, updateData) => {
     active,
     featured
   } = updateData;
+  const taxCfg = taxProfileService.parseTaxConfigInput(updateData);
 
   const connection = await pool.getConnection();
 
@@ -646,6 +682,10 @@ const updateProduct = async (id, updateData) => {
     if (is_best_seller !== undefined) {
       updates.push('is_best_seller = ?');
       params.push(is_best_seller ? 1 : 0);
+    }
+    if ((taxCfg.hsn_code.provided || taxCfg.gst_rate.provided) && (await checkTaxColumns()).products) {
+      if (taxCfg.hsn_code.provided) { updates.push('hsn_code = ?'); params.push(taxCfg.hsn_code.value); }
+      if (taxCfg.gst_rate.provided) { updates.push('gst_rate = ?'); params.push(taxCfg.gst_rate.value); }
     }
     if (category_id !== undefined || category_name !== undefined) {
       const resolvedCatId = await resolveMarshansCategoryId(connection, category_id || category_name);

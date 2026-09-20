@@ -1,7 +1,7 @@
 /* =========================================================
    CHIPAKK — Checkout Module
    js/checkout.js
-   
+
    CHECKOUT FLOW ENGINE (PHASE 5):
    - Synchronized live cart items from localStorage
    - Live backend coupon validation via POST /api/coupons/validate
@@ -28,6 +28,62 @@
   let appliedCoupon = null;
   let selectedShipping = "standard"; // "standard" or "express"
   let selectedPayment = "upi";
+  let isSubmitting = false;
+  let pendingOnlineOrder = null;
+  let activeIdempotencyKey = null;
+
+  function extractCheckoutErrorMessage(errObj, fallback = "An unexpected error occurred") {
+    if (!errObj) return fallback;
+    let msg = "";
+    if (typeof errObj === "string") msg = errObj;
+    else if (typeof errObj === "object") {
+      if (errObj.error) {
+        if (typeof errObj.error === "string") msg = errObj.error;
+        else if (typeof errObj.error === "object" && errObj.error.message) msg = String(errObj.error.message);
+      }
+      if (!msg && errObj.message) {
+        if (typeof errObj.message === "string") msg = errObj.message;
+        else if (typeof errObj.message === "object" && errObj.message.message) msg = String(errObj.message.message);
+      }
+    }
+    if (!msg || /internal error/i.test(msg) || /server error/i.test(msg) || /database error/i.test(msg)) {
+      return fallback;
+    }
+    return msg;
+  }
+
+  window.addEventListener("chipakk-cart-updated", () => {
+    pendingOnlineOrder = null;
+    activeIdempotencyKey = null;
+  });
+
+  function normalizeIndianPhoneNumber(input) {
+    if (!input && input !== 0) {
+      return { valid: false, phone: null };
+    }
+    const digits = String(input).replace(/\D/g, "");
+    if (digits.length === 10) {
+      if (/^[6-9]/.test(digits)) {
+        return { valid: true, phone: digits };
+      }
+      return { valid: false, phone: null };
+    }
+    if (digits.length === 11 && digits.startsWith("0")) {
+      const candidate = digits.slice(1);
+      if (/^[6-9]/.test(candidate)) {
+        return { valid: true, phone: candidate };
+      }
+      return { valid: false, phone: null };
+    }
+    if (digits.length === 12 && digits.startsWith("91")) {
+      const candidate = digits.slice(2);
+      if (/^[6-9]/.test(candidate)) {
+        return { valid: true, phone: candidate };
+      }
+      return { valid: false, phone: null };
+    }
+    return { valid: false, phone: null };
+  }
 
   /* =========================================================
      1. CALCULATE ORDER TOTALS
@@ -40,22 +96,18 @@
 
     // Dynamic settings from CHIPAKK.DATA.settings (populated via GET /api/settings)
     const settings = window.CHIPAKK?.DATA?.settings || {};
-    const freeShippingThreshold = typeof settings.freeShippingThreshold === "number" 
-      ? settings.freeShippingThreshold 
-      : 0;
-    const standardShippingFee = typeof settings.shippingFee === "number" 
-      ? settings.shippingFee 
+    const freeShippingThreshold = typeof settings.freeShippingThreshold === "number"
+      ? settings.freeShippingThreshold
+      : 300;
+    const standardShippingFee = typeof settings.shippingFee === "number"
+      ? settings.shippingFee
       : 50;
-    const gstRate = typeof settings.gstRate === "number" 
-      ? settings.gstRate 
+    const gstRate = typeof settings.gstRate === "number"
+      ? settings.gstRate
       : 18;
 
-    // Shipping calculation
-    if (selectedShipping === "express") {
-      shippingCharge = 99;
-    } else {
-      shippingCharge = (freeShippingThreshold <= 0 || subtotal >= freeShippingThreshold) ? 0 : standardShippingFee;
-    }
+    // Shipping calculation: Free shipping evaluated strictly on GROSS merchandise subtotal
+    shippingCharge = (freeShippingThreshold > 0 && subtotal >= freeShippingThreshold) ? 0 : standardShippingFee;
 
     // Coupon discount calculation
     if (appliedCoupon) {
@@ -75,9 +127,6 @@
         }
       } else if (appliedCoupon.discountType === "fixed") {
         discount = Math.min(subtotal, appliedCoupon.discountRupees || appliedCoupon.discountValue);
-      } else if (appliedCoupon.discountType === "free_shipping") {
-        discount = shippingCharge;
-        shippingCharge = 0;
       }
     }
 
@@ -137,21 +186,25 @@
     // Render list of cart items
     itemsContainer.innerHTML = items.map(item => {
       const isImgUrl = typeof item.image === "string" && (item.image.startsWith("http") || item.image.includes("/"));
+      const resolvedImage = isImgUrl
+        ? (window.CHIPAKK?.resolveImageUrl ? window.CHIPAKK.resolveImageUrl(item.image) : item.image)
+        : "";
+
       return `
         <div class="checkout-item-row">
           <div class="checkout-item-left">
             <div class="checkout-item-thumb">
-              ${isImgUrl 
-                ? `<img src="${escapeAttr(item.image)}" alt="${escapeAttr(item.name)}" style="width:100%;height:100%;object-fit:cover;border-radius:3px;" />` 
+              ${isImgUrl
+                ? `<img src="${escapeAttr(resolvedImage)}" alt="${escapeAttr(item.name)}" style="width:100%;height:100%;object-fit:cover;border-radius:3px;" onerror="this.onerror=null;this.parentElement.innerHTML='<span style=\\'font-size:20px;\\'>⚡</span>';" />`
                 : (item.image || "⚡")
               }
             </div>
-            <div>
-              <div style="font-weight: 700;">${escapeHtml(item.name)}</div>
+            <div class="checkout-item-details">
+              <div class="checkout-item-name" title="${escapeAttr(item.name)}">${escapeHtml(item.name)}</div>
               <div style="font-size: 12px; color: #666;">${escapeHtml(item.material || 'Glossy')} • Qty: ${item.qty}</div>
             </div>
           </div>
-          <div style="font-weight: 700;">${formatPrice(item.price * item.qty)}</div>
+          <div class="checkout-item-price">${formatPrice(item.price * item.qty)}</div>
         </div>
       `;
     }).join("");
@@ -212,8 +265,9 @@
           result = await window.CHIPAKK.api.validateCoupon(code, subtotal);
         }
 
-        if (result && result.success && result.data) {
-          const couponData = result.data;
+        const isSuccess = (result && (result.success || result.valid)) && (result.data || result.coupon);
+        if (isSuccess) {
+          const couponData = result.data || result.coupon;
           appliedCoupon = {
             code: couponData.code || code,
             discountType: couponData.discount_type || "percent",
@@ -221,8 +275,8 @@
             discountRupees: typeof couponData.discount_rupees === "number" ? couponData.discount_rupees : 0,
             minOrderValueRupees: typeof couponData.min_order_value_rupees === "number" ? couponData.min_order_value_rupees : 0,
             maxDiscountRupees: typeof couponData.max_discount_amount_rupees === "number" ? couponData.max_discount_amount_rupees : null,
-            label: couponData.discount_type === "percent" 
-              ? `${couponData.discount_value}% OFF` 
+            label: couponData.discount_type === "percent"
+              ? `${couponData.discount_value}% OFF`
               : `₹${couponData.discount_rupees || couponData.discount_value} OFF`
           };
 
@@ -235,7 +289,7 @@
           renderCheckoutSummary();
         } else {
           appliedCoupon = null;
-          const errMsg = result?.error || "Invalid or expired coupon code.";
+          const errMsg = extractCheckoutErrorMessage(result, "Invalid or expired coupon code.");
           if (msgEl) {
             msgEl.style.display = "block";
             msgEl.style.color = "#991b1b";
@@ -265,17 +319,12 @@
      ========================================================= */
 
   function initShippingAndPayment() {
+    selectedShipping = "standard";
+
     // Shipping options
     const standardRadio = $("#shipStandard");
-    const expressRadio = $("#shipExpress");
-
     standardRadio?.addEventListener("change", () => {
       selectedShipping = "standard";
-      renderCheckoutSummary();
-    });
-
-    expressRadio?.addEventListener("change", () => {
-      selectedShipping = "express";
       renderCheckoutSummary();
     });
 
@@ -304,6 +353,8 @@
     placeBtn.addEventListener("click", async (e) => {
       e.preventDefault();
 
+      if (isSubmitting) return;
+
       if (cart.items.length === 0) {
         showToast("Your cart is empty!");
         return;
@@ -317,6 +368,7 @@
       const city = $("#custCity")?.value.trim() || "";
       const state = $("#custState")?.value.trim() || "";
       const pin = $("#custPin")?.value.trim() || "";
+      const cleanPin = pin.replace(/\s+/g, "");
 
       // 1. Validate Email
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -327,13 +379,13 @@
       }
 
       // 2. Validate Phone (Clean Indian 10-digit format)
-      const cleanPhone = rawPhone.replace(/^(\+91|91|0)/, "").replace(/[\s-]/g, "");
-      const phoneRegex = /^[6-9]\d{9}$/;
-      if (!phoneRegex.test(cleanPhone)) {
+      const phoneValidation = normalizeIndianPhoneNumber(rawPhone);
+      if (!phoneValidation.valid) {
         showToast("Please enter a valid 10-digit Indian mobile number.", "error");
         $("#custPhone")?.focus();
         return;
       }
+      const cleanPhone = phoneValidation.phone;
 
       // 3. Validate Name & Street Address
       if (name.length < 2) {
@@ -362,24 +414,60 @@
 
       // 4. Validate PIN Code (Indian 6-digit postal code)
       const pinRegex = /^[1-9][0-9]{5}$/;
-      if (!pinRegex.test(pin)) {
+      if (!pinRegex.test(cleanPin)) {
         showToast("Please enter a valid 6-digit postal PIN code.", "error");
         $("#custPin")?.focus();
         return;
       }
 
-      // 5. Verify Cart against Live Catalog (if available)
+      // 5. Single-flight submission guard — lock immediately before any asynchronous operations
+      isSubmitting = true;
+      placeBtn.disabled = true;
+      placeBtn.textContent = selectedPayment === "cod" ? "Placing Order…" : "Initiating Payment…";
+
+      // If customer previously created an order that is pending online payment and hasn't changed cart/address, reuse it!
+      if (selectedPayment !== "cod" && pendingOnlineOrder && pendingOnlineOrder.id) {
+        await launchOnlinePayment(pendingOnlineOrder, {
+          name,
+          email,
+          phone: cleanPhone,
+          city,
+          state,
+          cleanPin
+        });
+        return;
+      }
+
+      // Verify Cart against Live Catalog (if available)
       try {
         if (typeof window.CHIPAKK?.getProducts === "function") {
           const liveProducts = await window.CHIPAKK.getProducts();
           if (Array.isArray(liveProducts) && liveProducts.length > 0) {
-            const liveMap = new Map(liveProducts.map(p => [p.id, p]));
+            const liveMap = new Map(liveProducts.map(p => [String(p.id), p]));
+            let priceChanged = false;
             for (const item of cart.items) {
-              const liveProd = liveMap.get(item.id);
+              if (item.is_custom) continue;
+              const liveProd = liveMap.get(String(item.id));
               if (liveProd && liveProd.in_stock === false) {
                 showToast(`"${item.name}" is currently out of stock.`, "error");
+                isSubmitting = false;
+                placeBtn.disabled = false;
+                placeBtn.textContent = "Place Order 🚀";
                 return;
               }
+              if (liveProd && typeof liveProd.price === 'number' && liveProd.price !== item.price) {
+                item.price = liveProd.price;
+                priceChanged = true;
+              }
+            }
+            if (priceChanged) {
+              cart.save();
+              renderOrderReview();
+              showToast("Some item prices updated. Please review your total.", "info");
+              isSubmitting = false;
+              placeBtn.disabled = false;
+              placeBtn.textContent = "Place Order 🚀";
+              return;
             }
           }
         }
@@ -388,16 +476,27 @@
       }
 
       // 6. Submit Order to Real Backend API
-      placeBtn.disabled = true;
-      placeBtn.textContent = selectedPayment === "cod" ? "Placing Order…" : "Initiating Payment…";
-
       try {
+        if (!activeIdempotencyKey) {
+          activeIdempotencyKey = 'chk_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
+        }
+
         const orderPayload = {
-          items: cart.items.map(item => ({
-            product_id: parseInt(item.id, 10),
-            variant_id: item.variantId ? parseInt(item.variantId, 10) : null,
-            quantity: item.qty
-          })),
+          idempotency_key: activeIdempotencyKey,
+          items: cart.items.map(item => {
+            const isCustom = Boolean(item.is_custom || !item.id || isNaN(parseInt(item.id, 10)) || String(item.id).startsWith("custom_"));
+            const numProdId = isCustom ? null : parseInt(item.id, 10);
+            return {
+              product_id: numProdId,
+              variant_id: item.variantId && !isNaN(parseInt(item.variantId, 10)) ? parseInt(item.variantId, 10) : null,
+              quantity: item.qty,
+              is_custom: isCustom,
+              name: item.name,
+              price: item.price,
+              variant_options: (item.materials && item.sizes) ? `Finish: ${item.materials[0] || 'Glossy'}, Size: ${item.sizes[0] || '3"'}` : (item.variantOptions || null),
+              custom_design_data: item.custom_design_data || null
+            };
+          }),
           shipping_address: {
             name,
             phone: cleanPhone,
@@ -409,6 +508,7 @@
             country: "India"
           },
           coupon_code: appliedCoupon ? appliedCoupon.code : null,
+          shipping_method: "standard",
           payment_method: selectedPayment.toUpperCase()
         };
 
@@ -419,15 +519,17 @@
           response = await window.CHIPAKK.api.createOrder(orderPayload);
         }
 
-        if (!response || !response.success || !response.data) {
-          const errMsg = response?.error || "Failed to place order. Please check your details and try again.";
+        // Handle both unwrapped payload ({ id, order_number, ... }) and wrapped envelope ({ success: true, data: { ... } })
+        const realOrder = (response && response.data) ? response.data : response;
+
+        if (!realOrder || !realOrder.id) {
+          const errMsg = extractCheckoutErrorMessage(response, "Failed to place order. Please check your details and try again.");
           showToast(errMsg, "error");
+          isSubmitting = false;
           placeBtn.disabled = false;
           placeBtn.textContent = "Place Order 🚀";
           return;
         }
-
-        const realOrder = response.data;
 
         // 7. Persist Local Shipping Address Snapshot for re-orders
         const shippingAddressSnapshot = {
@@ -449,6 +551,11 @@
         if (selectedPayment === "cod") {
           // Cash on Delivery — Clear cart and show COD confirmation
           cart.clear();
+          isSubmitting = false;
+          pendingOnlineOrder = null;
+          activeIdempotencyKey = null;
+          placeBtn.disabled = false;
+          placeBtn.textContent = "Place Order 🚀";
           showConfirmationModal(realOrder, {
             isCod: true,
             customerName: name,
@@ -458,6 +565,8 @@
             cleanPin
           });
         } else {
+          // Store created online order for retry deduplication
+          pendingOnlineOrder = realOrder;
           // Online Payment (UPI, Card, Net Banking) via Razorpay
           await launchOnlinePayment(realOrder, {
             name,
@@ -470,8 +579,8 @@
         }
       } catch (orderErr) {
         console.error("Order placement error:", orderErr);
-        showToast(orderErr.message || "Network error while placing order.", "error");
-      } finally {
+        showToast(extractCheckoutErrorMessage(orderErr, "Network error while placing order."), "error");
+        isSubmitting = false;
         placeBtn.disabled = false;
         placeBtn.textContent = "Place Order 🚀";
       }
@@ -481,6 +590,7 @@
      * Launch Razorpay Online Gateway Checkout
      */
     async function launchOnlinePayment(realOrder, customerData) {
+      isSubmitting = true;
       placeBtn.disabled = true;
       placeBtn.textContent = "Opening Payment Gateway…";
 
@@ -493,8 +603,11 @@
           payRes = await window.CHIPAKK.api.createPaymentOrder(realOrder.id);
         }
 
-        if (!payRes || !payRes.success || !payRes.data) {
-          if (payRes?.code === "GATEWAY_NOT_CONFIGURED") {
+        // Handle unwrapped vs wrapped envelope
+        const paymentData = (payRes && payRes.data) ? payRes.data : payRes;
+
+        if (!paymentData || (!paymentData.gateway_order_id && !paymentData.already_paid)) {
+          if (payRes?.code === "GATEWAY_NOT_CONFIGURED" || paymentData?.code === "GATEWAY_NOT_CONFIGURED") {
             showToast("Online payment gateway is in test mode. Order recorded as Pending Payment.", "info");
             showConfirmationModal(realOrder, {
               isPending: true,
@@ -502,16 +615,18 @@
               customerData,
               note: "Payment gateway credentials are being configured on server. Your order #CHP-... has been securely recorded."
             });
+            isSubmitting = false;
+            placeBtn.disabled = false;
+            placeBtn.textContent = "Place Order 🚀";
             return;
           }
-          throw new Error(payRes?.error || "Unable to initiate payment with gateway.");
+          throw new Error((payRes && payRes.error) || (paymentData && paymentData.error) || "Unable to initiate payment with gateway.");
         }
-
-        const paymentData = payRes.data;
 
         // If order was already paid
         if (paymentData.already_paid) {
           cart.clear();
+          isSubmitting = false;
           showConfirmationModal(realOrder, {
             isPaid: true,
             customerData
@@ -527,6 +642,9 @@
         }
 
         // Step C: Initialize Razorpay Checkout Modal
+        placeBtn.disabled = true;
+        placeBtn.textContent = "Payment in progress…";
+
         const rzpOptions = {
           key: paymentData.key_id,
           amount: paymentData.amount, // in paise
@@ -563,9 +681,15 @@
                 verifyRes = await window.CHIPAKK.api.verifyPayment(verifyPayload);
               }
 
-              if (verifyRes && verifyRes.success && verifyRes.data?.payment_status === "paid") {
+              // Handle unwrapped vs wrapped envelope
+              const verifiedData = (verifyRes && verifyRes.data) ? verifyRes.data : verifyRes;
+
+              if (verifiedData && (verifiedData.payment_status === "paid" || verifiedData.success === true)) {
                 // 100% SERVER VERIFIED PAYMENT SUCCESS
                 cart.clear();
+                isSubmitting = false;
+                pendingOnlineOrder = null;
+                activeIdempotencyKey = null;
                 showToast("Payment verified successfully! 🎉", "success");
                 showConfirmationModal(realOrder, {
                   isPaid: true,
@@ -573,6 +697,9 @@
                   customerData
                 });
               } else {
+                isSubmitting = false;
+                placeBtn.disabled = false;
+                placeBtn.textContent = "Retry Payment 🚀";
                 showToast("Payment status is pending verification.", "info");
                 showConfirmationModal(realOrder, {
                   isPending: true,
@@ -582,20 +709,23 @@
             } catch (verifyErr) {
               console.error("Signature verification error:", verifyErr);
               showToast("Payment verification failed: " + verifyErr.message, "error");
+              isSubmitting = false;
+              placeBtn.disabled = false;
+              placeBtn.textContent = "Retry Payment 🚀";
               showConfirmationModal(realOrder, {
                 isFailed: true,
                 canRetry: true,
                 customerData,
                 errorMsg: verifyErr.message
               });
-            } finally {
-              placeBtn.disabled = false;
-              placeBtn.textContent = "Place Order 🚀";
             }
           },
           modal: {
             ondismiss: function () {
               // Customer dismissed or cancelled popup without completing payment
+              isSubmitting = false;
+              placeBtn.disabled = false;
+              placeBtn.textContent = "Retry Payment 🚀";
               showToast("Payment not completed. Your order has been saved.", "info");
               showConfirmationModal(realOrder, {
                 isDismissed: true,
@@ -609,6 +739,9 @@
         const rzpInstance = new window.Razorpay(rzpOptions);
         rzpInstance.on("payment.failed", function (failResp) {
           console.warn("Payment failed at gateway:", failResp.error);
+          isSubmitting = false;
+          placeBtn.disabled = false;
+          placeBtn.textContent = "Retry Payment 🚀";
           showToast("Payment failed: " + (failResp.error?.description || "Transaction declined"), "error");
           showConfirmationModal(realOrder, {
             isFailed: true,
@@ -621,6 +754,9 @@
         rzpInstance.open();
       } catch (payErr) {
         console.error("Payment initiation error:", payErr);
+        isSubmitting = false;
+        placeBtn.disabled = false;
+        placeBtn.textContent = "Place Order 🚀";
         showToast(payErr.message || "Failed to start payment.", "error");
         showConfirmationModal(realOrder, {
           isFailed: true,
@@ -628,9 +764,6 @@
           customerData,
           errorMsg: payErr.message
         });
-      } finally {
-        placeBtn.disabled = false;
-        placeBtn.textContent = "Place Order 🚀";
       }
     }
 
@@ -677,13 +810,14 @@
 
       if (orderNumberBadge) orderNumberBadge.textContent = realOrder.order_number;
 
-      const subtotalRupees = realOrder.subtotal_rupees !== undefined ? realOrder.subtotal_rupees : Math.round((realOrder.subtotal || 0) / 100);
+      const isStore2 = parseInt(realOrder.store_id, 10) === 2;
+      const subtotalRupees = realOrder.subtotal_rupees !== undefined ? realOrder.subtotal_rupees : (isStore2 ? Math.round((realOrder.subtotal || 0) / 100) : (realOrder.subtotal || 0));
       if (subtotalEl) subtotalEl.textContent = formatPrice(subtotalRupees);
 
-      const shippingRupees = realOrder.shipping_charge_rupees !== undefined ? realOrder.shipping_charge_rupees : Math.round((realOrder.shipping_charge || 0) / 100);
+      const shippingRupees = realOrder.shipping_charge_rupees !== undefined ? realOrder.shipping_charge_rupees : (isStore2 ? Math.round((realOrder.shipping_charge || 0) / 100) : (realOrder.shipping_charge || 0));
       if (shippingEl) shippingEl.textContent = shippingRupees === 0 ? "FREE" : formatPrice(shippingRupees);
 
-      const discountRupees = realOrder.discount_total_rupees !== undefined ? realOrder.discount_total_rupees : Math.round((realOrder.discount_total || 0) / 100);
+      const discountRupees = realOrder.discount_total_rupees !== undefined ? realOrder.discount_total_rupees : (isStore2 ? Math.round((realOrder.discount_total || 0) / 100) : (realOrder.discount_total || 0));
       if (discountRow && discountEl) {
         if (discountRupees > 0) {
           discountRow.style.display = "flex";
@@ -693,12 +827,20 @@
         }
       }
 
-      const grandTotalRupees = realOrder.total_price_rupees !== undefined ? realOrder.total_price_rupees : Math.round((realOrder.total_price || 0) / 100);
+      const grandTotalRupees = realOrder.total_price_rupees !== undefined ? realOrder.total_price_rupees : (isStore2 ? Math.round((realOrder.total_price || 0) / 100) : (realOrder.total_price || 0));
       if (totalEl) totalEl.textContent = formatPrice(grandTotalRupees);
 
-      if (deliveryEl && options.customerData) {
-        const c = options.customerData;
-        deliveryEl.textContent = `${escapeHtml(c.name || "")}, ${escapeHtml(c.city || "")}, ${escapeHtml(c.state || "")} — ${escapeHtml(c.cleanPin || "")} (Ph: ${escapeHtml(c.phone || "")})`;
+      if (deliveryEl) {
+        const c = options.customerData || {
+          name: options.customerName || options.name,
+          city: options.city,
+          state: options.state,
+          cleanPin: options.cleanPin || options.pincode || options.pin,
+          phone: options.customerPhone || options.phone
+        };
+        if (c && (c.name || c.city || c.cleanPin)) {
+          deliveryEl.textContent = `${escapeHtml(c.name || "")}, ${escapeHtml(c.city || "")}, ${escapeHtml(c.state || "")} — ${escapeHtml(c.cleanPin || "")} (Ph: ${escapeHtml(c.phone || "")})`;
+        }
       }
 
       // Configure Status Banner & Retry Button
@@ -867,8 +1009,8 @@
           }
         } catch (_) {}
 
-        const displayName = window.CHIPAKK?.auth?.getDisplayName 
-          ? window.CHIPAKK.auth.getDisplayName(user) 
+        const displayName = window.CHIPAKK?.auth?.getDisplayName
+          ? window.CHIPAKK.auth.getDisplayName(user)
           : (user.displayName || user.email);
 
         if (banner) {
@@ -913,7 +1055,7 @@
                     `).join("")}
                   </select>
                 `;
-                
+
                 addressSection.insertBefore(selectorWrapper, addressSection.firstChild);
 
                 const selector = $("#checkoutAddressSelector");

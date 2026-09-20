@@ -35,7 +35,9 @@ const sendError = (res, message = 'An unexpected error occurred', statusCode = 5
     timestamp: new Date().toISOString()
   };
 
-  if (errorDetails && process.env.NODE_ENV !== 'production') {
+  // Fail closed: diagnostics (stack traces, file paths) leave the server ONLY when NODE_ENV is explicitly
+  // 'development'. An unset/misspelled NODE_ENV on a host must not turn them on.
+  if (errorDetails && process.env.NODE_ENV === 'development') {
     response.error.details = errorDetails;
   }
 

@@ -1,10 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const uploadDir = path.join(__dirname, '..', 'uploads');
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
+const { uploadDir } = require('../config/uploads');
 
 // Matches the whitelist enforced on the multer upload path (server/middleware/upload.js).
 // SVG is intentionally excluded: an inline SVG can carry <script>/event-handler payloads and
