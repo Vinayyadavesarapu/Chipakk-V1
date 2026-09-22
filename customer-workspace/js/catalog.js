@@ -272,6 +272,18 @@
     }
 
     /**
+     * The ONE place that decides whether an old/reference price is shown next to the current price, and how.
+     * Shown ONLY when compareAtPrice is a real number strictly greater than price (never for null/0/missing/<=
+     * price - no invented "was" price, and never a %-off / savings label, by design). product.price stays the
+     * only price sent to cart/checkout; this only builds display markup from two numbers already resolved by
+     * normalizeProduct(). Used by every card (below) and by the product detail page (js/product.js).
+     */
+    function compareAtHtml(price, compareAtPrice) {
+      var show = compareAtPrice !== null && compareAtPrice !== undefined && compareAtPrice > price;
+      return show ? '<span class="product-price-orig">' + formatPrice(compareAtPrice) + "</span>" : "";
+    }
+
+    /**
      * Product card. Accepts a NORMALIZED product; tolerates a raw one by
      * normalizing it, so a caller can never render un-resolved image data.
      * options: { isWishlisted, mode: 'standard'|'wishlist', priority }
@@ -289,7 +301,6 @@
       var idAttr = escapeHtml(p.id);
       var nameAttr = escapeHtml(p.name);
       var soldOut = p.inStock === false;
-      var showCompare = p.compareAtPrice !== null && p.compareAtPrice > p.price;
 
       // imgHtml returns the shared placeholder when there is no URL, so "no image" and "image failed"
       // look identical everywhere (no made-up artwork).
@@ -327,7 +338,7 @@
         '<span class="rating-tier tier-' + escapeHtml(tier.toLowerCase()) + '">' + escapeHtml(tier) + "</span></div>" +
         '<h3 class="product-name"><a href="' + escapeHtml(p.url) + '">' + escapeHtml(p.name) + "</a></h3>" +
         '<div class="product-pricing"><span class="product-price">' + formatPrice(p.price) + "</span>" +
-        (showCompare ? '<span class="product-price-orig">' + formatPrice(p.compareAtPrice) + "</span>" : "") + "</div>" +
+        compareAtHtml(p.price, p.compareAtPrice) + "</div>" +
         actions + "</div></article>";
     }
 
@@ -362,6 +373,7 @@
       categoryMediaHtml: categoryMediaHtml,
       productCardHtml: productCardHtml,
       productGridHtml: productGridHtml,
+      compareAtHtml: compareAtHtml,
       matchCategoryQuery: matchCategoryQuery
     };
   }

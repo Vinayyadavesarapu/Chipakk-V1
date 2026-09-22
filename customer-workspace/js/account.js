@@ -421,11 +421,17 @@
 
     let orders = [];
     try {
+      let raw = null;
       if (window.CHIPAKK?.getCustomerOrdersApi) {
-        orders = await window.CHIPAKK.getCustomerOrdersApi();
+        raw = await window.CHIPAKK.getCustomerOrdersApi();
       } else if (window.CHIPAKK?.api?.getCustomerOrders) {
-        orders = await window.CHIPAKK.api.getCustomerOrders();
+        raw = await window.CHIPAKK.api.getCustomerOrders();
       }
+      // GET /api/orders resolves to { total, limit, offset, orders: [...] } (see server/services/orderService.js
+      // getCustomerOrders), not a bare array — unwrap it the same way every other paginated list in this app does
+      // (e.g. products). Treating the envelope itself as the order list crashed here with "orders.map is not a
+      // function" and left the tab stuck on "Loading your orders…" for every signed-in customer.
+      orders = Array.isArray(raw) ? raw : (raw && Array.isArray(raw.orders) ? raw.orders : []);
     } catch (err) {
       console.warn("Could not fetch remote orders:", err);
       orders = getOrders();

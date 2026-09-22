@@ -41,6 +41,13 @@ function loadStorefront(opts = {}) {
   const fetch = async (url, o) => { record.push({ url: String(url), method: (o && o.method) || 'GET', headers: (o && o.headers) || {} }); return fetchImpl(String(url), o); };
 
   const listeners = {};
+  // Real auth.js's window.CHIPAKK.auth.onAuthStateChanged fans a real Firebase auth-state change out to every
+  // registered listener (account.js, checkout.js, app.js's header, ...). The stub here is a no-op by default (most
+  // tests don't touch auth), but it records every registered callback so a test CAN fire a real "user signed in /
+  // signed out" transition through the exact same code path production uses, instead of only through the
+  // window 'chipakk-auth-changed' event fallback (which real auth.js never needs, since it always provides
+  // onAuthStateChanged). authListeners is returned so callers can do: authListeners[0](fakeUser).
+  const authListeners = [];
   const win = {
     location: Object.assign({ hostname: 'chipakk.shop', search: '', origin: 'https://chipakk.shop', port: '', pathname: '/shop.html', hash: '', href: 'https://chipakk.shop/shop.html' }, opts.location || {}),
     localStorage, sessionStorage: localStorage,
@@ -48,7 +55,7 @@ function loadStorefront(opts = {}) {
     removeEventListener() {},
     dispatchEvent: (e) => { (listeners[e && e.type] || []).forEach((fn) => fn(e)); return true; },
     matchMedia: () => ({ matches: false, addEventListener() {} }),
-    CHIPAKK: { auth: { getCurrentUser: () => (opts.user !== undefined ? opts.user : { uid: 'test_user', email: 'test@chipakk.shop' }), onAuthStateChanged() {}, isAuthReady: () => Promise.resolve(null) } },
+    CHIPAKK: { auth: { getCurrentUser: () => (opts.user !== undefined ? opts.user : { uid: 'test_user', email: 'test@chipakk.shop' }), onAuthStateChanged: (cb) => { authListeners.push(cb); return () => { const i = authListeners.indexOf(cb); if (i !== -1) authListeners.splice(i, 1); }; }, isAuthReady: () => Promise.resolve(null) } },
     API_BASE_URL: opts.apiBase,
     CHIPAKK_LOADER_MAX_WAIT_MS: opts.loaderMaxWaitMs
   };
@@ -74,7 +81,7 @@ function loadStorefront(opts = {}) {
     // media.js / catalog.js are UMD: in the browser they publish window.CHIPAKK_MEDIA / CHIPAKK_CATALOG
     vm.runInContext(src, ctx, { filename: f, timeout: 5000 });
   }
-  return { window: win, CHIPAKK: win.CHIPAKK, ctx, record, logs, storage: store };
+  return { window: win, CHIPAKK: win.CHIPAKK, ctx, record, logs, storage: store, authListeners };
 }
 
 module.exports = { loadStorefront, envelope, JS_DIR };

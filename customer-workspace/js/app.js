@@ -2087,6 +2087,7 @@
     renderProductCard,
     renderProductGrid,
     categoryMediaHtml: catalog.categoryMediaHtml,
+    compareAtHtml: catalog.compareAtHtml,
     matchCategoryQuery: catalog.matchCategoryQuery,
     media,
     imgHtml: media.imgHtml,

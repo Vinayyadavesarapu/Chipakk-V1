@@ -58,8 +58,12 @@ const requireAdmin = async (req, res, next) => {
       [req.user.uid, req.user.email || '']
     );
 
-    // Bootstrap first admin if admins table is completely empty
-    if (!rows || rows.length === 0) {
+    // Bootstrap the FIRST admin if the admins table is completely empty. This must be an explicit, deliberate
+    // action (ALLOW_ADMIN_BOOTSTRAP=true), never something ordinary request traffic can trigger on its own:
+    // without this gate, ANY authenticated Firebase user (a customer, an attacker who just signed up) who hits an
+    // admin route while the table happens to be empty (a fresh deploy, an accidental DELETE) would be silently
+    // promoted to super_admin. Customer authentication must never automatically grant admin access.
+    if ((!rows || rows.length === 0) && process.env.ALLOW_ADMIN_BOOTSTRAP === 'true') {
       const [countRows] = await pool.execute('SELECT COUNT(*) AS total FROM admins');
       if (countRows[0].total === 0 && req.user.email) {
         await pool.execute(

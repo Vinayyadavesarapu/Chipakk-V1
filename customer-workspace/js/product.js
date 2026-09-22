@@ -25,6 +25,7 @@
     getRatingTier,
     renderProductCard,
     renderProductGrid,
+    compareAtHtml,
     loader,
     media,
     escapeHtml,
@@ -226,7 +227,7 @@
     if (priceEl) {
       priceEl.innerHTML = `
         <span>${formatPrice(currentProduct.price)}</span>
-        ${currentProduct.compareAtPrice ? `<span class="product-price-orig">${formatPrice(currentProduct.compareAtPrice)}</span>` : ""}
+        ${compareAtHtml(currentProduct.price, currentProduct.compareAtPrice)}
       `;
     }
 
@@ -320,7 +321,7 @@
       if (priceEl) {
         priceEl.innerHTML = `
           <span>${formatPrice(currentPrice)}</span>
-          ${comparePrice ? `<span class="product-price-orig">${formatPrice(comparePrice)}</span>` : ""}
+          ${compareAtHtml(currentPrice, comparePrice)}
         `;
       }
 

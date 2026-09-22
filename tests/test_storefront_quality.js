@@ -217,6 +217,28 @@ function assertBalancedHtml(html, label) {
     const sold = catalog.productCardHtml(catalog.normalizeProduct({ ...base, in_stock: false }));
     assert.ok(sold.includes('is-sold-out') && /data-add-to-cart="1"[^>]*disabled/.test(sold));
   });
+  await test('CARDS', 'compare-at price: the exact required scenarios (₹15/₹25, null, ₹15, ₹10, missing) and never a %/savings label', () => {
+    const p15 = { id: 2, name: 'B', price: 15, primary_image_url: '/uploads/a.webp' };
+    // price=15, compare_at_price=25 -> "₹25 ₹15", ₹25 struck through (product-price-orig), ₹15 the primary product-price
+    const shown = catalog.productCardHtml(catalog.normalizeProduct({ ...p15, compare_at_price: 25 }));
+    assert.ok(/<span class="product-price">₹15<\/span><span class="product-price-orig">₹25<\/span>/.test(shown), shown);
+    // price=15, compare_at_price=NULL -> only ₹15
+    const nullCase = catalog.productCardHtml(catalog.normalizeProduct({ ...p15, compare_at_price: null }));
+    assert.ok(nullCase.includes('₹15') && !nullCase.includes('product-price-orig'));
+    // price=15, compare_at_price=15 (equal) -> only ₹15
+    const equalCase = catalog.productCardHtml(catalog.normalizeProduct({ ...p15, compare_at_price: 15 }));
+    assert.ok(equalCase.includes('₹15') && !equalCase.includes('product-price-orig'));
+    // price=15, compare_at_price=10 (lower) -> only ₹15
+    const lowerCase = catalog.productCardHtml(catalog.normalizeProduct({ ...p15, compare_at_price: 10 }));
+    assert.ok(lowerCase.includes('₹15') && !lowerCase.includes('product-price-orig'));
+    // compare_at_price key entirely missing from the API payload -> only ₹15
+    const missingCase = catalog.productCardHtml(catalog.normalizeProduct({ ...p15 }));
+    assert.ok(missingCase.includes('₹15') && !missingCase.includes('product-price-orig'));
+    // never a %-off / discount / savings / sale label anywhere near the price
+    for (const html of [shown, nullCase, equalCase, lowerCase, missingCase]) {
+      assert.ok(!/%\s*off|discount|savings|save\s*₹|\bsale\b/i.test(html), `no discount label: ${html}`);
+    }
+  });
   await test('CARDS', 'money: CHIPAKK shows whole rupees; MARSHANS uses the server-provided rupee value from paise', () => {
     assert.ok(catalog.productCardHtml(catalog.normalizeProduct({ id: 1, name: 'A', price: 1500, price_rupees: 1500, primary_image_url: '/uploads/a.webp' })).includes('₹1,500'));
     // store 2 API sends paise in `price` and the converted value in price_rupees; the card must never show paise
