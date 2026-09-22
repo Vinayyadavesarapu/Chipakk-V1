@@ -182,6 +182,18 @@ const createCategoryHandler = async (req, res, next) => {
     const imageUrl = req.file ? `/uploads/${req.file.filename}` : (req.body.image_url || null);
     const storeId = req.storeId || 1;
 
+    console.log('[Category Creation Diagnostic]', {
+      name,
+      slug,
+      req_file: req.file ? {
+        path: req.file.path,
+        destination: req.file.destination,
+        filename: req.file.filename
+      } : null,
+      body_image_url: req.body.image_url,
+      final_db_image_url: imageUrl
+    });
+
     if (!name || typeof name !== 'string' || !name.trim()) {
       return sendError(res, 'Category name is required', 400);
     }
@@ -243,6 +255,19 @@ const updateCategoryHandler = async (req, res, next) => {
     } = req.body;
 
     const imageUrl = req.file ? `/uploads/${req.file.filename}` : req.body.image_url;
+
+    console.log('[Category Update Diagnostic]', {
+      id,
+      name,
+      slug,
+      req_file: req.file ? {
+        path: req.file.path,
+        destination: req.file.destination,
+        filename: req.file.filename
+      } : null,
+      body_image_url: req.body.image_url,
+      final_db_image_url: imageUrl
+    });
 
     const numId = parseInt(id, 10);
     if (isNaN(numId)) {

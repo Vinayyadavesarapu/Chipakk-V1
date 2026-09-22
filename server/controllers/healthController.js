@@ -1,5 +1,5 @@
 const { testConnection } = require('../config/database');
-const { describeUploads } = require('../config/uploads');
+const { describeUploads, getUploadDiagnostic } = require('../config/uploads');
 const { sendSuccess, sendError } = require('../utils/responseHandler');
 
 /**
@@ -14,13 +14,25 @@ const getHealth = async (req, res) => {
     tax = {};
     for (const [code, id] of [['chipakk', 1], ['marshans', 2]]) tax[code] = taxProfileService.describeReadiness(await taxProfileService.getTaxProfile(id));
   } catch (_) { tax = null; }
-  return sendSuccess(res, {
+
+  const data = {
     service: 'CHIPAKK API',
     status: 'online',
     environment: process.env.NODE_ENV || 'development',
     uploads: describeUploads(),
     tax
-  }, 'CHIPAKK API is operational');
+  };
+
+  if (req.query.diagnostic === 'true' || req.query.file) {
+    data.uploads_diagnostic = getUploadDiagnostic(req.query.file || 'product-1790105924962-447688971.png');
+  }
+
+  return sendSuccess(res, data, 'CHIPAKK API is operational');
+};
+
+const getUploadsDiagnosticHandler = (req, res) => {
+  const targetFile = req.query.file || 'product-1790105924962-447688971.png';
+  return sendSuccess(res, getUploadDiagnostic(targetFile), 'Upload storage diagnostic report');
 };
 
 /**
@@ -43,5 +55,6 @@ const getDbHealth = async (req, res) => {
 
 module.exports = {
   getHealth,
-  getDbHealth
+  getDbHealth,
+  getUploadsDiagnosticHandler
 };

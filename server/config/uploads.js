@@ -73,4 +73,62 @@ const describeUploads = () => {
   return out;
 };
 
-module.exports = { uploadDir, describeUploads };
+const os = require('os');
+
+/** Detailed diagnostic report for storage troubleshooting */
+const getUploadDiagnostic = (targetFilename) => {
+  let writable = false;
+  let fileList = [];
+  try {
+    fs.accessSync(uploadDir, fs.constants.W_OK);
+    writable = true;
+  } catch (_) { /* not writable */ }
+  try {
+    fileList = fs.readdirSync(uploadDir).filter((f) => !f.startsWith('.'));
+  } catch (_) { /* unreadable */ }
+
+  const baseReport = {
+    effective_process_env_UPLOADS_DIR: process.env.UPLOADS_DIR || null,
+    resolved_uploadDir: uploadDir,
+    uploadDir_exists: fs.existsSync(uploadDir),
+    uploadDir_writable: writable,
+    file_count: fileList.length,
+    sample_files: fileList.slice(0, 25),
+    system: {
+      cwd: process.cwd(),
+      homedir: typeof os.homedir === 'function' ? os.homedir() : null,
+      username: typeof os.userInfo === 'function' ? (os.userInfo().username || null) : null,
+      appRoot,
+      insideAppDirectory: Boolean(insideAppDirectory)
+    }
+  };
+
+  if (targetFilename) {
+    const cleanFilename = path.basename(targetFilename);
+    const checkedPath = path.join(uploadDir, cleanFilename);
+    const candidatePaths = [
+      checkedPath,
+      path.join('/home/u781826529/chipakk-uploads', cleanFilename),
+      path.join(appRoot, 'server', 'uploads', cleanFilename),
+      path.join(process.cwd(), 'uploads', cleanFilename),
+      path.join(process.cwd(), 'chipakk-uploads', cleanFilename),
+      path.join(typeof os.homedir === 'function' ? os.homedir() : '', 'chipakk-uploads', cleanFilename)
+    ];
+
+    const probeResults = {};
+    candidatePaths.forEach((p) => {
+      probeResults[p] = fs.existsSync(p);
+    });
+
+    baseReport.target_check = {
+      filename: cleanFilename,
+      exact_filesystem_path_checked_by_GET: checkedPath,
+      exists_at_checked_path: fs.existsSync(checkedPath),
+      candidate_paths_probed: probeResults
+    };
+  }
+
+  return baseReport;
+};
+
+module.exports = { uploadDir, describeUploads, getUploadDiagnostic };

@@ -1,6 +1,8 @@
 const express = require('express');
+const fs = require('fs');
+const path = require('path');
 const { verifyFirebaseToken, requireAdmin } = require('../middleware/auth');
-const { uploadProductImage, uploadCustomArtwork } = require('../middleware/upload');
+const { uploadProductImage, uploadCustomArtwork, uploadDir } = require('../middleware/upload');
 const {
   getAdminDashboardHandler,
   getTeamMembersHandler,
@@ -240,13 +242,38 @@ router.post('/upload', (req, res, next) => {
       return res.status(400).json({ success: false, error: 'No file uploaded' });
     }
     const fileUrl = `/uploads/${uploadedFile.filename}`;
+    const fileExistsImmediately = fs.existsSync(uploadedFile.path);
+    const checkedGetPath = path.join(uploadDir, uploadedFile.filename);
+
+    console.log('[Upload Diagnostic] Upload completed:', {
+      effective_process_env_UPLOADS_DIR: process.env.UPLOADS_DIR || null,
+      resolved_uploadDir: uploadDir,
+      req_file_path: uploadedFile.path,
+      req_file_destination: uploadedFile.destination,
+      req_file_filename: uploadedFile.filename,
+      fs_existsSync_immediately: fileExistsImmediately,
+      final_db_image_url: fileUrl,
+      exact_filesystem_path_checked_by_GET: checkedGetPath,
+      size: uploadedFile.size
+    });
+
     return res.status(200).json({
       success: true,
       data: {
         filename: uploadedFile.filename,
         url: fileUrl,
         size: uploadedFile.size,
-        mimetype: uploadedFile.mimetype
+        mimetype: uploadedFile.mimetype,
+        diagnostic: {
+          effective_process_env_UPLOADS_DIR: process.env.UPLOADS_DIR || null,
+          resolved_uploadDir: uploadDir,
+          req_file_path: uploadedFile.path,
+          req_file_destination: uploadedFile.destination,
+          req_file_filename: uploadedFile.filename,
+          fs_existsSync_immediately: fileExistsImmediately,
+          final_db_image_url: fileUrl,
+          exact_filesystem_path_checked_by_GET: checkedGetPath
+        }
       },
       message: 'File uploaded successfully'
     });

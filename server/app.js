@@ -121,11 +121,23 @@ app.use('/uploads', express.static(require('./config/uploads').uploadDir, {
 // fell through to the API's generic "Route not found" (which reads like a routing bug and is not what happened), and
 // with no Cache-Control a CDN may keep the 404 after the file is restored, so it is explicitly not cacheable.
 app.use('/uploads', (req, res) => {
+  const uploadDir = require('./config/uploads').uploadDir;
+  const checkedPath = path.join(uploadDir, (req.path || '').replace(/^\//, ''));
+  console.warn(`[Upload 404] Missing upload file: ${req.path} | Checked filesystem path: ${checkedPath}`);
+
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('X-Content-Type-Options', 'nosniff');
+  const errorObj = {
+    message: 'Upload file not found',
+    code: 'UPLOAD_NOT_FOUND',
+    statusCode: 404
+  };
+  if (req.headers['x-diagnostic-debug'] === 'chipakk-upload-debug') {
+    errorObj.checkedPath = checkedPath;
+  }
   return res.status(404).json({
     success: false,
-    error: { message: 'Upload file not found', code: 'UPLOAD_NOT_FOUND', statusCode: 404 },
+    error: errorObj,
     timestamp: new Date().toISOString()
   });
 });
