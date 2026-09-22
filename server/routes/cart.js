@@ -44,6 +44,7 @@ router.use(optionalAuth);
 router.get('/', getCartHandler);
 router.post('/items', addItemHandler);
 router.patch('/items/:id', updateItemHandler);
+router.put('/items/:id', updateItemHandler);
 router.delete('/items/:id', removeItemHandler);
 router.delete('/', clearCartHandler);
 

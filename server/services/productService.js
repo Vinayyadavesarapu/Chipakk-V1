@@ -100,11 +100,14 @@ const getProducts = async ({
     params.push(active === 'true' || active === 1 || active === '1' ? 1 : 0);
   }
 
-  if (category_id) {
+  if (category_id !== undefined && category_id !== null && category_id !== '') {
     const numCategory = parseInt(category_id, 10);
     if (!isNaN(numCategory)) {
       conditions.push('p.category_id = ?');
       params.push(numCategory);
+    } else {
+      conditions.push('(c.slug = ? OR c.name = ?)');
+      params.push(String(category_id).trim(), String(category_id).trim());
     }
   }
 
@@ -139,7 +142,7 @@ const getProducts = async ({
 
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
-  const parsedLimit = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 200);
+  const parsedLimit = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 1000);
   const parsedOffset = Math.max(parseInt(offset, 10) || 0, 0);
 
   // Total matching count query
@@ -364,7 +367,49 @@ const getProductById = async (productIdOrAdminId, storeId = null) => {
   product.primary_image_url = primaryImg ? primaryImg.image_url : null;
   product.primary_storage_path = primaryImg ? primaryImg.storage_path : null;
 
-  // 2. Fetch variants and inventory
+  // 2. Fetch options & option values
+  try {
+    const [optRows] = await pool.execute(`
+      SELECT id, name, sort_order
+      FROM product_options
+      WHERE product_id = ?
+      ORDER BY sort_order ASC, id ASC
+    `, [numProductId]);
+
+    if (optRows && optRows.length > 0) {
+      const optIds = optRows.map(o => o.id);
+      const valPlaceholders = optIds.map(() => '?').join(',');
+      const [valRows] = await pool.execute(`
+        SELECT id, option_id, value, sort_order
+        FROM product_option_values
+        WHERE option_id IN (${valPlaceholders})
+        ORDER BY sort_order ASC, id ASC
+      `, optIds);
+
+      const valuesByOption = {};
+      (valRows || []).forEach(v => {
+        if (!valuesByOption[v.option_id]) valuesByOption[v.option_id] = [];
+        valuesByOption[v.option_id].push({
+          id: v.id,
+          value: v.value,
+          sort_order: v.sort_order
+        });
+      });
+
+      product.options = optRows.map(o => ({
+        id: o.id,
+        name: o.name,
+        sort_order: o.sort_order,
+        values: valuesByOption[o.id] || []
+      }));
+    } else {
+      product.options = [];
+    }
+  } catch (err) {
+    product.options = [];
+  }
+
+  // 3. Fetch variants and inventory
   const variantsQuery = `
     SELECT
       pv.id AS variant_id,
@@ -383,9 +428,23 @@ const getProductById = async (productIdOrAdminId, storeId = null) => {
   const [variantRows] = await pool.execute(variantsQuery, [numProductId]);
   product.variants = (variantRows || []).map(v => {
     const vPrice = parseInt(v.price, 10) || 0;
+    let optComb = v.option_combination;
+    if (typeof optComb === 'string') {
+      try { optComb = JSON.parse(optComb); } catch (_) { optComb = {}; }
+    } else if (!optComb || typeof optComb !== 'object') {
+      optComb = {};
+    }
+    const totalStock = parseInt(v.stock, 10) || 0;
+    const reserved = parseInt(v.reserved_stock, 10) || 0;
+    const availableStock = Math.max(0, totalStock - reserved);
     return {
       ...v,
-      price: vPrice
+      id: v.variant_id,
+      price: vPrice,
+      price_rupees: vPrice,
+      option_combination: optComb,
+      stock: totalStock,
+      available_stock: availableStock
     };
   });
 
@@ -501,6 +560,8 @@ const createProduct = async (productData) => {
     images = [],
     materials = [],
     finishing_options = [],
+    options = [],
+    variants = [],
     stock
   } = productData;
   const taxCfg = taxProfileService.parseTaxConfigInput(productData); // validated HSN / GST rate (400 on bad input)
@@ -625,27 +686,78 @@ const createProduct = async (productData) => {
       }
     }
 
-    // 3. Create default variant
-    const defaultVariantSlug = 'default';
-    const [varResult] = await connection.execute(
-      `INSERT INTO product_variants (product_id, variant_slug, sku, price, option_combination, active) VALUES (?, ?, ?, ?, ?, 1)`,
-      [
-        productId,
-        defaultVariantSlug,
-        generatedSku,
-        parseInt(price, 10) || 0,
-        JSON.stringify({})
-      ]
-    );
+    // 3. Insert product options and values if provided
+    if (Array.isArray(options) && options.length > 0) {
+      for (let optIdx = 0; optIdx < options.length; optIdx++) {
+        const opt = options[optIdx];
+        const optName = typeof opt === 'string' ? opt : (opt.name || opt.title || '');
+        if (!optName.trim()) continue;
+        const [optRes] = await connection.execute(
+          `INSERT INTO product_options (product_id, name, sort_order) VALUES (?, ?, ?)`,
+          [productId, optName.trim(), opt.sort_order !== undefined ? opt.sort_order : optIdx]
+        );
+        const optionId = optRes.insertId;
+        const values = Array.isArray(opt.values) ? opt.values : [];
+        for (let valIdx = 0; valIdx < values.length; valIdx++) {
+          const valItem = values[valIdx];
+          const valStr = typeof valItem === 'string' ? valItem : (valItem.value || valItem.name || '');
+          if (!valStr.trim()) continue;
+          await connection.execute(
+            `INSERT INTO product_option_values (option_id, value, sort_order) VALUES (?, ?, ?)`,
+            [optionId, valStr.trim(), valItem.sort_order !== undefined ? valItem.sort_order : valIdx]
+          );
+        }
+      }
+    }
 
-    const variantId = varResult.insertId;
+    // 4. Create variants and inventory
+    if (Array.isArray(variants) && variants.length > 0) {
+      for (let vIdx = 0; vIdx < variants.length; vIdx++) {
+        const v = variants[vIdx];
+        const vPrice = parseInt(v.price, 10) || parseInt(price, 10) || 0;
+        const vComb = typeof v.option_combination === 'string' ? v.option_combination : JSON.stringify(v.option_combination || {});
+        const baseSlug = v.variant_slug || (v.sku ? String(v.sku).toLowerCase().replace(/[^a-z0-9]+/g, '-') : `var-${vIdx + 1}`);
+        const vSlug = `${productId}-${baseSlug}`;
+        const vSku = (v.sku || `${generatedSku}-V${vIdx + 1}`).trim();
+        const vActive = v.active === 0 || v.active === false ? 0 : 1;
 
-    if (stock !== undefined && stock !== null) {
-      const stockVal = Math.max(parseInt(stock, 10) || 0, 0);
-      await connection.execute(
-        `INSERT INTO inventory (variant_id, stock, reserved_stock) VALUES (?, ?, 0)`,
-        [variantId, stockVal]
+        const [vRes] = await connection.execute(
+          `INSERT INTO product_variants (product_id, variant_slug, sku, price, option_combination, active) VALUES (?, ?, ?, ?, ?, ?)`,
+          [productId, vSlug, vSku, vPrice, vComb, vActive]
+        );
+        const vId = vRes.insertId;
+
+        const vStock = v.stock !== undefined && v.stock !== null ? Math.max(parseInt(v.stock, 10) || 0, 0) : (stock !== undefined && stock !== null ? Math.max(parseInt(stock, 10) || 0, 0) : null);
+        if (vStock !== null) {
+          await connection.execute(
+            `INSERT INTO inventory (variant_id, stock, reserved_stock) VALUES (?, ?, 0)`,
+            [vId, vStock]
+          );
+        }
+      }
+    } else {
+      // Default single variant
+      const defaultVariantSlug = 'default';
+      const [varResult] = await connection.execute(
+        `INSERT INTO product_variants (product_id, variant_slug, sku, price, option_combination, active) VALUES (?, ?, ?, ?, ?, 1)`,
+        [
+          productId,
+          defaultVariantSlug,
+          generatedSku,
+          parseInt(price, 10) || 0,
+          JSON.stringify({})
+        ]
       );
+
+      const variantId = varResult.insertId;
+
+      if (stock !== undefined && stock !== null) {
+        const stockVal = Math.max(parseInt(stock, 10) || 0, 0);
+        await connection.execute(
+          `INSERT INTO inventory (variant_id, stock, reserved_stock) VALUES (?, ?, 0)`,
+          [variantId, stockVal]
+        );
+      }
     }
 
     // 4. Map multiple materials (product_materials)
@@ -728,6 +840,8 @@ const updateProduct = async (id, updateData, storeId = null) => {
     images,
     materials,
     finishing_options,
+    options,
+    variants,
     stock
   } = updateData;
   const taxCfg = taxProfileService.parseTaxConfigInput(updateData);
@@ -880,8 +994,103 @@ const updateProduct = async (id, updateData, storeId = null) => {
       } catch (_) {}
     }
 
-    // Update default variant price & stock if provided
-    if (price !== undefined || stock !== undefined) {
+    // Update options if provided
+    if (Array.isArray(options)) {
+      await connection.execute('DELETE FROM product_options WHERE product_id = ?', [numId]);
+      for (let optIdx = 0; optIdx < options.length; optIdx++) {
+        const opt = options[optIdx];
+        const optName = typeof opt === 'string' ? opt : (opt.name || opt.title || '');
+        if (!optName.trim()) continue;
+        const [optRes] = await connection.execute(
+          'INSERT INTO product_options (product_id, name, sort_order) VALUES (?, ?, ?)',
+          [numId, optName.trim(), opt.sort_order !== undefined ? opt.sort_order : optIdx]
+        );
+        const optionId = optRes.insertId;
+        const values = Array.isArray(opt.values) ? opt.values : [];
+        for (let valIdx = 0; valIdx < values.length; valIdx++) {
+          const valItem = values[valIdx];
+          const valStr = typeof valItem === 'string' ? valItem : (valItem.value || valItem.name || '');
+          if (!valStr.trim()) continue;
+          await connection.execute(
+            'INSERT INTO product_option_values (option_id, value, sort_order) VALUES (?, ?, ?)',
+            [optionId, valStr.trim(), valItem.sort_order !== undefined ? valItem.sort_order : valIdx]
+          );
+        }
+      }
+    }
+
+    // Update variants if provided
+    if (Array.isArray(variants)) {
+      if (variants.length > 0) {
+        const [existingVariants] = await connection.execute(
+          'SELECT id, sku, variant_slug FROM product_variants WHERE product_id = ?',
+          [numId]
+        );
+        const existingById = new Map();
+        const existingBySku = new Map();
+        (existingVariants || []).forEach(ev => {
+          existingById.set(Number(ev.id), ev);
+          if (ev.sku) existingBySku.set(String(ev.sku).trim(), ev);
+        });
+
+        const retainedVariantIds = [];
+
+        for (let vIdx = 0; vIdx < variants.length; vIdx++) {
+          const v = variants[vIdx];
+          const vPrice = parseInt(v.price, 10) || parseInt(price, 10) || parseInt(existing.price, 10) || 0;
+          const vComb = typeof v.option_combination === 'string' ? v.option_combination : JSON.stringify(v.option_combination || {});
+          const vActive = v.active === 0 || v.active === false ? 0 : 1;
+          const vSku = (v.sku || `${existing.sku}-V${vIdx + 1}`).trim();
+          const baseSlug = v.variant_slug || (vSku ? String(vSku).toLowerCase().replace(/[^a-z0-9]+/g, '-') : `var-${vIdx + 1}`);
+          const vSlug = `${numId}-${baseSlug}`;
+
+          let targetVarId = null;
+          if (v.id && existingById.has(Number(v.id))) {
+            targetVarId = Number(v.id);
+            await connection.execute(
+              'UPDATE product_variants SET sku = ?, price = ?, option_combination = ?, active = ? WHERE id = ?',
+              [vSku, vPrice, vComb, vActive, targetVarId]
+            );
+          } else if (existingBySku.has(vSku)) {
+            targetVarId = Number(existingBySku.get(vSku).id);
+            await connection.execute(
+              'UPDATE product_variants SET sku = ?, price = ?, option_combination = ?, active = ? WHERE id = ?',
+              [vSku, vPrice, vComb, vActive, targetVarId]
+            );
+          } else {
+            const [insRes] = await connection.execute(
+              'INSERT INTO product_variants (product_id, variant_slug, sku, price, option_combination, active) VALUES (?, ?, ?, ?, ?, ?)',
+              [numId, vSlug, vSku, vPrice, vComb, vActive]
+            );
+            targetVarId = insRes.insertId;
+          }
+
+          retainedVariantIds.push(targetVarId);
+
+          if (v.stock !== undefined && v.stock !== null) {
+            const stockVal = Math.max(parseInt(v.stock, 10) || 0, 0);
+            await connection.execute(
+              'INSERT INTO inventory (variant_id, stock, reserved_stock) VALUES (?, ?, 0) ON DUPLICATE KEY UPDATE stock = VALUES(stock)',
+              [targetVarId, stockVal]
+            );
+          }
+        }
+
+        // Delete obsolete variants that were removed
+        const obsoleteIds = (existingVariants || [])
+          .map(ev => Number(ev.id))
+          .filter(id => !retainedVariantIds.includes(id));
+
+        if (obsoleteIds.length > 0) {
+          const obsPlaceholders = obsoleteIds.map(() => '?').join(',');
+          await connection.execute(
+            `DELETE FROM product_variants WHERE product_id = ? AND id IN (${obsPlaceholders})`,
+            [numId, ...obsoleteIds]
+          );
+        }
+      }
+    } else if (price !== undefined || stock !== undefined) {
+      // Legacy fallback: update default variant price & stock if provided
       const [varRows] = await connection.execute('SELECT id FROM product_variants WHERE product_id = ? AND variant_slug = "default" LIMIT 1', [numId]);
       let defaultVariantId;
 

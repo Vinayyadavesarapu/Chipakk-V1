@@ -329,6 +329,43 @@ function assertBalancedHtml(html, label) {
     const sf = loadStorefront({ fetch: productsHandler(mixed) });
     const list = await sf.CHIPAKK.getProducts();
     assert.strictEqual(JSON.stringify(list.map((p) => p.id).sort()), JSON.stringify(['1', '3']));
+
+    // On themarshans.shop, hostname resolution routes to Store 2 and isolates Store 2 products
+    const sfM = loadStorefront({ location: { hostname: 'themarshans.shop', origin: 'https://themarshans.shop' }, fetch: productsHandler(mixed) });
+    const listM = await sfM.CHIPAKK.getProducts();
+    assert.strictEqual(JSON.stringify(listM.map((p) => p.id).sort()), JSON.stringify(['2', '3']), 'themarshans.shop selects Store 2 products');
+    assert.strictEqual(sfM.record[0].headers['X-Store-ID'], '2', 'themarshans.shop sends X-Store-ID: 2');
+
+    // www.themarshans.shop routes to Store 2
+    const sfMwww = loadStorefront({ location: { hostname: 'www.themarshans.shop', origin: 'https://www.themarshans.shop' }, fetch: productsHandler(mixed) });
+    assert.strictEqual(sfMwww.window.CHIPAKK.getActiveStoreId(), 2, 'www.themarshans.shop routes to Store 2');
+
+    // chipakk.shop and www.chipakk.shop route to Store 1
+    const sfC = loadStorefront({ location: { hostname: 'chipakk.shop', origin: 'https://chipakk.shop' }, fetch: productsHandler(mixed) });
+    assert.strictEqual(sfC.window.CHIPAKK.getActiveStoreId(), 1, 'chipakk.shop routes to Store 1');
+    const sfCwww = loadStorefront({ location: { hostname: 'www.chipakk.shop', origin: 'https://www.chipakk.shop' }, fetch: productsHandler(mixed) });
+    assert.strictEqual(sfCwww.window.CHIPAKK.getActiveStoreId(), 1, 'www.chipakk.shop routes to Store 1');
+
+    // Substring attacks / third-party domains do NOT match either store and default safely to Store 1
+    const sfAttacker = loadStorefront({ location: { hostname: 'evil-marshans.com', origin: 'https://evil-marshans.com' }, fetch: productsHandler(mixed) });
+    assert.strictEqual(sfAttacker.window.CHIPAKK.getActiveStoreId(), 1, 'evil-marshans.com does NOT match Store 2');
+
+    // Backend storeContext middleware exact hostname allowlisting test
+    const { resolveStoreContext } = require('../server/middleware/storeContext');
+    const runMiddleware = (headers) => {
+      const req = { headers: {}, get: (name) => headers[name.toLowerCase()] || '', query: {} };
+      const res = { setHeader: (k, v) => {} };
+      resolveStoreContext(req, res, () => {});
+      return req.storeId;
+    };
+    assert.strictEqual(runMiddleware({ host: 'themarshans.shop' }), 2);
+    assert.strictEqual(runMiddleware({ host: 'www.themarshans.shop' }), 2);
+    assert.strictEqual(runMiddleware({ origin: 'https://themarshans.shop' }), 2);
+    assert.strictEqual(runMiddleware({ referer: 'https://www.themarshans.shop/catalog' }), 2);
+    assert.strictEqual(runMiddleware({ host: 'chipakk.shop' }), 1);
+    assert.strictEqual(runMiddleware({ host: 'www.chipakk.shop' }), 1);
+    assert.strictEqual(runMiddleware({ host: 'evil-themarshans.shop' }), 1, 'evil domain rejected');
+    assert.strictEqual(runMiddleware({ referer: 'https://attacker.com/themarshans.shop' }), 1, 'referer path substring rejected');
   });
   await test('APP', 'strict mode surfaces API failure (so the shop shows a retry state instead of "no results")', async () => {
     const sf = loadStorefront({ fetch: async () => envelope({ error: 'down' }, 503) });
@@ -546,24 +583,24 @@ function assertBalancedHtml(html, label) {
     }
   });
   await test('GST', 'client displayed GST equals the server snapshot for every ₹1..₹20000 total (no rounding drift)', () => {
-    const { tools, sf } = loadCheckout([item({ price: 1, qty: 1 })]); setStoreSettings(sf, { freeShippingThreshold: 1, shippingFee: 0, gstRate: 18 });
+    const { tools, sf } = loadCheckout([item({ price: 1, qty: 1 })]); setStoreSettings(sf, { freeShippingThreshold: 1, shippingFee: 0, gstRate: 0, gstEnabled: false });
     let mismatches = 0;
     for (let total = 1; total <= 20000; total++) {
       sf.CHIPAKK.cart.items[0].price = total; sf.CHIPAKK.cart.items[0].qty = 1;
       const client = tools.calculateTotals();
-      const server = taxUtils.calculateInclusiveGst({ amount: client.finalTotal, gstRate: 18, sellerState: 'Delhi', customerState: 'Delhi' }).tax_amount;
+      const server = taxUtils.calculateInclusiveGst({ amount: client.finalTotal, gstRate: 0, sellerState: 'Delhi', customerState: 'Delhi' }).tax_amount;
       if (client.gstPortion !== server) mismatches++;
     }
     assert.strictEqual(mismatches, 0);
   });
-  await test('GST', 'order snapshot: seller state comes from the configured supplier (fixture = Maharashtra): same state -> CGST+SGST, other state -> IGST', async () => {
+  await test('GST', 'order snapshot: GST inactive yields ₹0 tax and order succeeds without supplier requirement', async () => {
     dbState.products[1].price = 355; dbState.inserts.orders = null; // >= ₹300 => free shipping, total == 355
     await orderService.createCustomerOrder({ items: [{ product_id: 1, quantity: 1 }], shipping_address: { ...addr, state: 'Maharashtra' }, store_id: 1, payment_method: 'COD' }, buyer);
-    let o = dbState.inserts.orders; const expected = taxUtils.calculateInclusiveGst({ amount: 355, gstRate: 18, sellerState: 'Maharashtra', customerState: 'Maharashtra' });
-    assert.strictEqual(o.total_price, 355); assert.strictEqual(o.tax_amount, expected.tax_amount); assert.strictEqual(o.cgst_amount + o.sgst_amount, expected.tax_amount); assert.strictEqual(o.igst_amount, 0);
+    let o = dbState.inserts.orders;
+    assert.strictEqual(o.total_price, 355); assert.strictEqual(o.tax_amount, 0); assert.strictEqual(o.cgst_amount + o.sgst_amount, 0); assert.strictEqual(o.igst_amount, 0);
     try {
       await orderService.createCustomerOrder({ items: [{ product_id: 1, quantity: 1 }], shipping_address: { ...addr, state: 'Delhi' }, store_id: 1, payment_method: 'COD' }, buyer);
-      o = dbState.inserts.orders; assert.ok(o.igst_amount > 0 && o.cgst_amount === 0 && o.sgst_amount === 0);
+      o = dbState.inserts.orders; assert.strictEqual(o.tax_amount, 0); assert.strictEqual(o.cgst_amount, 0); assert.strictEqual(o.sgst_amount, 0); assert.strictEqual(o.igst_amount, 0);
     } finally { dbState.products[1].price = 105; }
   });
   await test('GST', 'stored units: CHIPAKK order money is whole rupees; Razorpay boundary is the only x100', async () => {
@@ -680,15 +717,28 @@ function assertBalancedHtml(html, label) {
     for (const k of Object.keys(require.cache)) if (k.includes(path.join('server', 'config', 'uploads'))) delete require.cache[k];
     try {
       const cfg = require('../server/config/uploads');
-      assert.strictEqual(cfg.uploadDir, path.resolve(dir)); assert.strictEqual(cfg.describeUploads().externalDirectory, true);
-      assert.ok(cfg.describeUploads().writable && cfg.describeUploads().fileCount === 1);
+      assert.strictEqual(cfg.uploadDir, path.resolve(dir));
+      const desc = cfg.describeUploads();
+      assert.strictEqual(desc.externalDirectory, true);
+      assert.strictEqual(desc.configured, true);
+      assert.strictEqual(desc.isAbsolute, true);
+      assert.strictEqual(desc.outsideAppDirectory, true);
+      assert.strictEqual(desc.insideAppDirectory, false);
+      assert.strictEqual(desc.exists, true);
+      assert.strictEqual(desc.writable, true);
+      assert.strictEqual(desc.fileCount, 1);
+      assert.strictEqual(desc.serving, true);
       await withApp(createFakePool([]), async (base) => {
         const ok = await fetch(`${base}/uploads/product-1-2.webp`); assert.strictEqual(ok.status, 200);
         assert.ok(/immutable/.test(ok.headers.get('cache-control') || ''), 'unique filenames => immutable caching');
         const miss = await fetch(`${base}/uploads/product-does-not-exist.webp`); assert.strictEqual(miss.status, 404);
         const trav = await fetch(`${base}/uploads/..%2f..%2fpackage.json`); assert.ok([400, 403, 404].includes(trav.status));
         const health = await (await fetch(`${base}/api/health`)).json();
-        assert.strictEqual(health.data.uploads.fileCount, 1); assert.ok(!JSON.stringify(health).includes(dir), 'health never reveals the path');
+        assert.strictEqual(health.data.uploads.fileCount, 1);
+        assert.strictEqual(health.data.uploads.configured, true);
+        assert.strictEqual(health.data.uploads.outsideAppDirectory, true);
+        assert.strictEqual(health.data.uploads.serving, true);
+        assert.ok(!JSON.stringify(health).includes(dir), 'health never reveals the path');
       });
     } finally { delete process.env.UPLOADS_DIR; }
   });
@@ -792,10 +842,10 @@ function assertBalancedHtml(html, label) {
     }
     const gst = [90, 205, 315, 365].map((t) => {
       const { tools, sf } = loadCheckout([item({ price: t, qty: 1 })]);
-      setStoreSettings(sf, { freeShippingThreshold: 1, shippingFee: 0, gstRate: 18 });
+      setStoreSettings(sf, { freeShippingThreshold: 1, shippingFee: 0, gstRate: 0, gstEnabled: false });
       const c = tools.calculateTotals();
-      const srv = taxUtils.calculateInclusiveGst({ amount: c.finalTotal, gstRate: 18, sellerState: 'Delhi', customerState: 'Delhi' });
-      assert.strictEqual(c.gstPortion, srv.tax_amount); assert.strictEqual(c.finalTotal, t, 'GST must not be added on top');
+      const srv = taxUtils.calculateInclusiveGst({ amount: c.finalTotal, gstRate: 0, sellerState: 'Delhi', customerState: 'Delhi' });
+      assert.strictEqual(c.gstPortion, 0); assert.strictEqual(srv.tax_amount, 0); assert.strictEqual(c.finalTotal, t, 'GST must not be added on top');
       return `total ₹${t}: client GST ₹${c.gstPortion} = server GST ₹${srv.tax_amount} (taxable ₹${srv.taxable_amount}); payable stays ₹${c.finalTotal}`;
     });
     console.log('       ' + rows.concat(gst).join('\n       '));

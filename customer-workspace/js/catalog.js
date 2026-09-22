@@ -70,6 +70,62 @@
   }
 
   /**
+   * Recognizes whether a user search query matches an active category by name or slug.
+   * Priority:
+   * 1. Exact match on slug or name (case-insensitive)
+   * 2. Slugified query match (e.g. "utility co" -> "utility-co")
+   * 3. Clear intent match stripped of generic filler words ("stickers", "prints", "designs", "collection")
+   * Returns matching category object or null.
+   */
+  function matchCategoryQuery(query, categories) {
+    if (!query || typeof query !== "string") return null;
+    var raw = query.trim().toLowerCase();
+    if (!raw) return null;
+    if (!Array.isArray(categories) || categories.length === 0) return null;
+
+    var activeCats = categories.filter(function (c) {
+      return c && c.active !== false && c.slug;
+    });
+
+    // 1. Exact match on slug or name
+    var exact = activeCats.find(function (c) {
+      var slug = (c.slug || "").toLowerCase().trim();
+      var name = (c.name || "").toLowerCase().trim();
+      return slug === raw || name === raw;
+    });
+    if (exact) return exact;
+
+    // 2. Slugified query match (e.g. "utility co" vs "utility-co")
+    var slugifiedQuery = slugify(raw);
+    if (slugifiedQuery) {
+      var slugMatch = activeCats.find(function (c) {
+        var s = (c.slug || "").toLowerCase().trim();
+        var nSlug = slugify(c.name);
+        return s === slugifiedQuery || nSlug === slugifiedQuery;
+      });
+      if (slugMatch) return slugMatch;
+    }
+
+    // 3. Clear intent match: stripped of common accessory words like "stickers", "sticker", "prints", "print", "collection", "merch", "designs"
+    // e.g. "anime stickers" -> "anime", "darshanam prints" -> "darshanam"
+    var stripped = raw
+      .replace(/\b(stickers?|prints?|designs?|collection|merch)\b/gi, "")
+      .trim();
+    if (stripped && stripped !== raw && stripped.length >= 2) {
+      var strippedSlug = slugify(stripped);
+      var strippedMatch = activeCats.find(function (c) {
+        var slug = (c.slug || "").toLowerCase().trim();
+        var name = (c.name || "").toLowerCase().trim();
+        var nSlug = slugify(name);
+        return slug === stripped || name === stripped || slug === strippedSlug || nSlug === strippedSlug;
+      });
+      if (strippedMatch) return strippedMatch;
+    }
+
+    return null;
+  }
+
+  /**
    * createCatalog({ media, formatPrice, storeId })
    *   media       - CHIPAKK_MEDIA.createMedia(...) instance
    *   formatPrice - (rupees:number) => "₹1,500"
@@ -181,6 +237,7 @@
         gstRate: gstRate,
         stock: p.stock !== undefined ? p.stock : null,
         variants: variants,
+        options: Array.isArray(p.options) ? p.options : [],
         variantId: defaultVariant ? (defaultVariant.variant_id || defaultVariant.id || null) : null,
         is_best_seller: isBest,
         isBestSeller: isBest
@@ -190,7 +247,7 @@
     function normalizeCategory(c) {
       if (!c || typeof c !== "object" || c.id === undefined || c.id === null) return null;
       var name = c.name || "Category";
-      var raw = c.image_url || (typeof c.image === "string" ? c.image : "");
+      var raw = c.image_url || (c.media && (c.media.thumbnail || c.media.hero_light)) || (typeof c.image === "string" ? c.image : "");
       var imageUrl = media.resolve(raw);
       return {
         id: String(c.id),
@@ -304,9 +361,16 @@
       normalizeCategory: normalizeCategory,
       categoryMediaHtml: categoryMediaHtml,
       productCardHtml: productCardHtml,
-      productGridHtml: productGridHtml
+      productGridHtml: productGridHtml,
+      matchCategoryQuery: matchCategoryQuery
     };
   }
 
-  return { createCatalog: createCatalog, getRatingTier: getRatingTier, starsMarkup: starsMarkup, escapeHtml: escapeHtml };
+  return {
+    createCatalog: createCatalog,
+    matchCategoryQuery: matchCategoryQuery,
+    getRatingTier: getRatingTier,
+    starsMarkup: starsMarkup,
+    escapeHtml: escapeHtml
+  };
 });

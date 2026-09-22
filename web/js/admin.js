@@ -16,8 +16,12 @@ const API_BASE_URL = apiClient.getBaseUrl();
 
 function resolveAdminImageUrl(url) {
     if (!url) return '';
-    const cleanUrl = String(url).trim();
-    if (!cleanUrl) return '';
+    let target = url;
+    if (typeof target === 'object' && target !== null) {
+        target = target.image_url || target.external_url || target.url || '';
+    }
+    const cleanUrl = String(target).trim();
+    if (!cleanUrl || cleanUrl === '[object Object]') return '';
     if (cleanUrl.startsWith('http://') || cleanUrl.startsWith('https://') || cleanUrl.startsWith('data:') || cleanUrl.startsWith('blob:')) {
         return cleanUrl;
     }
@@ -186,8 +190,24 @@ let editingHeroSlideId = null;
 let editingBannerId = null;
 let activeOrderViewing = null;
 let tempProdImages = [];
+let tempProdOptions = [];
+let tempProdVariants = [];
 let selectedEvtProductIds = [];
 let selectedProductionItemIds = [];
+
+function escapeHtml(str) {
+    if (str === null || str === undefined) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function escapeAttr(str) {
+    return escapeHtml(str);
+}
 
 // =============================================================================
 // NORMALIZATION HELPERS (API PAYLOAD -> FRONTEND STATE)
@@ -199,8 +219,17 @@ function normalizeProduct(p) {
     const rawComp = p.compare_at_price !== null && p.compare_at_price !== undefined ? (parseInt(p.compare_at_price, 10) || 0) : null;
     const compPriceRupees = p.compare_at_price_rupees !== undefined ? p.compare_at_price_rupees : rawComp;
 
+    const matchedCat = categories.find(c => c && (
+        (p.category_id && String(c.id) === String(p.category_id)) ||
+        (p.category_slug && (c.slug || '').toLowerCase() === p.category_slug.toLowerCase()) ||
+        (p.category_name && (c.name || '').toLowerCase() === p.category_name.toLowerCase())
+    ));
+
+    const resolvedCategoryName = p.category_name || (matchedCat?.name) || (typeof p.category === 'string' && p.category !== 'Uncategorized' ? p.category : null) || (categories.find(c => c.id === p.category_id)?.name) || 'Uncategorized';
+    const resolvedCategorySlug = p.category_slug || (matchedCat?.slug) || (categories.find(c => c.id === p.category_id)?.slug) || '';
+
     const imagesList = Array.isArray(p.images)
-        ? p.images.map(img => typeof img === 'string' ? img : (img.image_url || img.url || ''))
+        ? p.images.map(img => typeof img === 'string' ? img : (img.image_url || img.external_url || img.url || ''))
         : (p.primary_image_url ? [p.primary_image_url] : []);
 
     return {
@@ -215,8 +244,11 @@ function normalizeProduct(p) {
         variant: 'Standard 3x3"',
         price: priceRupees,
         compare_at_price: compPriceRupees,
-        category: p.category_name || (categories.find(c => c.id === p.category_id)?.name) || 'Uncategorized',
-        category_id: p.category_id,
+        category: resolvedCategoryName,
+        category_name: resolvedCategoryName,
+        category_slug: resolvedCategorySlug,
+        category_id: p.category_id || (matchedCat?.id) || null,
+        stock: p.stock !== undefined ? p.stock : 0,
         rating: p.average_rating || 4.7,
         review_count: p.review_count || 0,
         rating_tier: p.rating_tier || 'RARE',
@@ -233,7 +265,9 @@ function normalizeProduct(p) {
         hsn_code: p.hsn_code || '',
         gst_rate: p.gst_rate === null || p.gst_rate === undefined ? '' : p.gst_rate,
         category_hsn_code: p.category_hsn_code || '',
-        category_gst_rate: p.category_gst_rate === null || p.category_gst_rate === undefined ? '' : p.category_gst_rate
+        category_gst_rate: p.category_gst_rate === null || p.category_gst_rate === undefined ? '' : p.category_gst_rate,
+        options: Array.isArray(p.options) ? p.options : [],
+        variants: Array.isArray(p.variants) ? p.variants : []
     };
 }
 
@@ -393,6 +427,25 @@ function fallbackCopyTextToClipboard(text, label) {
 // ASYNC API STATE LOADER
 // =============================================================================
 
+async function fetchAllAdminProducts() {
+    let offset = 0;
+    const limit = 500;
+    let all = [];
+    while (true) {
+        const res = await apiClient.get('/admin/products', { limit, offset });
+        const rawProds = res?.data?.products || res?.products || (Array.isArray(res?.data) ? res.data : []);
+        const total = typeof res?.data?.total === 'number' ? res.data.total : (Array.isArray(rawProds) ? rawProds.length : 0);
+        if (Array.isArray(rawProds)) {
+            all = all.concat(rawProds);
+        }
+        if (!rawProds || rawProds.length === 0 || all.length >= total || rawProds.length < limit) {
+            break;
+        }
+        offset += rawProds.length;
+    }
+    return all;
+}
+
 async function loadAllAdminData() {
     try {
         const [
@@ -412,7 +465,7 @@ async function loadAllAdminData() {
             sessionRes,
             dashRes
         ] = await Promise.allSettled([
-            apiClient.get('/admin/products'),
+            fetchAllAdminProducts(),
             apiClient.get('/categories'),
             apiClient.get('/admin/orders'),
             apiClient.get('/admin/production/queue'),
@@ -429,13 +482,13 @@ async function loadAllAdminData() {
             apiClient.get('/admin/dashboard')
         ]);
 
-        if (prodRes.status === 'fulfilled' && prodRes.value) {
-            const rawProds = prodRes.value.data?.products || prodRes.value.products || (Array.isArray(prodRes.value.data) ? prodRes.value.data : []);
-            if (Array.isArray(rawProds)) products = rawProds.map(normalizeProduct);
-        }
         if (catRes.status === 'fulfilled' && catRes.value) {
             const rawCats = catRes.value.data?.categories || catRes.value.categories || (Array.isArray(catRes.value.data) ? catRes.value.data : []) || (Array.isArray(catRes.value) ? catRes.value : []);
             if (Array.isArray(rawCats)) categories = rawCats.map(normalizeCategory).filter(c => c && (c.name || '').toLowerCase().trim() !== 'best seller' && (c.slug || '').toLowerCase().trim() !== 'best-seller');
+        }
+        if (prodRes.status === 'fulfilled' && prodRes.value) {
+            const rawProds = Array.isArray(prodRes.value) ? prodRes.value : (prodRes.value.data?.products || prodRes.value.products || (Array.isArray(prodRes.value.data) ? prodRes.value.data : []));
+            if (Array.isArray(rawProds)) products = rawProds.map(normalizeProduct);
         }
         if (ordRes.status === 'fulfilled' && ordRes.value) {
             const rawOrds = ordRes.value.data?.orders || ordRes.value.orders || (Array.isArray(ordRes.value.data) ? ordRes.value.data : []);
@@ -579,8 +632,7 @@ async function loadAllAdminData() {
 // API Refresh Handlers
 async function refreshProductsFromAPI() {
     try {
-        const res = await apiClient.get('/admin/products');
-        const rawProds = res?.data?.products || res?.products || (Array.isArray(res?.data) ? res.data : []);
+        const rawProds = await fetchAllAdminProducts();
         if (Array.isArray(rawProds)) {
             products = rawProds.map(normalizeProduct);
             renderProductsTable();
@@ -597,8 +649,13 @@ async function refreshCategoriesFromAPI() {
         const raw = res?.data?.categories || res?.categories || (Array.isArray(res?.data) ? res.data : []) || (Array.isArray(res) ? res : []);
         if (Array.isArray(raw)) {
             categories = raw.map(normalizeCategory).filter(c => c && (c.name || '').toLowerCase().trim() !== 'best seller' && (c.slug || '').toLowerCase().trim() !== 'best-seller');
+            // Re-normalize loaded products so category mappings are current
+            if (Array.isArray(products) && products.length > 0) {
+                products = products.map(normalizeProduct);
+            }
             renderCategoriesTable();
             populateCategoryDropdowns();
+            renderProductsTable();
         }
     } catch (err) {
         console.error('[refreshCategoriesFromAPI]', err.message);
@@ -1115,24 +1172,39 @@ function populateCategoryDropdowns() {
     const currentFilterVal = filterCatSelect?.value;
     const currentEvtVal = evtCatSelect?.value;
 
-    const catOptions = categories.map(c => `<option value="${c.name}">${c.name}</option>`).join('');
+    const catOptions = categories.map(c => `<option value="${escapeHtml(c.name)}" data-id="${c.id}" data-slug="${escapeHtml(c.slug)}">${escapeHtml(c.name)}</option>`).join('');
 
     if (prodCatSelect) {
         prodCatSelect.innerHTML = catOptions;
-        if (currentProdVal && Array.from(prodCatSelect.options).some(o => o.value === currentProdVal)) {
-            prodCatSelect.value = currentProdVal;
+        if (currentProdVal) {
+            const matchedOpt = Array.from(prodCatSelect.options).find(o => 
+                o.value.toLowerCase() === currentProdVal.toLowerCase() ||
+                o.getAttribute('data-slug')?.toLowerCase() === currentProdVal.toLowerCase() ||
+                o.getAttribute('data-id') === String(currentProdVal)
+            );
+            if (matchedOpt) prodCatSelect.value = matchedOpt.value;
         }
     }
     if (filterCatSelect) {
         filterCatSelect.innerHTML = `<option value="">All Categories</option>${catOptions}`;
-        if (currentFilterVal !== undefined && Array.from(filterCatSelect.options).some(o => o.value === currentFilterVal)) {
-            filterCatSelect.value = currentFilterVal;
+        if (currentFilterVal) {
+            const matchedOpt = Array.from(filterCatSelect.options).find(o => 
+                o.value.toLowerCase() === currentFilterVal.toLowerCase() ||
+                o.getAttribute('data-slug')?.toLowerCase() === currentFilterVal.toLowerCase() ||
+                o.getAttribute('data-id') === String(currentFilterVal)
+            );
+            if (matchedOpt) filterCatSelect.value = matchedOpt.value;
         }
     }
     if (evtCatSelect) {
         evtCatSelect.innerHTML = `<option value="">All Categories</option>${catOptions}`;
-        if (currentEvtVal !== undefined && Array.from(evtCatSelect.options).some(o => o.value === currentEvtVal)) {
-            evtCatSelect.value = currentEvtVal;
+        if (currentEvtVal) {
+            const matchedOpt = Array.from(evtCatSelect.options).find(o => 
+                o.value.toLowerCase() === currentEvtVal.toLowerCase() ||
+                o.getAttribute('data-slug')?.toLowerCase() === currentEvtVal.toLowerCase() ||
+                o.getAttribute('data-id') === String(currentEvtVal)
+            );
+            if (matchedOpt) evtCatSelect.value = matchedOpt.value;
         }
     }
 }
@@ -1186,9 +1258,30 @@ function setupNavigation() {
 // 1. DASHBOARD & ANALYTICS WIDGETS
 // =============================================================================
 
+async function refreshDashboardFromAPI(timeframe) {
+    try {
+        const tf = timeframe || document.getElementById('analytics-date-filter')?.value || 'last_6_months';
+        const res = await apiClient.get(`/admin/dashboard?timeframe=${encodeURIComponent(tf)}`);
+        const dashData = res?.data || res || {};
+        if (dashData.metrics) {
+            dashboardMetrics = dashData.metrics;
+            if (Array.isArray(dashData.metrics.monthlyStats)) {
+                monthlyStats = dashData.metrics.monthlyStats;
+            }
+        }
+        renderDashboardMetrics();
+        renderSalesChart();
+    } catch (err) {
+        console.error('[refreshDashboardFromAPI]', err.message);
+    }
+}
+
 function renderDashboardMetrics() {
-    const totalOrders = orders.length;
-    const cancelledOrders = orders.filter(o => o.status === 'Cancelled' || o.status === 'CANCELLED' || String(o.fulfillment_status).toUpperCase() === 'CANCELLED').length;
+    // Authoritative Server Metrics (Priority from dedicated DB queries)
+    const hasServerMetrics = dashboardMetrics && typeof dashboardMetrics === 'object' && dashboardMetrics.totalOrders !== undefined;
+
+    const totalOrders = hasServerMetrics ? (dashboardMetrics.totalOrders || 0) : orders.length;
+    const cancelledOrders = hasServerMetrics ? (dashboardMetrics.cancelledOrders || 0) : orders.filter(o => o.status === 'Cancelled' || o.status === 'CANCELLED' || String(o.fulfillment_status).toUpperCase() === 'CANCELLED').length;
 
     // Strict Commercial Rule: Revenue KPI excludes unpaid, pending, cancelled, and failed orders
     const isPaidOrder = (o) => {
@@ -1197,9 +1290,9 @@ function renderDashboardMetrics() {
         return payStatus === 'paid' && fulStatus !== 'CANCELLED' && fulStatus !== 'FAILED';
     };
 
-    const totalRevenue = orders.filter(isPaidOrder).reduce((sum, o) => sum + (o.total_price || 0), 0);
-    const totalProducts = products.length;
-    const totalCustomers = customers.length;
+    const totalRevenue = hasServerMetrics ? (dashboardMetrics.totalRevenue || 0) : orders.filter(isPaidOrder).reduce((sum, o) => sum + (o.total_price || 0), 0);
+    const totalProducts = hasServerMetrics ? (dashboardMetrics.totalProducts || products.length) : products.length;
+    const totalCustomers = hasServerMetrics ? (dashboardMetrics.totalUsers || customers.length) : customers.length;
 
     const now = new Date();
     const currentYear = now.getFullYear();
@@ -1208,15 +1301,15 @@ function renderDashboardMetrics() {
         const d = new Date(o.created_at);
         return d.getFullYear() === currentYear && d.getMonth() === currentMonth;
     });
-    const monthRevenue = monthOrders.filter(isPaidOrder).reduce((sum, o) => sum + (o.total_price || 0), 0);
+    const monthRevenue = hasServerMetrics ? (dashboardMetrics.monthRevenue || 0) : monthOrders.filter(isPaidOrder).reduce((sum, o) => sum + (o.total_price || 0), 0);
 
     const todayStr = now.toISOString().slice(0, 10);
-    const ordersToday = orders.filter(o => o.created_at && String(o.created_at).slice(0, 10) === todayStr).length;
+    const ordersToday = hasServerMetrics ? (dashboardMetrics.ordersToday || 0) : orders.filter(o => o.created_at && String(o.created_at).slice(0, 10) === todayStr).length;
 
-    const awaitingConf = orders.filter(o => o.status === 'New' || o.status === 'NEW').length;
-    const readyPrint = productionQueueItems.filter(i => (i.production_status || '').toLowerCase().includes('ready') || (i.production_status || '') === 'NEW').length;
-    const inProd = productionQueueItems.filter(i => (i.production_status || '').toLowerCase().includes('print') || (i.production_status || '').toLowerCase().includes('cut')).length;
-    const readyPack = productionQueueItems.filter(i => (i.production_status || '').toLowerCase().includes('pack')).length;
+    const awaitingConf = hasServerMetrics ? (dashboardMetrics.awaitingConfirmation || 0) : orders.filter(o => o.status === 'New' || o.status === 'NEW').length;
+    const readyPrint = hasServerMetrics ? (dashboardMetrics.readyToPrint || 0) : productionQueueItems.filter(i => (i.production_status || '').toLowerCase().includes('ready') || (i.production_status || '') === 'NEW').length;
+    const inProd = hasServerMetrics ? ((dashboardMetrics.printingCutting !== undefined ? dashboardMetrics.printingCutting : dashboardMetrics.inProduction) || 0) : productionQueueItems.filter(i => (i.production_status || '').toLowerCase().includes('print') || (i.production_status || '').toLowerCase().includes('cut')).length;
+    const readyPack = hasServerMetrics ? (dashboardMetrics.readyToPack || 0) : productionQueueItems.filter(i => (i.production_status || '').toLowerCase().includes('pack')).length;
 
     const elTotalOrders = document.getElementById('stat-total-orders');
     const elCancelledOrders = document.getElementById('stat-cancelled-orders');
@@ -1244,29 +1337,36 @@ function renderDashboardMetrics() {
 function renderDashboardWidgets() {
     const recentOrdersBody = document.getElementById('dash-recent-orders-tbody');
     if (recentOrdersBody) {
-        const recent = orders.slice(0, 5);
+        const recent = (dashboardMetrics && Array.isArray(dashboardMetrics.recentOrders) && dashboardMetrics.recentOrders.length > 0)
+            ? dashboardMetrics.recentOrders
+            : orders.slice(0, 5);
         recentOrdersBody.innerHTML = recent.map(o => `
             <tr>
-                <td><strong class="admin-id-highlight">${o.order_id}</strong></td>
-                <td>${o.customer_name}</td>
-                <td><strong>₹${o.total_price}</strong></td>
-                <td><span class="status-badge status-live">${o.payment_status}</span></td>
-                <td><span class="status-badge status-upcoming">${o.status}</span></td>
+                <td><strong class="admin-id-highlight">${o.order_id || o.order_number || o.id}</strong></td>
+                <td>${o.customer_name || 'Customer'}</td>
+                <td><strong>₹${Number(o.total_price || 0).toLocaleString('en-IN')}</strong></td>
+                <td><span class="status-badge status-live">${o.payment_status || 'paid'}</span></td>
+                <td><span class="status-badge status-upcoming">${o.status || 'Pending'}</span></td>
             </tr>
         `).join('') || '<tr><td colspan="5">No recent orders found.</td></tr>';
     }
 
     const topProductsBody = document.getElementById('dash-top-products-tbody');
     if (topProductsBody) {
-        const topProds = products.slice(0, 5);
-        topProductsBody.innerHTML = topProds.map(p => `
+        const topProds = (dashboardMetrics && Array.isArray(dashboardMetrics.topProducts) && dashboardMetrics.topProducts.length > 0)
+            ? dashboardMetrics.topProducts
+            : products.slice(0, 5);
+        topProductsBody.innerHTML = topProds.map(p => {
+            const img = (Array.isArray(p.images) && p.images[0]) || p.image_url || 'https://img.icons8.com/color/150/000000/sticker.png';
+            return `
             <tr>
-                <td><img src="${(p.images && p.images[0]) || 'https://img.icons8.com/color/150/000000/sticker.png'}" style="width:30px; height:30px; object-fit:cover;"></td>
-                <td><strong>${p.title}</strong></td>
-                <td>₹${p.price}</td>
-                <td>${formatRatingDisplay(p.rating)}</td>
+                <td><img src="${img}" style="width:30px; height:30px; object-fit:cover;"></td>
+                <td><strong>${p.title || p.name}</strong></td>
+                <td>₹${Number(p.price || 0).toLocaleString('en-IN')}</td>
+                <td>${formatRatingDisplay(p.rating || 5)}</td>
             </tr>
-        `).join('') || '<tr><td colspan="4">No products found.</td></tr>';
+        `;
+        }).join('') || '<tr><td colspan="4">No products found.</td></tr>';
     }
 }
 
@@ -1295,12 +1395,12 @@ function renderSalesChart(filterMode = currentChartFilter) {
     ctx.scale(dpr, dpr);
     ctx.clearRect(0, 0, w, h);
 
-    // Build or use 6-month statistical data
+    // Build or use statistical data returned from server
     const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
     const now = new Date();
     let stats = [];
 
-    if (Array.isArray(monthlyStats) && monthlyStats.length === 6) {
+    if (Array.isArray(monthlyStats) && monthlyStats.length > 0) {
         stats = monthlyStats.map(s => ({ ...s }));
     } else {
         for (let i = 5; i >= 0; i--) {
@@ -1319,8 +1419,8 @@ function renderSalesChart(filterMode = currentChartFilter) {
         }
     }
 
-    // Overlay real orders if available
-    if (Array.isArray(orders) && orders.length > 0) {
+    // Only overlay real orders if monthlyStats was empty (fallback)
+    if ((!monthlyStats || monthlyStats.length === 0) && Array.isArray(orders) && orders.length > 0) {
         orders.forEach(o => {
             if (!o.created_at) return;
             const st = String(o.status || o.fulfillment_status || '').toLowerCase();
@@ -1330,10 +1430,8 @@ function renderSalesChart(filterMode = currentChartFilter) {
             const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
             const match = stats.find(s => s.monthKey === key);
             if (match) {
-                if (monthlyStats.length === 0) {
-                    match.revenue += Math.round(Number(o.total_price || 0));
-                    match.orders += 1;
-                }
+                match.revenue += Math.round(Number(o.total_price || 0));
+                match.orders += 1;
             }
         });
     }
@@ -1347,7 +1445,7 @@ function renderSalesChart(filterMode = currentChartFilter) {
     if (summaryBar) {
         summaryBar.innerHTML = `
             <div>
-                <small style="color: #6b7280; font-weight: 800; font-size: 0.72rem; text-transform: uppercase;">6-Month Verified Revenue</small><br>
+                <small style="color: #6b7280; font-weight: 800; font-size: 0.72rem; text-transform: uppercase;">${stats.length}-Month Verified Revenue</small><br>
                 <strong style="font-size: 1.25rem; color: #10b981; font-weight: 900;">${totalRev > 0 ? '₹' + totalRev.toLocaleString('en-IN') : '₹0'}</strong>
             </div>
             <div>
@@ -1542,27 +1640,77 @@ function renderProductsTable() {
     if (!tbody) return;
 
     const searchQuery = (document.getElementById('prod-search-input')?.value || '').toLowerCase().trim();
-    const categoryFilter = document.getElementById('prod-filter-category')?.value || '';
-    const statusFilter = document.getElementById('prod-filter-drop-status')?.value || '';
+    const categoryFilter = (document.getElementById('prod-filter-category')?.value || '').trim();
+    const statusFilter = (document.getElementById('prod-filter-drop-status')?.value || '').trim();
 
     const filtered = products.filter(p => {
-        const matchesSearch = !searchQuery || (p.admin_id || p.sku || '').toLowerCase().includes(searchQuery) || p.title.toLowerCase().includes(searchQuery);
-        const matchesCat = !categoryFilter || p.category === categoryFilter;
-        const dropStatus = getProductDropStatus(p).status;
-        const matchesStatus = !statusFilter || dropStatus === statusFilter;
+        const adminId = (p.admin_id || '').toLowerCase();
+        const sku = (p.sku || '').toLowerCase();
+        const title = (p.title || p.name || '').toLowerCase();
+        const matchesSearch = !searchQuery || adminId.includes(searchQuery) || sku.includes(searchQuery) || title.includes(searchQuery);
+
+        let matchesCat = true;
+        if (categoryFilter) {
+            const filterLower = categoryFilter.toLowerCase().trim();
+            const matchedFilterCat = categories.find(c => 
+                c && (
+                    (c.name && c.name.toLowerCase().trim() === filterLower) ||
+                    (c.slug && c.slug.toLowerCase().trim() === filterLower) ||
+                    (String(c.id).trim() === filterLower)
+                )
+            );
+            const targetName = matchedFilterCat ? matchedFilterCat.name.toLowerCase().trim() : filterLower;
+            const targetSlug = matchedFilterCat ? (matchedFilterCat.slug || '').toLowerCase().trim() : filterLower;
+            const targetId = matchedFilterCat ? String(matchedFilterCat.id).trim() : filterLower;
+
+            const pCatName = (p.category || p.category_name || '').toLowerCase().trim();
+            const pCatSlug = (p.category_slug || '').toLowerCase().trim();
+            const pCatId = String(p.category_id || '').trim();
+
+            matchesCat = (
+                pCatName === targetName ||
+                pCatSlug === targetSlug ||
+                pCatId === targetId ||
+                pCatName === filterLower ||
+                pCatSlug === filterLower ||
+                pCatId === filterLower
+            );
+        }
+
+        const dropInfo = getProductDropStatus(p);
+        const matchesStatus = !statusFilter || dropInfo.status === statusFilter;
         return matchesSearch && matchesCat && matchesStatus;
     });
 
+    const fallbackImg = 'https://img.icons8.com/color/150/000000/sticker.png';
+
     tbody.innerHTML = filtered.map(p => {
         const dropInfo = getProductDropStatus(p);
+        const firstImg = (p.images && p.images[0]) || p.primary_image_url || '';
+        const resolvedImg = resolveAdminImageUrl(firstImg);
+        const formattedPrice = Number(p.price || 0).toFixed(2);
+        const stockDisplay = p.stock !== undefined ? p.stock : 0;
+        const stockColor = stockDisplay <= 5 ? '#ef4444' : (stockDisplay <= 20 ? '#f59e0b' : '#10b981');
 
         return `
             <tr>
-                <td><img src="${resolveAdminImageUrl((p.images && p.images[0]) || 'https://img.icons8.com/color/150/000000/sticker.png')}" style="width:45px; height:45px; object-fit:cover; border:1px solid #000;"></td>
-                <td><span class="admin-id-highlight">${p.admin_id || p.sku}</span></td>
-                <td><strong>${p.title}</strong>${p.is_best_seller ? ' <span class="status-badge" style="background:#fef08a; color:#854d0e; font-size:0.65rem; font-weight:900; border:1px solid #eab308; vertical-align:middle;">★ BEST SELLER</span>' : ''}<br><small style="color:#666;">${p.variant || 'Standard'}</small></td>
-                <td><span class="status-badge" style="background:#eee; color:#333;">${p.category}</span></td>
-                <td><strong>₹${p.price}</strong></td>
+                <td>
+                    <img src="${resolvedImg || fallbackImg}" 
+                         onerror="this.onerror=null; this.src='${fallbackImg}';" 
+                         alt="${escapeHtml(p.title)}" 
+                         style="width:45px; height:45px; object-fit:cover; border:1px solid #000; border-radius:2px; display:block;">
+                </td>
+                <td><span class="admin-id-highlight">${escapeHtml(p.admin_id || p.sku)}</span></td>
+                <td>
+                    <strong>${escapeHtml(p.title)}</strong>
+                    ${p.is_best_seller ? ' <span class="status-badge" style="background:#fef08a; color:#854d0e; font-size:0.65rem; font-weight:900; border:1px solid #eab308; vertical-align:middle;">★ BEST SELLER</span>' : ''}
+                    <br><small style="color:#666;">${escapeHtml(p.variant || 'Standard')}</small>
+                </td>
+                <td><span class="status-badge" style="background:#eee; color:#333;">${escapeHtml(p.category || 'Uncategorized')}</span></td>
+                <td>
+                    <strong>₹${formattedPrice}</strong>
+                    <br><small style="color:${stockColor}; font-weight:bold;">Stock: ${stockDisplay}</small>
+                </td>
                 <td>${formatRatingDisplay(p.rating)} <small>(${p.review_count || 0})</small></td>
                 <td><span class="status-badge ${dropInfo.badgeClass}">${dropInfo.label}</span></td>
                 <td><small>${p.scheduled_drop_time ? new Date(p.scheduled_drop_time).toLocaleString() : 'Immediate'}</small></td>
@@ -1575,7 +1723,7 @@ function renderProductsTable() {
                 </td>
             </tr>
         `;
-    }).join('') || '<tr><td colspan="10">No products found.</td></tr>';
+    }).join('') || '<tr><td colspan="10" style="text-align:center; padding:20px; color:#666;">No products found.</td></tr>';
 
     tbody.querySelectorAll('.edit-prod-btn').forEach(btn => {
         btn.addEventListener('click', () => editProduct(btn.getAttribute('data-id')));
@@ -1626,32 +1774,54 @@ function openProductForm(product = null) {
     const defaultPrefix = activeStoreId === 2 ? 'MRSH' : 'CK';
 
     editingProductId = product ? product.id : null;
-    document.getElementById('prod-form-title').textContent = product ? `[EDIT ${activeStoreId === 2 ? '3D PRODUCT' : 'PRODUCT DROP'}: ${product.admin_id}]` : `[ADD NEW ${activeStoreId === 2 ? '3D PRODUCT' : 'PRODUCT DROP'}]`;
+    const adminIdVal = product ? (product.admin_id || product.admin_product_id || product.sku || '') : '';
+    const titleVal = product ? (product.title || product.name || '') : '';
+    document.getElementById('prod-form-title').textContent = product ? `[EDIT ${activeStoreId === 2 ? '3D PRODUCT' : 'PRODUCT DROP'}: ${adminIdVal || product.id}]` : `[ADD NEW ${activeStoreId === 2 ? '3D PRODUCT' : 'PRODUCT DROP'}]`;
 
-    document.getElementById('prod-admin-id').value = product ? product.admin_id : `${defaultPrefix}-${String(products.length + 1).padStart(3, '0')}`;
+    document.getElementById('prod-admin-id').value = adminIdVal || `${defaultPrefix}-${String(products.length + 1).padStart(3, '0')}`;
     if (document.getElementById('prod-sku')) document.getElementById('prod-sku').value = product ? (product.sku || '') : '';
-    document.getElementById('prod-title').value = product ? product.title : '';
+    document.getElementById('prod-title').value = titleVal;
     if (document.getElementById('prod-desc')) {
         document.getElementById('prod-desc').value = product ? (product.description || '') : '';
     }
-    document.getElementById('prod-price').value = product ? product.price : '';
+    const priceVal = product ? (product.price !== undefined && product.price !== null ? product.price : (product.price_rupees !== undefined ? product.price_rupees : '')) : '';
+    document.getElementById('prod-price').value = priceVal;
     if (document.getElementById('prod-compare-at-price')) {
-        document.getElementById('prod-compare-at-price').value = product && product.compare_at_price ? product.compare_at_price : '';
+        const compVal = product && product.compare_at_price !== undefined && product.compare_at_price !== null ? (product.compare_at_price_rupees !== undefined ? product.compare_at_price_rupees : product.compare_at_price) : '';
+        document.getElementById('prod-compare-at-price').value = compVal;
     }
-    document.getElementById('prod-category').value = product ? product.category : (categories[0]?.name || '');
-    document.getElementById('prod-tags').value = product ? (product.tags || []).join(', ') : '';
+    const prodCatSelect = document.getElementById('prod-category');
+    if (prodCatSelect) {
+        const targetCat = (product ? (product.category || product.category_name || '') : (categories[0]?.name || '')).trim().toLowerCase();
+        const targetCatId = product && product.category_id ? String(product.category_id).trim() : null;
+        const targetSlug = product && product.category_slug ? String(product.category_slug).trim().toLowerCase() : null;
+        const matchedOption = Array.from(prodCatSelect.options).find(o => 
+            (targetCat && o.value.toLowerCase().trim() === targetCat) || 
+            (targetCatId && o.getAttribute('data-id') === targetCatId) ||
+            (targetSlug && o.getAttribute('data-slug')?.toLowerCase().trim() === targetSlug)
+        );
+        if (matchedOption) {
+            prodCatSelect.value = matchedOption.value;
+        } else if (prodCatSelect.options.length > 0) {
+            prodCatSelect.selectedIndex = 0;
+        }
+    }
+    const tagsArr = Array.isArray(product?.tags) ? product.tags : (typeof product?.tags === 'string' ? (product.tags.startsWith('[') ? JSON.parse(product.tags || '[]') : product.tags.split(',').map(t => t.trim())) : []);
+    document.getElementById('prod-tags').value = tagsArr.filter(Boolean).join(', ');
     if (document.getElementById('prod-is-best-seller')) {
         document.getElementById('prod-is-best-seller').checked = Boolean(product && (product.is_best_seller === 1 || product.is_best_seller === true));
     }
     if (document.getElementById('prod-hsn-code')) document.getElementById('prod-hsn-code').value = product ? (product.hsn_code || '') : '';
-    if (document.getElementById('prod-gst-rate')) document.getElementById('prod-gst-rate').value = product ? product.gst_rate : '';
+    if (document.getElementById('prod-gst-rate')) document.getElementById('prod-gst-rate').value = product && product.gst_rate !== null && product.gst_rate !== undefined ? product.gst_rate : '';
     if (document.getElementById('prod-tax-hint')) {
         // Wording is fixed: no "fallback" / default HSN is ever suggested. A category value is shown only when one is really configured.
         const catHsn = product && product.category_hsn_code ? ` Category HSN currently: ${product.category_hsn_code}.` : '';
         document.getElementById('prod-tax-hint').textContent = `Leave blank to inherit category HSN. HSN is never guessed. An invoice cannot be issued until the order line has an HSN.${catHsn} GST rate: leave blank to inherit the category rate, then the store default.`;
     }
-    document.getElementById('prod-release-date').value = product ? (product.scheduled_drop_time || '') : '';
-    document.getElementById('prod-active').value = product ? String(product.is_active) : 'true';
+    const dropTimeVal = product?.scheduled_drop_time ? (typeof product.scheduled_drop_time === 'string' ? product.scheduled_drop_time.slice(0, 16) : new Date(product.scheduled_drop_time).toISOString().slice(0, 16)) : '';
+    document.getElementById('prod-release-date').value = dropTimeVal;
+    const isActive = product ? (product.is_active !== undefined ? product.is_active : (product.active === 1 || product.active === true)) : true;
+    document.getElementById('prod-active').value = String(Boolean(isActive));
 
     // 3D Print Product Specifications & Mapping (THE MARSHANS)
     if (activeStoreId === 2) {
@@ -1724,6 +1894,32 @@ function openProductForm(product = null) {
     }
     renderProdImageGallery();
 
+    // Initialize options & variants
+    if (product && Array.isArray(product.options) && product.options.length > 0) {
+        tempProdOptions = product.options.map(o => ({
+            name: o.name || '',
+            values: Array.isArray(o.values) ? o.values.map(v => typeof v === 'object' ? (v.value || v.name) : v) : []
+        }));
+    } else {
+        tempProdOptions = [];
+    }
+
+    if (product && Array.isArray(product.variants) && product.variants.length > 0) {
+        tempProdVariants = product.variants
+            .filter(v => v.variant_slug !== 'default' || (tempProdOptions.length === 0))
+            .map(v => ({
+                id: v.id || v.variant_id || null,
+                sku: v.sku || '',
+                price: v.price !== undefined ? v.price : (activeStoreId === 1 ? Math.round(Number(document.getElementById('prod-price')?.value) || 0) : 0),
+                stock: v.stock !== undefined ? v.stock : 100,
+                active: v.active !== 0 && v.active !== false ? 1 : 0,
+                option_combination: typeof v.option_combination === 'string' ? JSON.parse(v.option_combination || '{}') : (v.option_combination || {})
+            }));
+    } else {
+        tempProdVariants = [];
+    }
+    renderProductOptionsBuilder();
+
     container.style.display = 'block';
     container.scrollIntoView({ behavior: 'smooth' });
 }
@@ -1732,14 +1928,17 @@ function renderProdImageGallery() {
     const gallery = document.getElementById('prod-images-gallery');
     if (!gallery) return;
 
+    const fallbackImg = 'https://img.icons8.com/color/150/000000/sticker.png';
+
     gallery.innerHTML = tempProdImages.map((imgItem, idx) => {
         const url = typeof imgItem === 'object' ? (imgItem.url || '') : String(imgItem || '');
         const isPrimary = idx === 0 || (typeof imgItem === 'object' && imgItem.is_primary);
         const imgId = (typeof imgItem === 'object' && imgItem.id) ? imgItem.id : '';
+        const resolved = resolveAdminImageUrl(url);
         return `
         <div class="img-thumb-card">
             ${isPrimary ? '<span class="primary-tag">PRIMARY</span>' : ''}
-            <img src="${resolveAdminImageUrl(url)}">
+            <img src="${resolved || fallbackImg}" onerror="this.onerror=null; this.src='${fallbackImg}';" alt="Product image">
             <div class="img-thumb-actions">
                 ${!isPrimary ? `<button type="button" class="img-btn-sm set-primary-img-btn" data-idx="${idx}">PRIMARY</button>` : ''}
                 <button type="button" class="img-btn-sm rem-img-btn" data-idx="${idx}" data-id="${imgId}" style="color:#ef4444;" title="Delete image">×</button>
@@ -1798,11 +1997,172 @@ function renderProdImageGallery() {
     });
 }
 
+// =============================================================================
+// PRODUCT OPTIONS & DYNAMIC VARIANTS BUILDER (STORE 1: CHIPAKK)
+// =============================================================================
+
+function renderProductOptionsBuilder() {
+    const list = document.getElementById('prod-options-builder-list');
+    const matrixSec = document.getElementById('prod-variant-matrix-section');
+    if (!list) return;
+
+    if (!tempProdOptions || tempProdOptions.length === 0) {
+        list.innerHTML = '<div style="color: #666; font-size: 0.75rem; font-style: italic; padding: 4px 0;">No options configured. Single standard item. Click "+ ADD OPTION" to add options like Size, Finish, Material.</div>';
+        if (matrixSec) matrixSec.style.display = 'none';
+        return;
+    }
+
+    list.innerHTML = tempProdOptions.map((opt, optIdx) => `
+        <div class="option-builder-card" style="border: 1px solid #000; background: #fff; padding: 8px; border-radius: 3px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                <input type="text" class="retro-input opt-name-input" data-opt-idx="${optIdx}" value="${escapeAttr(opt.name || '')}" placeholder="Option Name (e.g. Size, Finish, Material)" style="font-size: 0.78rem; font-weight: bold; width: 65%; padding: 4px 6px;">
+                <button type="button" class="retro-btn remove-opt-btn" data-opt-idx="${optIdx}" style="padding: 2px 6px; font-size: 0.7rem; color: #ef4444; border-color: #ef4444;">✕ REMOVE</button>
+            </div>
+            <div style="display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-bottom: 6px;">
+                ${(opt.values || []).map((val, valIdx) => `
+                    <span style="display: inline-flex; align-items: center; gap: 4px; background: #e0f2fe; color: #0369a1; border: 1px solid #7dd3fc; border-radius: 3px; font-size: 0.72rem; padding: 2px 6px; font-weight: bold;">
+                        ${escapeHtml(val)}
+                        <span class="remove-val-btn" data-opt-idx="${optIdx}" data-val-idx="${valIdx}" style="cursor: pointer; color: #0369a1; font-weight: 900; margin-left: 2px;" title="Remove value">×</span>
+                    </span>
+                `).join('')}
+            </div>
+            <div style="display: flex; gap: 6px;">
+                <input type="text" class="retro-input new-val-input" data-opt-idx="${optIdx}" placeholder="Add value (e.g. 2&quot;, Glossy, Pack of 3)" style="font-size: 0.72rem; padding: 3px 6px; flex: 1;">
+                <button type="button" class="retro-btn add-val-btn" data-opt-idx="${optIdx}" style="padding: 3px 8px; font-size: 0.7rem; background: #f1f5f9;">+ ADD</button>
+            </div>
+        </div>
+    `).join('');
+
+    const hasValues = tempProdOptions.some(o => o.values && o.values.length > 0);
+    if (matrixSec) {
+        matrixSec.style.display = hasValues ? 'block' : 'none';
+    }
+
+    renderProductVariantsMatrix();
+}
+
+function generateVariantsFromOptions() {
+    const validOpts = tempProdOptions.filter(o => o.name && o.name.trim() && Array.isArray(o.values) && o.values.length > 0);
+    if (validOpts.length === 0) {
+        tempProdVariants = [];
+        renderProductVariantsMatrix();
+        return;
+    }
+
+    // Cartesian product
+    const combinations = validOpts.reduce((acc, opt) => {
+        const res = [];
+        acc.forEach(prev => {
+            opt.values.forEach(val => {
+                res.push({ ...prev, [opt.name.trim()]: String(val).trim() });
+            });
+        });
+        return res;
+    }, [{}]);
+
+    const adminId = document.getElementById('prod-admin-id')?.value.trim() || 'CK';
+    const basePrice = Number(document.getElementById('prod-price')?.value) || 0;
+
+    syncVariantsFromUI();
+
+    const newVariants = combinations.map((comb, idx) => {
+        // Try to match existing variant with identical combination
+        const matched = tempProdVariants.find(v => {
+            const vc = v.option_combination || {};
+            const combKeys = Object.keys(comb);
+            const vcKeys = Object.keys(vc);
+            if (combKeys.length !== vcKeys.length) return false;
+            return combKeys.every(k => String(comb[k]).toLowerCase() === String(vc[k] || '').toLowerCase());
+        });
+
+        if (matched) {
+            return {
+                ...matched,
+                option_combination: comb
+            };
+        }
+
+        const skuSuffix = Object.values(comb).map(v => String(v).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4)).join('-');
+        return {
+            id: null,
+            sku: `${adminId}-${skuSuffix || idx + 1}`,
+            price: basePrice,
+            stock: 100,
+            active: 1,
+            option_combination: comb
+        };
+    });
+
+    tempProdVariants = newVariants;
+    renderProductVariantsMatrix();
+}
+
+function syncVariantsFromUI() {
+    const list = document.getElementById('prod-variants-list');
+    if (!list) return;
+    const cards = list.querySelectorAll('.variant-matrix-card');
+    cards.forEach(card => {
+        const idx = Number(card.dataset.varIdx);
+        if (tempProdVariants[idx]) {
+            const skuInput = card.querySelector('.var-sku-input');
+            const priceInput = card.querySelector('.var-price-input');
+            const stockInput = card.querySelector('.var-stock-input');
+            const activeInput = card.querySelector('.var-active-input');
+
+            if (skuInput) tempProdVariants[idx].sku = skuInput.value.trim();
+            if (priceInput) tempProdVariants[idx].price = Number(priceInput.value) || 0;
+            if (stockInput) tempProdVariants[idx].stock = Number(stockInput.value) || 0;
+            if (activeInput) tempProdVariants[idx].active = activeInput.checked ? 1 : 0;
+        }
+    });
+}
+
+function renderProductVariantsMatrix() {
+    const list = document.getElementById('prod-variants-list');
+    if (!list) return;
+
+    if (!tempProdVariants || tempProdVariants.length === 0) {
+        list.innerHTML = '<div style="color: #666; font-size: 0.75rem; font-style: italic; padding: 4px;">Click "⚡ GENERATE COMBINATIONS" above to create variant combinations.</div>';
+        return;
+    }
+
+    list.innerHTML = tempProdVariants.map((v, idx) => {
+        const combTags = Object.entries(v.option_combination || {}).map(([k, val]) => `
+            <span style="background: #f1f5f9; border: 1px solid #cbd5e1; padding: 1px 5px; border-radius: 3px; font-size: 0.68rem; font-weight: bold;">${escapeHtml(k)}: ${escapeHtml(val)}</span>
+        `).join(' ');
+
+        return `
+            <div class="variant-matrix-card" data-var-idx="${idx}" style="border: 1px solid #ccc; background: #fafafa; padding: 6px; display: grid; grid-template-columns: 2fr 1.2fr 1fr 1fr auto; gap: 8px; align-items: center; font-size: 0.75rem;">
+                <div>
+                    <div style="display: flex; flex-wrap: wrap; gap: 3px; margin-bottom: 3px;">${combTags}</div>
+                    <input type="text" class="retro-input var-sku-input" value="${escapeAttr(v.sku || '')}" placeholder="SKU" style="font-size: 0.7rem; padding: 2px 4px;">
+                </div>
+                <div>
+                    <label style="font-size: 0.65rem; color: #666; display: block;">Price (₹)</label>
+                    <input type="number" class="retro-input var-price-input" value="${v.price !== undefined ? v.price : ''}" placeholder="₹" min="0" style="font-size: 0.72rem; padding: 2px 4px;">
+                </div>
+                <div>
+                    <label style="font-size: 0.65rem; color: #666; display: block;">Stock</label>
+                    <input type="number" class="retro-input var-stock-input" value="${v.stock !== undefined ? v.stock : 100}" placeholder="Qty" min="0" style="font-size: 0.72rem; padding: 2px 4px;">
+                </div>
+                <div style="text-align: center;">
+                    <label style="font-size: 0.65rem; color: #666; display: block;">Active</label>
+                    <input type="checkbox" class="var-active-input" ${v.active !== 0 ? 'checked' : ''} style="cursor: pointer;">
+                </div>
+                <div>
+                    <button type="button" class="remove-var-btn" data-var-idx="${idx}" style="background: none; border: none; color: #ef4444; font-size: 0.9rem; cursor: pointer; font-weight: bold;" title="Remove this variant">✕</button>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
 async function editProduct(productId) {
     try {
         const res = await apiClient.get(`/admin/products/${productId}`);
-        const freshProduct = res?.data || res;
-        if (freshProduct && freshProduct.id) {
+        const raw = res?.data || res;
+        if (raw && (raw.id || raw.admin_product_id)) {
+            const freshProduct = normalizeProduct(raw);
             openProductForm(freshProduct);
             return;
         }
@@ -1943,6 +2303,30 @@ async function saveProductForm() {
             selFinishIds.push(Number(cb.value));
         });
         payload.finishing_option_ids = selFinishIds;
+    } else {
+        // Store 1 (CHIPAKK): serialize options and variants
+        syncVariantsFromUI();
+        const validOptions = tempProdOptions
+            .filter(o => o && o.name && o.name.trim() && Array.isArray(o.values) && o.values.length > 0)
+            .map(o => ({
+                name: o.name.trim(),
+                values: o.values.map(v => String(v).trim()).filter(Boolean)
+            }));
+
+        if (validOptions.length > 0) {
+            payload.options = validOptions;
+            payload.variants = (tempProdVariants || []).map(v => ({
+                id: v.id || undefined,
+                sku: (v.sku || '').trim(),
+                price: parseInt(v.price, 10) || priceVal,
+                stock: parseInt(v.stock, 10) || 0,
+                active: v.active !== 0 ? 1 : 0,
+                option_combination: v.option_combination || {}
+            }));
+        } else {
+            payload.options = [];
+            payload.variants = [];
+        }
     }
 
     try {
@@ -1973,8 +2357,11 @@ function renderCategoriesTable() {
     const visibleCategories = categories.filter(c => c && (c.name || '').toLowerCase().trim() !== 'best seller' && (c.slug || '').toLowerCase().trim() !== 'best-seller');
 
     tbody.innerHTML = visibleCategories.map(c => {
-        const apiHost = apiClient.baseUrl ? apiClient.baseUrl.replace(/\/api$/, '') : 'https://api.chipakk.shop';
-        const imgThumb = c.image_url ? `<img src="${c.image_url.startsWith('http') ? c.image_url : (apiHost + c.image_url)}" style="width:28px; height:28px; object-fit:cover; border:1px solid #000; border-radius:3px; vertical-align:middle; margin-right:6px;">` : '';
+        const fallbackImg = 'https://img.icons8.com/color/150/000000/sticker.png';
+        const resolvedCatImg = resolveAdminImageUrl(c.image_url);
+        const imgThumb = resolvedCatImg
+            ? `<img src="${resolvedCatImg}" onerror="this.onerror=null; this.src='${fallbackImg}';" alt="${escapeHtml(c.name)}" style="width:28px; height:28px; object-fit:cover; border:1px solid #000; border-radius:3px; vertical-align:middle; margin-right:6px; display:inline-block;">`
+            : `<img src="${fallbackImg}" alt="" style="width:28px; height:28px; object-fit:cover; border:1px solid #ccc; border-radius:3px; vertical-align:middle; margin-right:6px; opacity:0.6; display:inline-block;">`;
 
         const expCode = (c.experience?.experience_code || 'normal').toLowerCase();
         let expBadge = `<span class="status-badge" style="background:#f1f5f9; color:#475569;">NORMAL</span>`;
@@ -2071,12 +2458,15 @@ function openCategoryForm(category = null) {
 
     const prevBox = document.getElementById('cat-image-preview-box');
     const prevImg = document.getElementById('cat-image-preview-img');
+    const fallbackImg = 'https://img.icons8.com/color/150/000000/sticker.png';
     if (category?.image_url && prevBox && prevImg) {
-        const apiHost = apiClient.baseUrl ? apiClient.baseUrl.replace(/\/api$/, '') : 'https://api.chipakk.shop';
-        prevImg.src = category.image_url.startsWith('http') ? category.image_url : (apiHost + category.image_url);
+        const resolved = resolveAdminImageUrl(category.image_url);
+        prevImg.onerror = () => { prevImg.onerror = null; prevImg.src = fallbackImg; };
+        prevImg.src = resolved || fallbackImg;
         prevBox.style.display = 'block';
     } else if (prevBox) {
         prevBox.style.display = 'none';
+        if (prevImg) prevImg.src = '';
     }
 
     // Category Experience Selection
@@ -2103,23 +2493,28 @@ function openCategoryForm(category = null) {
     if (document.getElementById('cat-hero-light')) document.getElementById('cat-hero-light').value = heroLight;
     if (document.getElementById('cat-hero-dark')) document.getElementById('cat-hero-dark').value = heroDark;
 
-    const apiHost = apiClient.baseUrl ? apiClient.baseUrl.replace(/\/api$/, '') : 'https://api.chipakk.shop';
     const lightPrevBox = document.getElementById('hero-light-prev-box');
     const lightPrevImg = document.getElementById('hero-light-prev-img');
     if (heroLight && lightPrevBox && lightPrevImg) {
-        lightPrevImg.src = heroLight.startsWith('http') ? heroLight : (apiHost + heroLight);
+        const resLight = resolveAdminImageUrl(heroLight);
+        lightPrevImg.onerror = () => { lightPrevImg.onerror = null; lightPrevImg.src = fallbackImg; };
+        lightPrevImg.src = resLight || fallbackImg;
         lightPrevBox.style.display = 'block';
     } else if (lightPrevBox) {
         lightPrevBox.style.display = 'none';
+        if (lightPrevImg) lightPrevImg.src = '';
     }
 
     const darkPrevBox = document.getElementById('hero-dark-prev-box');
     const darkPrevImg = document.getElementById('hero-dark-prev-img');
     if (heroDark && darkPrevBox && darkPrevImg) {
-        darkPrevImg.src = heroDark.startsWith('http') ? heroDark : (apiHost + heroDark);
+        const resDark = resolveAdminImageUrl(heroDark);
+        darkPrevImg.onerror = () => { darkPrevImg.onerror = null; darkPrevImg.src = fallbackImg; };
+        darkPrevImg.src = resDark || fallbackImg;
         darkPrevBox.style.display = 'block';
     } else if (darkPrevBox) {
         darkPrevBox.style.display = 'none';
+        if (darkPrevImg) darkPrevImg.src = '';
     }
 
     // Explicitly update labels and required status for LUMO vs other categories
@@ -2138,6 +2533,14 @@ async function saveCategoryForm() {
     if (!name) {
         showToast("Category name is required!", "error");
         return;
+    }
+
+    let finalImageUrl = imageUrl;
+    if (editingCategoryId && !finalImageUrl) {
+        const existingCat = categories.find(c => String(c.id) === String(editingCategoryId));
+        if (existingCat && existingCat.image_url) {
+            finalImageUrl = existingCat.image_url;
+        }
     }
 
     const experienceCode = document.getElementById('cat-experience-type')?.value || 'normal';
@@ -2168,7 +2571,7 @@ async function saveCategoryForm() {
         name,
         slug,
         description: desc,
-        image_url: imageUrl,
+        image_url: finalImageUrl,
         active: 1,
         experience_code: experienceCode,
         experience_settings: experienceSettings,
@@ -2810,6 +3213,7 @@ function renderEventsTable() {
             <td><span class="status-badge ${e.active ? 'status-live' : 'status-ended'}">${e.active ? 'RUNNING' : 'INACTIVE'}</span></td>
             <td>
                 <div style="display:flex; gap:4px;">
+                    <button class="retro-btn edit-evt-btn" data-id="${e.id}" style="padding:2px 6px; font-size:0.75rem;">EDIT</button>
                     <button class="retro-btn toggle-evt-btn" data-id="${e.id}" style="padding:2px 6px; font-size:0.75rem;">TOGGLE</button>
                     <button class="retro-btn del-evt-btn" data-id="${e.id}" style="padding:2px 6px; font-size:0.75rem; background:#ef4444; color:#fff;">DEL</button>
                 </div>
@@ -2817,13 +3221,20 @@ function renderEventsTable() {
         </tr>
     `).join('') || '<tr><td colspan="8">No sales events scheduled.</td></tr>';
 
+    tbody.querySelectorAll('.edit-evt-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const evt = events.find(item => String(item.id) === btn.getAttribute('data-id'));
+            if (evt) openEventForm(evt);
+        });
+    });
+
     tbody.querySelectorAll('.toggle-evt-btn').forEach(btn => {
         btn.addEventListener('click', async () => {
             const evt = events.find(item => String(item.id) === btn.getAttribute('data-id'));
             if (evt) {
                 try {
                     await apiClient.put(`/admin/events/${evt.id}`, { ...evt, active: !evt.active ? 1 : 0 });
-                    showToast(`Event promotion ${evt.event_name} updated.`);
+                    showToast(`Event promotion ${evt.event_name || evt.name} updated.`);
                     await refreshEventsFromAPI();
                 } catch (err) {
                     showToast(`Error toggling event: ${err.message}`, 'error');
@@ -2842,17 +3253,19 @@ function openEventForm(evt = null) {
     if (!container) return;
 
     editingEventId = evt ? evt.id : null;
-    document.getElementById('evt-form-title').textContent = evt ? `[EDIT EVENT PROMOTION: ${evt.event_name}]` : '[SCHEDULE EVENT PROMOTION]';
-    document.getElementById('evt-name').value = evt ? evt.event_name : '';
-    document.getElementById('evt-title').value = evt ? (evt.subtitle || '') : '';
+    const evtName = evt ? (evt.event_name || evt.name || '') : '';
+    document.getElementById('evt-form-title').textContent = evt ? `[EDIT EVENT PROMOTION: ${evtName}]` : '[SCHEDULE EVENT PROMOTION]';
+    document.getElementById('evt-name').value = evtName;
+    document.getElementById('evt-title').value = evt ? (evt.subtitle || evt.description || '') : '';
     document.getElementById('evt-discount-type').value = evt ? evt.discount_type : 'percent';
-    document.getElementById('evt-discount-value').value = evt ? evt.discount_value : 20;
-    document.getElementById('evt-start').value = evt ? evt.start_time : new Date().toISOString().slice(0, 16);
-    document.getElementById('evt-end').value = evt ? evt.end_time : new Date(Date.now() + 86400000 * 7).toISOString().slice(0, 16);
-    document.getElementById('evt-active').value = evt ? String(evt.active) : 'true';
+    document.getElementById('evt-discount-value').value = evt ? (evt.discount_value !== undefined ? evt.discount_value : (evt.discount_percent || 20)) : 20;
+    document.getElementById('evt-start').value = evt ? (evt.start_time || evt.start_date || new Date().toISOString().slice(0, 16)) : new Date().toISOString().slice(0, 16);
+    document.getElementById('evt-end').value = evt ? (evt.end_time || evt.end_date || new Date(Date.now() + 86400000 * 7).toISOString().slice(0, 16)) : new Date(Date.now() + 86400000 * 7).toISOString().slice(0, 16);
+    document.getElementById('evt-active').value = evt ? String(evt.active !== undefined ? (evt.active === 1 || evt.active === true) : true) : 'true';
     document.getElementById('evt-storefront-hero').value = evt ? String(evt.hero_banner || false) : 'true';
 
-    selectedEvtProductIds = evt && evt.target_product_ids ? [...evt.target_product_ids] : products.map(p => p.admin_id || p.sku);
+    const targetProds = evt && (evt.target_product_ids || evt.product_ids || evt.target_products);
+    selectedEvtProductIds = targetProds ? [...targetProds] : products.map(p => p.admin_id || p.sku);
     renderEvtProductChecklist();
 
     container.style.display = 'block';
@@ -2994,12 +3407,20 @@ function renderCouponsTable() {
             <td><span class="status-badge ${c.active ? 'status-live' : 'status-inactive'}">${c.active ? 'ACTIVE' : 'INACTIVE'}</span></td>
             <td>
                 <div style="display:flex; gap:4px;">
+                    <button class="retro-btn edit-cpn-btn" data-id="${c.id}" style="padding:2px 6px; font-size:0.75rem;">EDIT</button>
                     <button class="retro-btn toggle-cpn-btn" data-id="${c.id}" style="padding:2px 6px; font-size:0.75rem;">TOGGLE</button>
                     <button class="retro-btn del-cpn-btn" data-id="${c.id}" style="padding:2px 6px; font-size:0.75rem; background:#ef4444; color:#fff;">DEL</button>
                 </div>
             </td>
         </tr>
     `).join('') || '<tr><td colspan="6">No coupons created.</td></tr>';
+
+    tbody.querySelectorAll('.edit-cpn-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const cpn = coupons.find(item => String(item.id) === btn.getAttribute('data-id'));
+            if (cpn) openCouponForm(cpn);
+        });
+    });
 
     tbody.querySelectorAll('.toggle-cpn-btn').forEach(btn => {
         btn.addEventListener('click', async () => {
@@ -3033,8 +3454,9 @@ function openCouponForm(cpn = null) {
     document.getElementById('cpn-code').value = cpn ? cpn.code : '';
     document.getElementById('cpn-type').value = cpn ? cpn.discount_type : 'percent';
     document.getElementById('cpn-amount').value = cpn ? cpn.discount_value : 10;
-    document.getElementById('cpn-min').value = cpn ? cpn.min_spend : 200;
-    document.getElementById('cpn-active').value = cpn ? String(cpn.active) : 'true';
+    const minSpend = cpn ? (cpn.min_spend !== undefined ? cpn.min_spend : (cpn.min_order_value_rupees !== undefined ? cpn.min_order_value_rupees : (cpn.min_order_value !== undefined ? cpn.min_order_value : 200))) : 200;
+    document.getElementById('cpn-min').value = minSpend;
+    document.getElementById('cpn-active').value = cpn ? String(cpn.active !== undefined ? (cpn.active === 1 || cpn.active === true) : true) : 'true';
     const custLimitEl = document.getElementById('cpn-per-customer-limit');
     if (custLimitEl) {
         custLimitEl.value = cpn ? (cpn.per_customer_limit || 1) : 1;
@@ -3120,12 +3542,20 @@ function renderShippingRulesTable() {
             <td><span class="status-badge ${r.active ? 'status-live' : 'status-inactive'}">${r.active ? 'ACTIVE' : 'INACTIVE'}</span></td>
             <td>
                 <div style="display:flex; gap:4px;">
+                    <button class="retro-btn edit-ship-btn" data-id="${r.id}" style="padding:2px 6px; font-size:0.75rem;">EDIT</button>
                     <button class="retro-btn toggle-ship-btn" data-id="${r.id}" style="padding:2px 6px; font-size:0.75rem;">TOGGLE</button>
                     <button class="retro-btn del-ship-btn" data-id="${r.id}" style="padding:2px 6px; font-size:0.75rem; background:#ef4444; color:#fff;">DEL</button>
                 </div>
             </td>
         </tr>
     `).join('') || '<tr><td colspan="6">No shipping rules configured.</td></tr>';
+
+    tbody.querySelectorAll('.edit-ship-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const rule = shippingRules.find(item => String(item.id) === btn.getAttribute('data-id'));
+            if (rule) openShippingRuleForm(rule);
+        });
+    });
 
     tbody.querySelectorAll('.toggle-ship-btn').forEach(btn => {
         btn.addEventListener('click', async () => {
@@ -4606,18 +5036,11 @@ function setupEventListeners() {
         const btn = document.getElementById('refresh-chart-btn');
         if (btn) btn.textContent = 'SYNCING...';
         try {
-            const res = await apiClient.get('/admin/dashboard');
-            if (res && res.data && res.data.metrics) {
-                dashboardMetrics = res.data.metrics;
-                if (Array.isArray(res.data.metrics.monthlyStats)) {
-                    monthlyStats = res.data.metrics.monthlyStats;
-                }
-            }
-            renderSalesChart();
+            const filterVal = document.getElementById('analytics-date-filter')?.value || 'last_6_months';
+            await refreshDashboardFromAPI(filterVal);
             showToast("Sales comparison chart synchronized with real database.");
         } catch (err) {
-            renderSalesChart();
-            showToast(`Refreshed chart: ${err.message}`, 'info');
+            showToast(`Refreshed chart error: ${err.message}`, 'error');
         } finally {
             if (btn) btn.textContent = '↻ SYNC';
         }
@@ -4951,9 +5374,19 @@ function setupEventListeners() {
         }
     });
 
-    document.getElementById('apply-analytics-filter-btn')?.addEventListener('click', () => {
-        updateState();
-        showToast("Analytics timeframe filter applied.");
+    document.getElementById('apply-analytics-filter-btn')?.addEventListener('click', async () => {
+        const btn = document.getElementById('apply-analytics-filter-btn');
+        const origText = btn ? btn.textContent : '';
+        if (btn) { btn.disabled = true; btn.textContent = 'APPLYING...'; }
+        try {
+            const filterVal = document.getElementById('analytics-date-filter')?.value || 'last_6_months';
+            await refreshDashboardFromAPI(filterVal);
+            showToast(`Analytics timeframe filter (${filterVal.replace(/_/g, ' ')}) applied.`);
+        } catch (err) {
+            showToast(`Failed to apply analytics filter: ${err.message}`, 'error');
+        } finally {
+            if (btn) { btn.disabled = false; btn.textContent = origText || 'APPLY'; }
+        }
     });
     document.getElementById('apply-chart-filter-btn')?.addEventListener('click', () => {
         renderSalesChart();
@@ -5023,6 +5456,89 @@ function setupEventListeners() {
         document.getElementById('product-form-container').style.display = 'none';
     });
     document.getElementById('save-prod-btn')?.addEventListener('click', saveProductForm);
+
+    // Product Options & Variants events
+    document.getElementById('add-option-group-btn')?.addEventListener('click', () => {
+        tempProdOptions.push({ name: '', values: [] });
+        renderProductOptionsBuilder();
+    });
+
+    document.getElementById('generate-variants-btn')?.addEventListener('click', () => {
+        generateVariantsFromOptions();
+    });
+
+    const optSec = document.getElementById('prod-dynamic-options-section');
+    if (optSec) {
+        optSec.addEventListener('click', (e) => {
+            const remOptBtn = e.target.closest('.remove-opt-btn');
+            if (remOptBtn) {
+                const optIdx = Number(remOptBtn.dataset.optIdx);
+                tempProdOptions.splice(optIdx, 1);
+                renderProductOptionsBuilder();
+                return;
+            }
+
+            const addValBtn = e.target.closest('.add-val-btn');
+            if (addValBtn) {
+                const optIdx = Number(addValBtn.dataset.optIdx);
+                const card = addValBtn.closest('.option-builder-card');
+                const valInput = card?.querySelector('.new-val-input');
+                if (valInput && valInput.value.trim()) {
+                    const newVal = valInput.value.trim();
+                    if (!tempProdOptions[optIdx].values.includes(newVal)) {
+                        tempProdOptions[optIdx].values.push(newVal);
+                        renderProductOptionsBuilder();
+                    }
+                }
+                return;
+            }
+
+            const remValBtn = e.target.closest('.remove-val-btn');
+            if (remValBtn) {
+                const optIdx = Number(remValBtn.dataset.optIdx);
+                const valIdx = Number(remValBtn.dataset.valIdx);
+                if (tempProdOptions[optIdx] && tempProdOptions[optIdx].values) {
+                    tempProdOptions[optIdx].values.splice(valIdx, 1);
+                    renderProductOptionsBuilder();
+                }
+                return;
+            }
+
+            const remVarBtn = e.target.closest('.remove-var-btn');
+            if (remVarBtn) {
+                const varIdx = Number(remVarBtn.dataset.varIdx);
+                syncVariantsFromUI();
+                tempProdVariants.splice(varIdx, 1);
+                renderProductVariantsMatrix();
+                return;
+            }
+        });
+
+        optSec.addEventListener('change', (e) => {
+            if (e.target.classList.contains('opt-name-input')) {
+                const optIdx = Number(e.target.dataset.optIdx);
+                if (tempProdOptions[optIdx]) {
+                    tempProdOptions[optIdx].name = e.target.value.trim();
+                }
+            } else if (e.target.closest('#prod-variants-list')) {
+                syncVariantsFromUI();
+            }
+        });
+
+        optSec.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && e.target.classList.contains('new-val-input')) {
+                e.preventDefault();
+                const optIdx = Number(e.target.dataset.optIdx);
+                const newVal = e.target.value.trim();
+                if (newVal && tempProdOptions[optIdx]) {
+                    if (!tempProdOptions[optIdx].values.includes(newVal)) {
+                        tempProdOptions[optIdx].values.push(newVal);
+                        renderProductOptionsBuilder();
+                    }
+                }
+            }
+        });
+    }
 
     document.getElementById('add-image-url-btn')?.addEventListener('click', () => {
         const urlInput = document.getElementById('prod-image-url');
@@ -5233,11 +5749,13 @@ function setupEventListeners() {
     });
 
     document.getElementById('save-announcement-btn')?.addEventListener('click', async () => {
-        siteSettings.announcement_text = document.getElementById('set-announcement').value;
-        siteSettings.announcement_active = document.getElementById('set-announcement-active').value === 'true';
-        siteSettings.announcement_rolling = document.getElementById('set-announcement-rolling').value === 'true';
+        const payload = {
+            announcement_text: document.getElementById('set-announcement')?.value || '',
+            announcement_active: document.getElementById('set-announcement-active')?.value === 'true',
+            announcement_rolling: document.getElementById('set-announcement-rolling')?.value === 'true'
+        };
         try {
-            await apiClient.put('/admin/settings', siteSettings);
+            await apiClient.put('/admin/settings', payload);
             showToast("Announcement ticker saved successfully.");
             await refreshSettingsFromAPI();
         } catch (err) {
@@ -5251,8 +5769,8 @@ function setupEventListeners() {
         if (btn) { btn.disabled = true; btn.textContent = "SAVING..."; }
 
         const email = document.getElementById('set-support-email').value.trim();
-        const gstRaw = document.getElementById('set-gst-rate').value;
-        const gstVal = gstRaw === '' || isNaN(Number(gstRaw)) ? 18 : Number(gstRaw); // 0 is a valid rate
+        const gstRaw = document.getElementById('set-gst-rate')?.value || '0';
+        const gstVal = gstRaw === '' || isNaN(Number(gstRaw)) ? 0 : Number(gstRaw);
 
         const payload = {
             store_name: document.getElementById('set-store-name').value.trim(),
@@ -5261,7 +5779,7 @@ function setupEventListeners() {
             support_phone: document.getElementById('set-support-phone').value.trim(),
             // the supplier identity (GSTIN, legal name, address) is saved separately: it is ONE record for both stores
             trade_name: document.getElementById('set-trade-name')?.value.trim() || undefined,
-            gst_enabled: document.getElementById('set-gst-enabled')?.value !== 'false',
+            gst_enabled: false,
             gst_pct: gstVal,
             gst_rate: gstVal,
             default_gst_rate: gstVal,
@@ -5275,12 +5793,12 @@ function setupEventListeners() {
 
         try {
             await apiClient.put('/admin/settings', payload);
-            showToast("Business & Tax settings saved successfully.");
+            showToast("Business settings saved successfully.");
             await refreshSettingsFromAPI();
         } catch (err) {
             showToast(`Error saving business settings: ${err.message}`, 'error');
         } finally {
-            if (btn) { btn.disabled = false; btn.textContent = originalText || "SAVE BUSINESS & TAX SETTINGS"; }
+            if (btn) { btn.disabled = false; btn.textContent = originalText || "SAVE BUSINESS SETTINGS"; }
         }
     });
 
@@ -5531,14 +6049,31 @@ function setupEventListeners() {
 
         showToast(`Switched active store context to ${numericId === 2 ? 'THE MARSHANS (3D Printing)' : 'CHIPAKK (Stickers & Merch)'}`);
 
+        // Reset product search and filters to prevent cross-store filter carryover
+        const prodSearch = document.getElementById('prod-search-input');
+        if (prodSearch) prodSearch.value = '';
+        const prodCat = document.getElementById('prod-filter-category');
+        if (prodCat) prodCat.value = '';
+        const prodDrop = document.getElementById('prod-filter-drop-status');
+        if (prodDrop) prodDrop.value = '';
+
+        // Clear in-memory data to prevent stale UI flash
+        products = [];
+        categories = [];
+        renderProductsTable();
+        populateCategoryDropdowns();
+
         // Re-load settings and data for the newly active store
         await refreshSettingsFromAPI();
 
         try {
+            // First refresh categories so products normalize with active store categories
+            await refreshCategoriesFromAPI();
+
             await Promise.allSettled([
+                refreshDashboardFromAPI(),
                 refreshOrdersFromAPI(),
                 refreshProductsFromAPI(),
-                refreshCategoriesFromAPI(),
                 refreshMaterialsFromAPI(),
                 refreshFinishingFromAPI(),
                 refreshReviewsFromAPI(),
@@ -5559,13 +6094,16 @@ function setupEventListeners() {
         const val = e.target.value.trim();
         const prevBox = document.getElementById('cat-image-preview-box');
         const prevImg = document.getElementById('cat-image-preview-img');
+        const fallbackImg = 'https://img.icons8.com/color/150/000000/sticker.png';
         if (prevBox && prevImg) {
             if (val) {
-                const apiHost = apiClient.baseUrl ? apiClient.baseUrl.replace(/\/api$/, '') : 'https://api.chipakk.shop';
-                prevImg.src = val.startsWith('http') ? val : (apiHost + val);
+                const res = resolveAdminImageUrl(val);
+                prevImg.onerror = () => { prevImg.onerror = null; prevImg.src = fallbackImg; };
+                prevImg.src = res || fallbackImg;
                 prevBox.style.display = 'block';
             } else {
                 prevBox.style.display = 'none';
+                prevImg.src = '';
             }
         }
     });
@@ -5590,9 +6128,11 @@ function setupEventListeners() {
                 if (catInput) catInput.value = uploadedUrl;
                 const prevBox = document.getElementById('cat-image-preview-box');
                 const prevImg = document.getElementById('cat-image-preview-img');
+                const fallbackImg = 'https://img.icons8.com/color/150/000000/sticker.png';
                 if (prevBox && prevImg) {
-                    const apiHost = apiClient.baseUrl ? apiClient.baseUrl.replace(/\/api$/, '') : 'https://api.chipakk.shop';
-                    prevImg.src = uploadedUrl.startsWith('http') ? uploadedUrl : (apiHost + uploadedUrl);
+                    const resolved = resolveAdminImageUrl(uploadedUrl);
+                    prevImg.onerror = () => { prevImg.onerror = null; prevImg.src = fallbackImg; };
+                    prevImg.src = resolved || fallbackImg;
                     prevBox.style.display = 'block';
                 }
                 showToast('Category image uploaded successfully');

@@ -96,6 +96,9 @@ const getProducts = async ({
     if (!isNaN(numCatId)) {
       conditions.push('p.category_id = ?');
       params.push(numCatId);
+    } else {
+      conditions.push('(c.slug = ? OR c.name = ?)');
+      params.push(String(category_id).trim(), String(category_id).trim());
     }
   }
 
@@ -131,7 +134,7 @@ const getProducts = async ({
 
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
-  const parsedLimit = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 200);
+  const parsedLimit = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 1000);
   const parsedOffset = Math.max(parseInt(offset, 10) || 0, 0);
 
   // Total count query

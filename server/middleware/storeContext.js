@@ -53,16 +53,36 @@ const resolveStoreContext = (req, res, next) => {
       }
     } else {
       // 3. Priority: Hostname / Origin / Referer domain resolution (Customer Storefronts)
-      const origin = req.get('origin') || '';
-      const host = req.get('host') || '';
-      const referer = req.get('referer') || '';
+      const extractHost = (val) => {
+        if (!val || typeof val !== 'string') return '';
+        try {
+          if (val.startsWith('http://') || val.startsWith('https://')) {
+            return new URL(val).hostname.toLowerCase();
+          }
+          return val.split(':')[0].trim().toLowerCase();
+        } catch (_) {
+          return '';
+        }
+      };
 
-      const targetDomain = `${origin} ${host} ${referer}`.toLowerCase();
+      const candidates = [
+        extractHost(req.get('origin')),
+        extractHost(req.get('host')),
+        extractHost(req.get('referer'))
+      ].filter(Boolean);
 
-      if (targetDomain.includes('themarshans.shop') || targetDomain.includes('marshans')) {
-        resolvedStoreId = 2;
-      } else if (targetDomain.includes('chipakk.shop') || targetDomain.includes('chipakk')) {
-        resolvedStoreId = 1;
+      const MARSHANS_HOSTS = new Set(['themarshans.shop', 'www.themarshans.shop']);
+      const CHIPAKK_HOSTS = new Set(['chipakk.shop', 'www.chipakk.shop']);
+
+      for (const h of candidates) {
+        if (MARSHANS_HOSTS.has(h)) {
+          resolvedStoreId = 2;
+          break;
+        }
+        if (CHIPAKK_HOSTS.has(h)) {
+          resolvedStoreId = 1;
+          break;
+        }
       }
     }
 

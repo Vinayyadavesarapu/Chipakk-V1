@@ -35,6 +35,7 @@
   } = window.CHIPAKK;
 
   let currentProduct = null;
+  let selectedOptions = {};
   let selectedMaterial = "Glossy";
   let selectedSize = '3"';
   let quantity = 1;
@@ -82,6 +83,22 @@
     selectedMaterial = (currentProduct.materials && currentProduct.materials[0]) || "Glossy";
     selectedSize = (currentProduct.sizes && currentProduct.sizes[0]) || '3"';
     quantity = 1;
+    selectedOptions = {};
+    if (Array.isArray(currentProduct.options) && currentProduct.options.length > 0) {
+      currentProduct.options.forEach(opt => {
+        const optName = opt.name;
+        const vals = Array.isArray(opt.values) ? opt.values.map(v => typeof v === 'object' ? (v.value || v.name) : v) : [];
+        if (vals.length > 0) {
+          selectedOptions[optName] = vals[0];
+        }
+      });
+      if (selectedOptions["Finish"] || selectedOptions["Material"]) {
+        selectedMaterial = selectedOptions["Finish"] || selectedOptions["Material"];
+      }
+      if (selectedOptions["Size"] || selectedOptions["Dimensions"]) {
+        selectedSize = selectedOptions["Size"] || selectedOptions["Dimensions"];
+      }
+    }
 
     // Dynamic SEO, Canonical & Meta Synchronization
     const pageTitle = `${currentProduct.name} — CHIPAKK Stickers`;
@@ -265,51 +282,68 @@
       }
     }
 
-    // Materials Selector
-    const materialContainer = $("#materialPills");
-    const materialLabel = $("#selectedMaterialLabel");
-    if (materialContainer) {
-      const materials = currentProduct.materials || ["Glossy", "Matte", "Holographic", "Transparent"];
-      materialContainer.innerHTML = materials.map((mat, idx) => `
-        <button type="button" class="option-pill-btn ${idx === 0 ? 'is-active' : ''}" data-option-val="${escapeAttr(mat)}">
-          ${escapeHtml(mat)}
-        </button>
-      `).join("");
+    function resolveActiveVariant() {
+      if (!currentProduct || !Array.isArray(currentProduct.variants) || currentProduct.variants.length === 0) {
+        return null;
+      }
+      const hasOptions = Array.isArray(currentProduct.options) && currentProduct.options.length > 0;
+      if (!hasOptions) {
+        return currentProduct.variants.find(v => v.variant_slug === 'default') || currentProduct.variants[0] || null;
+      }
 
-      if (materialLabel) materialLabel.textContent = selectedMaterial;
-
-      materialContainer.addEventListener("click", (e) => {
-        const btn = e.target.closest(".option-pill-btn");
-        if (!btn) return;
-        materialContainer.querySelectorAll(".option-pill-btn").forEach(b => b.classList.remove("is-active"));
-        btn.classList.add("is-active");
-        selectedMaterial = btn.dataset.optionVal;
-        if (materialLabel) materialLabel.textContent = selectedMaterial;
-      });
+      const selKeys = Object.keys(selectedOptions);
+      return currentProduct.variants.find(v => {
+        let comb = v.option_combination;
+        if (typeof comb === 'string') {
+          try { comb = JSON.parse(comb); } catch (_) { comb = {}; }
+        } else if (!comb || typeof comb !== 'object') {
+          comb = {};
+        }
+        const combKeys = Object.keys(comb);
+        if (combKeys.length !== selKeys.length) return false;
+        return selKeys.every(k => {
+          const matchedCombKey = combKeys.find(ck => ck.toLowerCase().trim() === k.toLowerCase().trim());
+          if (!matchedCombKey) return false;
+          return String(comb[matchedCombKey]).toLowerCase().trim() === String(selectedOptions[k]).toLowerCase().trim();
+        });
+      }) || null;
     }
 
-    // Size Selector
-    const sizeContainer = $("#sizePills");
-    const sizeLabel = $("#selectedSizeLabel");
-    if (sizeContainer) {
-      const sizes = currentProduct.sizes || ['2"', '3"', '4"'];
-      sizeContainer.innerHTML = sizes.map((sz, idx) => `
-        <button type="button" class="option-pill-btn ${idx === 0 ? 'is-active' : ''}" data-option-val="${escapeAttr(sz)}">
-          ${escapeHtml(sz)}
-        </button>
-      `).join("");
+    function updatePriceAndAvailability() {
+      const priceEl = $("#prodDetailPrice");
+      const addBtn = $("#addToCartBtn");
+      const buyBtn = $("#buyNowBtn");
 
-      if (sizeLabel) sizeLabel.textContent = selectedSize;
+      let currentPrice = currentProduct.price;
+      let comparePrice = currentProduct.compareAtPrice;
 
-      sizeContainer.addEventListener("click", (e) => {
-        const btn = e.target.closest(".option-pill-btn");
-        if (!btn) return;
-        sizeContainer.querySelectorAll(".option-pill-btn").forEach(b => b.classList.remove("is-active"));
-        btn.classList.add("is-active");
-        selectedSize = btn.dataset.optionVal;
-        if (sizeLabel) sizeLabel.textContent = selectedSize;
-      });
+      if (priceEl) {
+        priceEl.innerHTML = `
+          <span>${formatPrice(currentPrice)}</span>
+          ${comparePrice ? `<span class="product-price-orig">${formatPrice(comparePrice)}</span>` : ""}
+        `;
+      }
+
+      const isOutOfStock = currentProduct.stock !== undefined && currentProduct.stock !== null && currentProduct.stock <= 0 && currentProduct.inStock === false;
+
+      if (isOutOfStock) {
+        if (addBtn) { addBtn.disabled = true; addBtn.textContent = "Sold Out"; }
+        if (buyBtn) { buyBtn.disabled = true; }
+      } else {
+        if (addBtn) { addBtn.disabled = false; addBtn.textContent = "Add to Cart"; }
+        if (buyBtn) { buyBtn.disabled = false; }
+      }
     }
+
+    // Dynamic Product Options Rendering (Hidden/inactive for customer storefront release)
+    const dynamicContainer = $("#dynamicProductOptions");
+    if (dynamicContainer) {
+      dynamicContainer.style.display = 'none';
+      dynamicContainer.innerHTML = '';
+    }
+
+    // Initial price & availability sync
+    updatePriceAndAvailability();
 
     // Quantity Counter
     const qtyValEl = $("#qtyVal");
@@ -328,11 +362,21 @@
     const addBtn = $("#addToCartBtn");
     if (addBtn) {
       addBtn.onclick = () => {
-        cart.addItem(currentProduct, quantity, { material: selectedMaterial, size: selectedSize });
-        addBtn.textContent = "Added to Cart ✓";
-        setTimeout(() => {
-          addBtn.textContent = "Add to Cart";
-        }, 1400);
+        if (addBtn.disabled) return;
+        const triggerAdded = () => {
+          addBtn.textContent = "Added to Cart ✓";
+          setTimeout(() => {
+            updatePriceAndAvailability();
+          }, 1400);
+        };
+
+        const added = cart.addItem(currentProduct, quantity, {
+          price: currentProduct.price,
+          onAdded: triggerAdded
+        });
+        if (added) {
+          triggerAdded();
+        }
       };
     }
 
@@ -340,8 +384,17 @@
     const buyBtn = $("#buyNowBtn");
     if (buyBtn) {
       buyBtn.onclick = () => {
-        cart.addItem(currentProduct, quantity, { material: selectedMaterial, size: selectedSize });
-        window.location.href = "checkout.html";
+        if (buyBtn.disabled) return;
+        const proceedToCheckout = () => {
+          window.location.href = "checkout.html";
+        };
+        const added = cart.addItem(currentProduct, quantity, {
+          price: currentProduct.price,
+          onAdded: proceedToCheckout
+        });
+        if (added) {
+          proceedToCheckout();
+        }
       };
     }
 
@@ -392,10 +445,15 @@
         const pId = btn.dataset.addToCart || btn.dataset.quickAdd;
         const target = all.find(x => String(x.id) === String(pId));
         if (target) {
-          cart.addItem(target, 1);
-          const origHtml = btn.innerHTML;
-          btn.textContent = "Added ✓";
-          setTimeout(() => { btn.innerHTML = origHtml; }, 1200);
+          const triggerAdded = () => {
+            const origHtml = btn.innerHTML;
+            btn.textContent = "Added ✓";
+            setTimeout(() => { btn.innerHTML = origHtml; }, 1200);
+          };
+          const added = cart.addItem(target, 1, { onAdded: triggerAdded });
+          if (added) {
+            triggerAdded();
+          }
         }
       }
 

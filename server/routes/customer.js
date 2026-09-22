@@ -1,7 +1,8 @@
 const express = require('express');
 const { verifyFirebaseToken } = require('../middleware/auth');
 const { pool } = require('../config/database');
-const { sendSuccess } = require('../utils/responseHandler');
+const { sendSuccess, sendError } = require('../utils/responseHandler');
+const customerService = require('../services/customerService');
 const {
   getAddressesHandler,
   createAddressHandler,
@@ -16,6 +17,7 @@ router.use(verifyFirebaseToken);
 
 /**
  * Resolve Customer Identity & Enforce Admin Isolation
+ * Auto-provisions customer in MySQL users table if not yet created.
  * GET /api/customer/me
  */
 router.get('/me', async (req, res, next) => {
@@ -33,25 +35,28 @@ router.get('/me', async (req, res, next) => {
       return sendSuccess(res, { is_admin: true, is_customer: false }, 'Authenticated user is an administrator.');
     }
 
-    // Resolve customer profile
-    let customer = null;
-    const [userRows] = await pool.execute(
-      'SELECT id, firebase_uid, full_name AS name, email, phone FROM users WHERE firebase_uid = ? LIMIT 1',
-      [firebaseUid]
-    );
-
-    if (userRows && userRows.length > 0) {
-      customer = userRows[0];
-    } else {
-      customer = {
-        firebase_uid: firebaseUid,
-        email: email,
-        name: req.user.token?.name || null
-      };
-    }
+    // Resolve or auto-provision customer record in users table
+    const customer = await customerService.resolveOrCreateCustomer(req.user);
 
     return sendSuccess(res, { is_admin: false, is_customer: true, customer }, 'Customer identity resolved successfully.');
   } catch (error) {
+    return next(error);
+  }
+});
+
+/**
+ * Update Customer Profile (name, phone)
+ * PUT /api/customer/me (alias: PUT /api/customer/profile)
+ */
+router.put(['/me', '/profile'], async (req, res, next) => {
+  try {
+    const firebaseUid = req.user.uid;
+    const updatedCustomer = await customerService.updateCustomerProfile(firebaseUid, req.body || {});
+    return sendSuccess(res, { customer: updatedCustomer }, 'Customer profile updated successfully.');
+  } catch (error) {
+    if (error.statusCode) {
+      return sendError(res, error.message, error.statusCode);
+    }
     return next(error);
   }
 });

@@ -1,7 +1,7 @@
 /* =========================================================
    CHIPAKK — Customer Authentication Module
    js/auth.js
-   
+
    CENTRALIZED AUTHENTICATION LAYER:
    - Shared customer identity with THE MARSHANS (chipakk-77b99)
    - Browser-compatible Firebase Web Auth SDK
@@ -45,9 +45,9 @@
       }
       authInstance = window.firebase.auth();
 
-      // Enforce browser-session persistence (closing tab/window ends browser session)
+      // Enforce local persistence (persists across tab closures and browser restarts)
       if (authInstance && authInstance.setPersistence && window.firebase.auth.Auth && window.firebase.auth.Auth.Persistence) {
-        authInstance.setPersistence(window.firebase.auth.Auth.Persistence.SESSION)
+        authInstance.setPersistence(window.firebase.auth.Auth.Persistence.LOCAL)
           .catch((err) => {
             console.warn("[CHIPAKK Auth] Persistence setting notice:", err.message);
           });
@@ -160,6 +160,10 @@
         return "Please log in again to continue this action.";
       case "auth/popup-closed-by-user":
         return "Sign-in window was closed before completing.";
+      case "auth/popup-blocked":
+        return "Sign-in popup was blocked by your browser. Please allow popups for this site.";
+      case "auth/unauthorized-domain":
+        return "Sign-in domain is not authorized in Firebase Console. Please add this domain to Authorized Domains in Firebase Authentication settings.";
       default:
         if (msg && !code) return msg;
         return "Unable to complete authentication. Please try again.";
@@ -230,6 +234,9 @@
 
   // Sign out customer
   async function signOutUser() {
+    if (window.CHIPAKK?.cart?.clear) {
+      window.CHIPAKK.cart.clear();
+    }
     if (!authInstance) {
       currentUser = null;
       stateChangeListeners.forEach((fn) => {
@@ -297,6 +304,29 @@
     if (!cleanEmail) {
       throw new Error("Please enter your email address.");
     }
+
+    // Attempt sending with branded custom redirect URI if running on HTTP(S) origin
+    if (typeof window !== "undefined" && window.location && window.location.origin && window.location.origin.startsWith("http")) {
+      try {
+        const actionCodeSettings = {
+          url: `${window.location.origin}/reset-password.html`,
+          handleCodeInApp: false
+        };
+        await authInstance.sendPasswordResetEmail(cleanEmail, actionCodeSettings);
+        return true;
+      } catch (uriErr) {
+        // If domain is not authorized for custom continue URL, fall back to standard Firebase action link
+        if (uriErr.code === "auth/unauthorized-continue-uri" || uriErr.code === "auth/invalid-continue-uri") {
+          console.warn("[CHIPAKK Auth] Custom actionCodeSettings notice, falling back to default action URL:", uriErr.message);
+        } else {
+          const friendlyMsg = mapAuthError(uriErr);
+          const mappedError = new Error(friendlyMsg);
+          mappedError.code = uriErr.code;
+          throw mappedError;
+        }
+      }
+    }
+
     try {
       await authInstance.sendPasswordResetEmail(cleanEmail);
       return true;

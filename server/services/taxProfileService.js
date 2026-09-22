@@ -69,8 +69,10 @@ const readSupplierRow = async (db, storeId) => {
 };
 
 const buildProfile = (storeId, settings, row) => {
-  const gstEnabled = settings.gst_enabled !== false;
-  const defaultRate = finiteOrNull(settings.default_gst_rate, settings.gst_pct, settings.gst_rate);
+  // GST is permanently inactive for the current production release for both CHIPAKK and THE MARSHANS.
+  // Existing GST values in the database are ignored.
+  const gstEnabled = false;
+  const defaultRate = 0;
   const warnings = [];
   if (settings.tax_pricing_mode !== undefined && String(settings.tax_pricing_mode).toLowerCase() !== 'inclusive') {
     warnings.push(`tax_pricing_mode "${settings.tax_pricing_mode}" is not supported; prices are treated as GST-inclusive.`);
@@ -96,17 +98,10 @@ const buildProfile = (storeId, settings, row) => {
   const explicitCode = core.resolveStateCode(stateCode) || core.resolveStateCode(stateName);
   const sellerStateCode = explicitCode || (gstinCheck.valid ? gstinCheck.state_code : '');
   const missingForCheckout = [];
-  if (gstEnabled) {
-    if (!gstinCheck.valid) missingForCheckout.push({ field: 'gstin', reason: gstinCheck.reason });
-    if (!sellerStateCode) missingForCheckout.push({ field: 'seller_state', reason: 'Seller state is not configured and cannot be derived from a valid GSTIN.' });
-    else if (gstinCheck.valid && explicitCode && explicitCode !== gstinCheck.state_code) {
-      missingForCheckout.push({ field: 'seller_state', reason: `Seller state (${core.stateNameFromCode(explicitCode)}) does not match the GSTIN state code (${gstinCheck.state_code} = ${gstinCheck.state}).` });
-    }
-  }
-  const missingForInvoice = missingForCheckout.slice();
+  const missingForInvoice = [];
   if (!legalName) missingForInvoice.push({ field: 'legal_supplier_name', reason: 'Registered legal name is not configured.' });
   if (!address) missingForInvoice.push({ field: 'seller_address', reason: 'Supplier address is not configured.' });
-  if (!gstEnabled && !gstinCheck.valid) missingForInvoice.push({ field: 'gstin', reason: gstinCheck.reason });
+  if (!gstinCheck.valid) missingForInvoice.push({ field: 'gstin', reason: gstinCheck.reason });
 
   const prefix = nonEmpty(settings.invoice_prefix) ? String(settings.invoice_prefix).trim().toUpperCase() : (storeId === 2 ? 'MRS' : 'CHP');
   return {
@@ -117,18 +112,18 @@ const buildProfile = (storeId, settings, row) => {
     seller_address: address,
     seller_state: sellerStateCode ? core.stateNameFromCode(sellerStateCode) : null,
     seller_state_code: sellerStateCode || null,
-    gst_enabled: gstEnabled,
-    default_gst_rate: defaultRate === null ? 18 : defaultRate,
-    default_gst_rate_source: defaultRate === null ? 'built-in 18% (not configured)' : 'configured',
+    gst_enabled: false,
+    default_gst_rate: 0,
+    default_gst_rate_source: 'disabled',
     tax_pricing_mode: 'inclusive',
     invoice_prefix: prefix,
     // custom stickers have no catalogue record: explicit store settings, else unset (never guessed)
-    custom_item_hsn: (() => { const h = validateHsn(settings.custom_sticker_hsn_code); return h.valid ? h.value : null; })(),
-    custom_item_gst_rate: (() => { const r = validateGstRate(settings.custom_sticker_gst_rate); return r.valid ? r.value : null; })(),
+    custom_item_hsn: null,
+    custom_item_gst_rate: 0,
     source,
-    checkout_ready: !gstEnabled || missingForCheckout.length === 0,
+    checkout_ready: true,
     invoice_ready: missingForInvoice.length === 0,
-    missing_for_checkout: missingForCheckout,
+    missing_for_checkout: [],
     missing_for_invoice: missingForInvoice,
     warnings
   };
@@ -158,6 +153,9 @@ const assertCheckoutReady = (profile) => {
  * unset stays null (the order is still accepted, but no invoice can be issued for that line until it is set).
  */
 const resolveLineTaxConfig = (row, profile) => {
+  if (!profile || profile.gst_enabled === false) {
+    return { hsn: null, hsn_source: 'disabled', rate: 0, rate_source: 'disabled' };
+  }
   const productHsn = validateHsn(row && row.hsn_code); const categoryHsn = validateHsn(row && row.category_hsn_code);
   const productRate = validateGstRate(row && row.gst_rate); const categoryRate = validateGstRate(row && row.category_gst_rate);
   const hsn = (productHsn.valid && productHsn.value) || (categoryHsn.valid && categoryHsn.value) || null;
@@ -192,18 +190,15 @@ const parseTaxConfigInput = (data) => {
   return out;
 };
 
-/** Public/admin output fields for a product row: own values, the category's, and the effective ones (never guessed). */
+/** Public/admin output fields for a product row: existing GST values in DB are ignored for the production release. */
 const shapeTaxConfig = (row) => {
-  const r = row || {};
-  const num = (v) => (v === undefined || v === null || v === '' || !isFinite(Number(v)) ? null : Number(v));
-  const own = { hsn_code: nonEmpty(String(r.hsn_code === undefined || r.hsn_code === null ? '' : r.hsn_code)), gst_rate: num(r.gst_rate) };
-  const cat = { hsn_code: nonEmpty(String(r.category_hsn_code === undefined || r.category_hsn_code === null ? '' : r.category_hsn_code)), gst_rate: num(r.category_gst_rate) };
   return {
-    hsn_code: own.hsn_code, gst_rate: own.gst_rate,
-    category_hsn_code: cat.hsn_code, category_gst_rate: cat.gst_rate,
-    effective_hsn_code: own.hsn_code || cat.hsn_code || null,
-    // null = "use the store's default GST rate" (the storefront and the order service both apply the same fallback)
-    effective_gst_rate: own.gst_rate !== null ? own.gst_rate : cat.gst_rate
+    hsn_code: null,
+    gst_rate: null,
+    category_hsn_code: null,
+    category_gst_rate: null,
+    effective_hsn_code: null,
+    effective_gst_rate: 0
   };
 };
 

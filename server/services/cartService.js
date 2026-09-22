@@ -293,17 +293,23 @@ const addItem = async ({
     // Variant validation
     if (variantId) {
       const numVarId = parseInt(variantId, 10);
-      if (!isNaN(numVarId)) {
-        const [vRows] = await conn.execute(
-          'SELECT id, sku, price, active FROM product_variants WHERE id = ? AND product_id = ? LIMIT 1',
-          [numVarId, numProductId]
-        );
-        if (vRows && vRows.length > 0 && vRows[0].active) {
-          resolvedVariantId = vRows[0].id;
-          unitPricePaise = parseInt(vRows[0].price, 10) || unitPricePaise;
-          if (vRows[0].sku) sku = vRows[0].sku;
-        }
+      if (isNaN(numVarId)) {
+        const err = new Error('Invalid variant ID.');
+        err.statusCode = 400;
+        throw err;
       }
+      const [vRows] = await conn.execute(
+        'SELECT id, sku, price, active FROM product_variants WHERE id = ? AND product_id = ? LIMIT 1',
+        [numVarId, numProductId]
+      );
+      if (!vRows || vRows.length === 0 || !vRows[0].active) {
+        const err = new Error(`Variant #${numVarId} is invalid or inactive for this product.`);
+        err.statusCode = 400;
+        throw err;
+      }
+      resolvedVariantId = vRows[0].id;
+      unitPricePaise = parseInt(vRows[0].price, 10);
+      if (vRows[0].sku) sku = vRows[0].sku;
     }
   }
 

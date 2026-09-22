@@ -84,9 +84,17 @@ app.use(express.json({
 }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Protect private custom artwork files from unauthenticated static access
+// Protect private custom artwork files from unauthenticated static access.
+// The check MUST run on the DECODED, case-folded path: express.static percent-decodes the URL before it touches the
+// disk, so testing the raw text let "custom%2Dartwork-..." / "%63ustom-artwork-..." through (private files served).
 app.use('/uploads', (req, res, next) => {
-  if (req.path.includes('custom-artwork') || req.path.startsWith('/custom-artwork-')) {
+  let decoded;
+  try {
+    decoded = decodeURIComponent(req.path);
+  } catch (_) {
+    return res.status(400).json({ success: false, error: { message: 'Malformed upload path', statusCode: 400 } });
+  }
+  if (decoded.toLowerCase().includes('custom-artwork')) {
     return res.status(403).json({
       success: false,
       error: 'Direct unauthenticated static access to private custom print artwork is prohibited.'
@@ -95,14 +103,32 @@ app.use('/uploads', (req, res, next) => {
   next();
 });
 
-// Serve static uploaded public files (Hostinger / local storage)
-// Filenames are unique (timestamp + random suffix), so a long immutable cache is safe.
+// Serve static uploaded public files (Hostinger / local storage). The ONLY directory exposed is uploadDir
+// (config/uploads.js): express.static/send reject "..", encoded traversal and null bytes, and dotfiles are ignored.
+// Filenames are unique (timestamp + random suffix), so a long immutable cache is safe for files that EXIST.
 app.use('/uploads', express.static(require('./config/uploads').uploadDir, {
   maxAge: '30d',
   immutable: true,
   dotfiles: 'ignore',
-  index: false
+  index: false,
+  setHeaders: (res, filePath) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff'); // never let a browser sniff an upload into something executable
+    if (/\.svg$/i.test(filePath)) res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox");
+  }
 }));
+
+// Terminal handler for /uploads: a file that is not on disk is an UPLOAD 404, answered here. Without this the request
+// fell through to the API's generic "Route not found" (which reads like a routing bug and is not what happened), and
+// with no Cache-Control a CDN may keep the 404 after the file is restored, so it is explicitly not cacheable.
+app.use('/uploads', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  return res.status(404).json({
+    success: false,
+    error: { message: 'Upload file not found', code: 'UPLOAD_NOT_FOUND', statusCode: 404 },
+    timestamp: new Date().toISOString()
+  });
+});
 
 const webDir = path.join(__dirname, '../web');
 const customerDir = path.join(__dirname, '../customer-workspace');

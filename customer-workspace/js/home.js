@@ -333,14 +333,19 @@
         const products = await getProducts();
         const product = products.find(p => p.id === pId);
         if (product) {
-          cart.addItem(product, 1);
-          addBtn.classList.add("is-added");
-          const origHtml = addBtn.innerHTML;
-          addBtn.innerHTML = "Added ✓";
-          setTimeout(() => {
-            addBtn.classList.remove("is-added");
-            addBtn.innerHTML = origHtml;
-          }, 1200);
+          const triggerAdded = () => {
+            addBtn.classList.add("is-added");
+            const origHtml = addBtn.innerHTML;
+            addBtn.innerHTML = "Added ✓";
+            setTimeout(() => {
+              addBtn.classList.remove("is-added");
+              addBtn.innerHTML = origHtml;
+            }, 1200);
+          };
+          const added = cart.addItem(product, 1, { onAdded: triggerAdded });
+          if (added) {
+            triggerAdded();
+          }
         }
         return;
       }

@@ -48,7 +48,7 @@ function loadStorefront(opts = {}) {
     removeEventListener() {},
     dispatchEvent: (e) => { (listeners[e && e.type] || []).forEach((fn) => fn(e)); return true; },
     matchMedia: () => ({ matches: false, addEventListener() {} }),
-    CHIPAKK: { auth: { getCurrentUser: () => (opts.user || null), onAuthStateChanged() {}, isAuthReady: () => Promise.resolve(null) } },
+    CHIPAKK: { auth: { getCurrentUser: () => (opts.user !== undefined ? opts.user : { uid: 'test_user', email: 'test@chipakk.shop' }), onAuthStateChanged() {}, isAuthReady: () => Promise.resolve(null) } },
     API_BASE_URL: opts.apiBase,
     CHIPAKK_LOADER_MAX_WAIT_MS: opts.loaderMaxWaitMs
   };

@@ -11,9 +11,9 @@ const STORE_1_DEFAULTS = {
   // Tax: prices are GST-inclusive. The registered supplier (legal name, GSTIN, address, state) is NOT a store
   // setting: it is one shared record (legal_suppliers), so it cannot drift between CHIPAKK and THE MARSHANS.
   trade_name: 'CHIPAKK',
-  gst_pct: 18,
-  gst_rate: 18,
-  gst_enabled: true,
+  gst_pct: 0,
+  gst_rate: 0,
+  gst_enabled: false,
   tax_pricing_mode: 'inclusive',
   invoice_prefix: 'CHP',
   shipping_fee: 50,
@@ -37,9 +37,9 @@ const STORE_2_DEFAULTS = {
   store_status: 'OPEN',
   order_acceptance: 'ACCEPTING ORDERS',
   trade_name: 'THE MARSHANS',
-  gst_pct: 18,
-  gst_rate: 18,
-  gst_enabled: true,
+  gst_pct: 0,
+  gst_rate: 0,
+  gst_enabled: false,
   tax_pricing_mode: 'inclusive',
   invoice_prefix: 'MRS',
   shipping_fee: 10000,
@@ -204,6 +204,13 @@ const getStoreSettings = async (storeId = 1) => {
       settingsMap[row.setting_key] = val;
     });
   }
+
+  // GST is permanently inactive for the current production release for both CHIPAKK and THE MARSHANS.
+  // Existing GST values in the database are ignored.
+  settingsMap.gst_enabled = false;
+  settingsMap.gst_pct = 0;
+  settingsMap.gst_rate = 0;
+  settingsMap.default_gst_rate = 0;
 
   return settingsMap;
 };

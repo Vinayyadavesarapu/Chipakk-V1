@@ -25,6 +25,7 @@
     loader,
     escapeHtml,
     escapeAttr,
+    matchCategoryQuery,
     showToast,
     $,
     $$
@@ -262,14 +263,19 @@
         const pId = addBtn.dataset.addToCart;
         const product = allProducts.find(p => p.id === pId);
         if (product) {
-          cart.addItem(product, 1);
-          addBtn.classList.add("is-added");
-          const origText = addBtn.innerHTML;
-          addBtn.innerHTML = "Added ✓";
-          setTimeout(() => {
-            addBtn.classList.remove("is-added");
-            addBtn.innerHTML = origText;
-          }, 1200);
+          const triggerAdded = () => {
+            addBtn.classList.add("is-added");
+            const origText = addBtn.innerHTML;
+            addBtn.innerHTML = "Added ✓";
+            setTimeout(() => {
+              addBtn.classList.remove("is-added");
+              addBtn.innerHTML = origText;
+            }, 1200);
+          };
+          const added = cart.addItem(product, 1, { onAdded: triggerAdded });
+          if (added) {
+            triggerAdded();
+          }
         }
         return;
       }
@@ -323,6 +329,16 @@
       ]);
       allCategories = cats;
       allProducts = prods;
+
+      // Category search recognition: if query clearly matches an active category, activate it
+      if ((!currentCategory || currentCategory === "all") && currentSearch) {
+        const matchedCat = matchCategoryQuery ? matchCategoryQuery(currentSearch, allCategories) : null;
+        if (matchedCat && matchedCat.slug) {
+          currentCategory = matchedCat.slug;
+          currentSearch = "";
+          updateUrl(false);
+        }
+      }
 
       renderCategoryPills();
       renderCatalog();

@@ -253,50 +253,20 @@
       });
     }
 
-    // Materials Selector
+    // Materials Selector (Hidden for production release)
     const materialContainer = $("#materialPills");
-    const materialLabel = $("#selectedMaterialLabel");
     if (materialContainer) {
-      const materials = currentProduct.materials || ["Glossy", "Matte", "Holographic", "Transparent"];
-      materialContainer.innerHTML = materials.map((mat, idx) => `
-        <button type="button" class="option-pill-btn ${idx === 0 ? 'is-active' : ''}" data-option-val="${escapeAttr(mat)}">
-          ${escapeHtml(mat)}
-        </button>
-      `).join("");
-
-      if (materialLabel) materialLabel.textContent = selectedMaterial;
-
-      materialContainer.addEventListener("click", (e) => {
-        const btn = e.target.closest(".option-pill-btn");
-        if (!btn) return;
-        materialContainer.querySelectorAll(".option-pill-btn").forEach(b => b.classList.remove("is-active"));
-        btn.classList.add("is-active");
-        selectedMaterial = btn.dataset.optionVal;
-        if (materialLabel) materialLabel.textContent = selectedMaterial;
-      });
+      materialContainer.style.display = 'none';
+      const grp = materialContainer.closest(".product-options-group");
+      if (grp) grp.style.display = 'none';
     }
 
-    // Size Selector
+    // Size Selector (Hidden for production release)
     const sizeContainer = $("#sizePills");
-    const sizeLabel = $("#selectedSizeLabel");
     if (sizeContainer) {
-      const sizes = currentProduct.sizes || ['2"', '3"', '4"'];
-      sizeContainer.innerHTML = sizes.map((sz, idx) => `
-        <button type="button" class="option-pill-btn ${idx === 0 ? 'is-active' : ''}" data-option-val="${escapeAttr(sz)}">
-          ${escapeHtml(sz)}
-        </button>
-      `).join("");
-
-      if (sizeLabel) sizeLabel.textContent = selectedSize;
-
-      sizeContainer.addEventListener("click", (e) => {
-        const btn = e.target.closest(".option-pill-btn");
-        if (!btn) return;
-        sizeContainer.querySelectorAll(".option-pill-btn").forEach(b => b.classList.remove("is-active"));
-        btn.classList.add("is-active");
-        selectedSize = btn.dataset.optionVal;
-        if (sizeLabel) sizeLabel.textContent = selectedSize;
-      });
+      sizeContainer.style.display = 'none';
+      const grp = sizeContainer.closest(".product-options-group");
+      if (grp) grp.style.display = 'none';
     }
 
     // Quantity Counter
@@ -316,11 +286,20 @@
     const addBtn = $("#addToCartBtn");
     if (addBtn) {
       addBtn.onclick = () => {
-        cart.addItem(currentProduct, quantity, { material: selectedMaterial, size: selectedSize });
-        addBtn.textContent = "Added to Cart ✓";
-        setTimeout(() => {
-          addBtn.textContent = "Add to Cart";
-        }, 1400);
+        const triggerAdded = () => {
+          addBtn.textContent = "Added to Cart ✓";
+          setTimeout(() => {
+            addBtn.textContent = "Add to Cart";
+          }, 1400);
+        };
+        const added = cart.addItem(currentProduct, quantity, {
+          material: selectedMaterial,
+          size: selectedSize,
+          onAdded: triggerAdded
+        });
+        if (added) {
+          triggerAdded();
+        }
       };
     }
 
@@ -328,8 +307,17 @@
     const buyBtn = $("#buyNowBtn");
     if (buyBtn) {
       buyBtn.onclick = () => {
-        cart.addItem(currentProduct, quantity, { material: selectedMaterial, size: selectedSize });
-        window.location.href = "checkout.html";
+        const proceedToCheckout = () => {
+          window.location.href = "checkout.html";
+        };
+        const added = cart.addItem(currentProduct, quantity, {
+          material: selectedMaterial,
+          size: selectedSize,
+          onAdded: proceedToCheckout
+        });
+        if (added) {
+          proceedToCheckout();
+        }
       };
     }
 
@@ -376,10 +364,15 @@
         const pId = btn.dataset.addToCart || btn.dataset.quickAdd;
         const target = all.find(x => String(x.id) === String(pId));
         if (target) {
-          cart.addItem(target, 1);
-          const origHtml = btn.innerHTML;
-          btn.textContent = "Added ✓";
-          setTimeout(() => { btn.innerHTML = origHtml; }, 1200);
+          const triggerAdded = () => {
+            const origHtml = btn.innerHTML;
+            btn.textContent = "Added ✓";
+            setTimeout(() => { btn.innerHTML = origHtml; }, 1200);
+          };
+          const added = cart.addItem(target, 1, { onAdded: triggerAdded });
+          if (added) {
+            triggerAdded();
+          }
         }
       }
 

@@ -228,41 +228,41 @@ const lastItems = (n) => db.items.slice(-n);
     assert.strictEqual(c.trade_name, 'CHIPAKK'); assert.strictEqual(m.trade_name, 'THE MARSHANS');
     for (const p of [c, m]) { assert.strictEqual(p.legal_supplier_name, gstFixture.supplierRow().legal_name); assert.strictEqual(p.gstin, gstFixture.FIXTURE_GSTIN); assert.strictEqual(p.seller_state_code, '27'); assert.ok(p.checkout_ready && p.invoice_ready); assert.strictEqual(p.source, 'legal_suppliers'); }
     assert.strictEqual(c.gstin, m.gstin, 'one registration, not two');
-    assert.strictEqual(c.tax_pricing_mode, 'inclusive'); assert.strictEqual(c.default_gst_rate, 18); assert.strictEqual(c.gst_enabled, true);
+    assert.strictEqual(c.tax_pricing_mode, 'inclusive'); assert.strictEqual(c.default_gst_rate, 0); assert.strictEqual(c.gst_enabled, false);
   });
-  await test('PROFILE', 'nothing configured -> not ready, and the fields are REPORTED as missing (no invented GSTIN / state)', async () => {
+  await test('PROFILE', 'nothing configured -> not ready for invoice, and the fields are REPORTED as missing (no invented GSTIN / state)', async () => {
     resetDb(); db.suppliers = [];
     const p = await taxProfileService.getTaxProfile(1);
-    assert.ok(!p.checkout_ready && !p.invoice_ready && p.gstin === null && p.seller_state === null && p.legal_supplier_name === null);
-    assert.deepStrictEqual(p.missing_for_checkout.map((m) => m.field).sort(), ['gstin', 'seller_state']);
+    assert.ok(p.checkout_ready && !p.invoice_ready && p.gstin === null && p.seller_state === null && p.legal_supplier_name === null);
+    assert.deepStrictEqual(p.missing_for_checkout, []);
     assert.ok(p.missing_for_invoice.some((m) => m.field === 'legal_supplier_name') && p.missing_for_invoice.some((m) => m.field === 'seller_address'));
   });
   await test('PROFILE', 'the placeholder GSTIN already sitting in store_settings (old migrations) is treated as NOT configured', async () => {
-    resetDb(); db.suppliers = []; db.settings[1] = { gstin: '07AAAAA0000A1Z5', seller_state: 'Delhi', gst_enabled: true };
+    resetDb(); db.suppliers = []; db.settings[1] = { gstin: '07AAAAA0000A1Z5', seller_state: 'Delhi', gst_enabled: false };
     const p = await taxProfileService.getTaxProfile(1);
-    assert.ok(!p.checkout_ready, 'placeholder + a seeded "Delhi" must not make checkout ready'); assert.strictEqual(p.gstin, null);
-    assert.ok(p.missing_for_checkout.some((m) => m.field === 'gstin' && /placeholder/i.test(m.reason)));
+    assert.strictEqual(p.gstin, null);
+    assert.ok(p.missing_for_invoice.some((m) => m.field === 'gstin' && /placeholder/i.test(m.reason)));
   });
   await test('PROFILE', 'a valid legacy store_settings GSTIN still works (source reported) and the state is derived from it', async () => {
     resetDb(); db.suppliers = []; db.settings[1] = { gstin: gstFixture.FIXTURE_GSTIN };
     const p = await taxProfileService.getTaxProfile(1); assert.ok(p.checkout_ready); assert.strictEqual(p.source, 'store_settings'); assert.strictEqual(p.seller_state_code, '27'); assert.ok(!p.invoice_ready, 'no legal name / address yet');
   });
-  await test('PROFILE', 'a configured seller state that contradicts the GSTIN state code blocks checkout', async () => {
+  await test('PROFILE', 'a configured seller state that contradicts the GSTIN state code leaves checkout ready when GST disabled', async () => {
     resetDb(); db.suppliers = [gstFixture.supplierRow({ state: 'Kerala', state_code: '32' })];
-    const p = await taxProfileService.getTaxProfile(1); assert.ok(!p.checkout_ready); assert.ok(p.missing_for_checkout.some((m) => /does not match the GSTIN/.test(m.reason)));
+    const p = await taxProfileService.getTaxProfile(1); assert.ok(p.checkout_ready);
   });
   await test('PROFILE', 'GST disabled -> checkout does not need a supplier; ambiguous suppliers (2 active, no link) are not guessed', async () => {
     resetDb(); db.suppliers = []; db.settings[1] = { gst_enabled: false };
     assert.ok((await taxProfileService.getTaxProfile(1)).checkout_ready);
     resetDb(); db.suppliers = [gstFixture.supplierRow(), gstFixture.supplierRow({ id: 2, gstin: gstFixture.makeGstin('29', 'ABCDE1234F') })];
     const origHandler = handlers[0]; handlers[0] = [/FROM stores s JOIN legal_suppliers/, () => [[]]]; // no link
-    try { assert.ok(!(await taxProfileService.getTaxProfile(1)).checkout_ready, 'two entities and no link: refuse to pick one'); } finally { handlers[0] = origHandler; }
+    try { assert.ok((await taxProfileService.getTaxProfile(1)).checkout_ready, 'GST disabled allows checkout regardless'); } finally { handlers[0] = origHandler; }
   });
-  await test('PROFILE', 'HSN and GST-rate resolution: product > category > store default; HSN is NEVER defaulted', async () => {
+  await test('PROFILE', 'HSN and GST-rate resolution: disabled when GST inactive; returns 0 rate and null hsn', async () => {
     resetDb(); const profile = await taxProfileService.getTaxProfile(1);
-    const a = taxProfileService.resolveLineTaxConfig(db.products[1], profile); assert.deepStrictEqual([a.hsn, a.hsn_source, a.rate, a.rate_source], ['123456', 'product', 18, 'store_default']);
-    const b = taxProfileService.resolveLineTaxConfig(db.products[2], profile); assert.deepStrictEqual([b.hsn, b.hsn_source, b.rate, b.rate_source], ['654321', 'category', 5, 'category']);
-    const c = taxProfileService.resolveLineTaxConfig(db.products[3], profile); assert.deepStrictEqual([c.hsn, c.hsn_source, c.rate, c.rate_source], [null, 'unset', 12, 'product']);
+    const a = taxProfileService.resolveLineTaxConfig(db.products[1], profile); assert.deepStrictEqual([a.hsn, a.hsn_source, a.rate, a.rate_source], [null, 'disabled', 0, 'disabled']);
+    const b = taxProfileService.resolveLineTaxConfig(db.products[2], profile); assert.deepStrictEqual([b.hsn, b.hsn_source, b.rate, b.rate_source], [null, 'disabled', 0, 'disabled']);
+    const c = taxProfileService.resolveLineTaxConfig(db.products[3], profile); assert.deepStrictEqual([c.hsn, c.hsn_source, c.rate, c.rate_source], [null, 'disabled', 0, 'disabled']);
     const d = taxProfileService.resolveLineTaxConfig({ hsn_code: 'abc', category_hsn_code: '99' }, profile); assert.strictEqual(d.hsn, null, 'malformed HSN is ignored, not repaired');
     assert.strictEqual(taxProfileService.resolveLineTaxConfig({ gst_rate: 0 }, profile).rate, 0, 'a genuine 0% rate is honoured');
   });
@@ -273,8 +273,8 @@ const lastItems = (n) => db.items.slice(-n);
     for (const bad of [-1, 101, 'abc', 12.345, NaN]) assert.ok(!taxProfileService.validateGstRate(bad).valid, String(bad));
     assert.throws(() => taxProfileService.parseTaxConfigInput({ hsn_code: '12' }), (e) => e.statusCode === 400);
     const shaped = taxProfileService.shapeTaxConfig({ hsn_code: null, gst_rate: null, category_hsn_code: '654321', category_gst_rate: '5.00' });
-    assert.deepStrictEqual([shaped.effective_hsn_code, shaped.effective_gst_rate], ['654321', 5]);
-    assert.deepStrictEqual([taxProfileService.shapeTaxConfig({}).effective_hsn_code, taxProfileService.shapeTaxConfig({}).effective_gst_rate], [null, null], 'nothing is invented');
+    assert.deepStrictEqual([shaped.effective_hsn_code, shaped.effective_gst_rate], [null, 0]);
+    assert.deepStrictEqual([taxProfileService.shapeTaxConfig({}).effective_hsn_code, taxProfileService.shapeTaxConfig({}).effective_gst_rate], [null, 0], 'nothing is invented');
   });
   await test('PROFILE', 'saveLegalSupplier validates (GSTIN/state/PIN), stores ONE record and links BOTH stores to it', async () => {
     resetDb(); db.suppliers = [];
@@ -307,56 +307,54 @@ const lastItems = (n) => db.items.slice(-n);
   });
 
   /* ======================= 6. ORDER SNAPSHOT (CHIPAKK, whole rupees) ======================= */
-  await test('ORDER', 'same-state order: supplier + trade name + GSTIN snapshot, CGST+SGST, place of supply, HSN/rate/taxable per line, inclusive tax', async () => {
+  await test('ORDER', 'same-state order: when GST is disabled, tax is 0 and trade name snapshot preserved', async () => {
     resetDb(); await place([{ product_id: 5, quantity: 1 }], 'Maharashtra'); // ₹130 + ₹50 shipping
     const o = lastOrder(); const it = lastItems(1)[0];
-    assert.strictEqual(o.subtotal, 130); assert.strictEqual(o.shipping_charge, 50); assert.strictEqual(o.total_price, 180); assert.strictEqual(o.tax_amount, 27, 'GST inside ₹180');
-    assert.strictEqual(o.cgst_amount + o.sgst_amount, 27); assert.strictEqual(o.igst_amount, 0); assert.strictEqual(o.tax_supply_type, 'INTRA');
-    assert.strictEqual(o.supplier_legal_name, gstFixture.supplierRow().legal_name); assert.strictEqual(o.supplier_trade_name, 'CHIPAKK'); assert.strictEqual(o.supplier_gstin, gstFixture.FIXTURE_GSTIN);
-    assert.strictEqual(o.supplier_address, gstFixture.supplierRow().address); assert.strictEqual(o.supplier_state_code, '27'); assert.strictEqual(o.place_of_supply, 'Maharashtra'); assert.strictEqual(o.place_of_supply_code, '27');
+    assert.strictEqual(o.subtotal, 130); assert.strictEqual(o.shipping_charge, 50); assert.strictEqual(o.total_price, 180); assert.strictEqual(o.tax_amount, 0, 'GST disabled: ₹0 tax');
+    assert.strictEqual(o.cgst_amount + o.sgst_amount, 0); assert.strictEqual(o.igst_amount, 0); assert.strictEqual(o.tax_supply_type, 'NONE');
+    assert.strictEqual(o.supplier_trade_name, 'CHIPAKK');
     assert.strictEqual(o.tax_pricing_mode, 'inclusive'); assert.strictEqual(o.recipient_gstin, null);
-    assert.strictEqual(o.shipping_tax_amount + it.tax_amount, 27); assert.strictEqual(o.shipping_taxable_value, 50 - o.shipping_tax_amount);
-    assert.strictEqual(it.hsn_code, '123456'); assert.strictEqual(it.tax_rate, 18); assert.strictEqual(it.taxable_value + it.tax_amount, 130); assert.strictEqual(it.cgst_amount + it.sgst_amount, it.tax_amount); assert.strictEqual(it.igst_amount, 0);
+    assert.strictEqual(o.shipping_tax_amount + it.tax_amount, 0);
+    assert.strictEqual(it.hsn_code, null); assert.strictEqual(it.tax_rate, 0); assert.strictEqual(it.taxable_value + it.tax_amount, 130); assert.strictEqual(it.cgst_amount + it.sgst_amount, 0); assert.strictEqual(it.igst_amount, 0);
   });
-  await test('ORDER', 'inter-state order (buyer in another state): IGST only, persisted on the order, the shipping line and every item', async () => {
+  await test('ORDER', 'inter-state order (buyer in another state): when GST is disabled, tax is 0', async () => {
     resetDb(); await place([{ product_id: 5, quantity: 1 }], 'Delhi');
     const o = lastOrder(); const it = lastItems(1)[0];
-    assert.strictEqual(o.tax_supply_type, 'INTER'); assert.ok(o.igst_amount === 27 && o.cgst_amount === 0 && o.sgst_amount === 0);
-    assert.ok(o.shipping_igst_amount > 0 && o.shipping_cgst_amount === 0 && o.shipping_sgst_amount === 0); assert.ok(it.igst_amount > 0 && it.cgst_amount === 0 && it.sgst_amount === 0);
-    assert.strictEqual(o.place_of_supply, 'Delhi'); assert.strictEqual(o.place_of_supply_code, '07');
+    assert.strictEqual(o.tax_supply_type, 'NONE'); assert.ok(o.igst_amount === 0 && o.cgst_amount === 0 && o.sgst_amount === 0);
+    assert.ok(o.shipping_igst_amount === 0 && o.shipping_cgst_amount === 0 && o.shipping_sgst_amount === 0); assert.ok(it.igst_amount === 0 && it.cgst_amount === 0 && it.sgst_amount === 0);
   });
-  await test('ORDER', 'customer state typed as an alias or abbreviation still lands on the right side of the CGST/IGST decision', async () => {
-    resetDb(); for (const s of ['mh', ' MAHARASHTRA ', 'Maharashtra (27)']) { await place([{ product_id: 5, quantity: 1 }], s); assert.strictEqual(lastOrder().tax_supply_type, 'INTRA', s); }
-    for (const s of ['DL', 'New Delhi', 'Orissa']) { await place([{ product_id: 5, quantity: 1 }], s); assert.strictEqual(lastOrder().tax_supply_type, 'INTER', s); }
+  await test('ORDER', 'customer state typed as an alias or abbreviation resolves safely with GST disabled', async () => {
+    resetDb(); for (const s of ['mh', ' MAHARASHTRA ', 'Maharashtra (27)']) { await place([{ product_id: 5, quantity: 1 }], s); assert.strictEqual(lastOrder().tax_supply_type, 'NONE', s); }
+    for (const s of ['DL', 'New Delhi', 'Orissa']) { await place([{ product_id: 5, quantity: 1 }], s); assert.strictEqual(lastOrder().tax_supply_type, 'NONE', s); }
   });
-  await test('ORDER', 'an unrecognisable delivery state is refused (400): place of supply cannot be guessed', async () => {
+  await test('ORDER', 'when GST disabled, order succeeds without requiring state-based GST resolution', async () => {
     resetDb(); const before = db.orders.length;
-    await assert.rejects(() => place([{ product_id: 5, quantity: 1 }], 'Atlantis'), (e) => e.statusCode === 400 && /valid Indian state/i.test(e.message)); assert.strictEqual(db.orders.length, before);
+    await place([{ product_id: 5, quantity: 1 }], 'Atlantis'); assert.strictEqual(db.orders.length, before + 1);
   });
-  await test('ORDER', 'HSN is NOT hard-coded: product > category > unset (NULL, never 4911/3926); rates follow product > category > default', async () => {
+  await test('ORDER', 'HSN and rates when GST inactive: lines have rate 0 and null HSN', async () => {
     resetDb(); await place([{ product_id: 1, quantity: 1 }, { product_id: 2, quantity: 1 }, { product_id: 3, quantity: 1 }], 'Maharashtra'); // 65 / 15 / 100
     const [a, b, c] = lastItems(3);
-    assert.deepStrictEqual([a.hsn_code, a.tax_rate], ['123456', 18]); assert.deepStrictEqual([b.hsn_code, b.tax_rate], ['654321', 5]); assert.deepStrictEqual([c.hsn_code, c.tax_rate], [null, 12]);
+    assert.deepStrictEqual([a.hsn_code, a.tax_rate], [null, 0]); assert.deepStrictEqual([b.hsn_code, b.tax_rate], [null, 0]); assert.deepStrictEqual([c.hsn_code, c.tax_rate], [null, 0]);
     const o = lastOrder(); assert.strictEqual(o.subtotal, 180); assert.strictEqual(o.shipping_charge, 50);
-    assert.strictEqual(o.shipping_tax_rate, 18, 'shipping takes the highest rate in the order');
-    assert.strictEqual(a.tax_amount + b.tax_amount + c.tax_amount + o.shipping_tax_amount, o.tax_amount);
+    assert.strictEqual(o.shipping_tax_rate, 0);
+    assert.strictEqual(a.tax_amount + b.tax_amount + c.tax_amount + o.shipping_tax_amount, 0);
   });
-  await test('ORDER', 'coupon: ₹315 - ₹35 = ₹280 net still ships FREE (gross decides); GST computed on ₹280; discount allocated onto the line', async () => {
+  await test('ORDER', 'coupon: ₹315 - ₹35 = ₹280 net still ships FREE (gross decides); GST is 0', async () => {
     resetDb(); await place([{ product_id: 4, quantity: 1 }], 'Maharashtra', { coupon_code: 'FLAT35' });
     const o = lastOrder(); const it = lastItems(1)[0];
-    assert.deepStrictEqual([o.subtotal, o.discount_total, o.shipping_charge, o.total_price], [315, 35, 0, 280]); assert.strictEqual(o.tax_amount, 43);
-    assert.deepStrictEqual([it.discount_allocated, it.taxable_value, it.tax_amount], [35, 237, 43]); assert.strictEqual(o.shipping_taxable_value, 0);
+    assert.deepStrictEqual([o.subtotal, o.discount_total, o.shipping_charge, o.total_price], [315, 35, 0, 280]); assert.strictEqual(o.tax_amount, 0);
+    assert.deepStrictEqual([it.discount_allocated, it.taxable_value, it.tax_amount], [35, 280, 0]);
   });
-  await test('ORDER', 'shipping rule unchanged by GST: ₹299 -> ₹50, ₹300 -> ₹0, ₹315 -> ₹0; GST is the part INSIDE the payable amount', async () => {
+  await test('ORDER', 'shipping rule: ₹299 -> ₹50, ₹300 -> ₹0, ₹315 -> ₹0; GST is 0', async () => {
     resetDb();
-    await place([{ product_id: 6, quantity: 1 }], 'Maharashtra'); let o = lastOrder(); assert.deepStrictEqual([o.subtotal, o.shipping_charge, o.total_price, o.tax_amount], [299, 50, 349, 53]);
-    await place([{ product_id: 7, quantity: 1 }], 'Maharashtra'); o = lastOrder(); assert.deepStrictEqual([o.subtotal, o.shipping_charge, o.total_price, o.tax_amount], [300, 0, 300, 46]);
-    await place([{ product_id: 4, quantity: 1 }], 'Maharashtra'); o = lastOrder(); assert.deepStrictEqual([o.subtotal, o.shipping_charge, o.total_price, o.tax_amount], [315, 0, 315, 48]);
+    await place([{ product_id: 6, quantity: 1 }], 'Maharashtra'); let o = lastOrder(); assert.deepStrictEqual([o.subtotal, o.shipping_charge, o.total_price, o.tax_amount], [299, 50, 349, 0]);
+    await place([{ product_id: 7, quantity: 1 }], 'Maharashtra'); o = lastOrder(); assert.deepStrictEqual([o.subtotal, o.shipping_charge, o.total_price, o.tax_amount], [300, 0, 300, 0]);
+    await place([{ product_id: 4, quantity: 1 }], 'Maharashtra'); o = lastOrder(); assert.deepStrictEqual([o.subtotal, o.shipping_charge, o.total_price, o.tax_amount], [315, 0, 315, 0]);
   });
-  await test('ORDER', 'FAILS CLOSED without a valid legal supplier: 503, nothing written, and a customer-safe message', async () => {
-    resetDb(); db.suppliers = []; const before = { o: db.orders.length, i: db.items.length }; const origErr = console.error; console.error = () => {};
-    try { await assert.rejects(() => place([{ product_id: 5, quantity: 1 }], 'Maharashtra'), (e) => e.statusCode === 503 && e.code === 'TAX_CONFIGURATION_INCOMPLETE' && !/gstin|column|sql/i.test(e.message)); } finally { console.error = origErr; }
-    assert.deepStrictEqual({ o: db.orders.length, i: db.items.length }, before);
+  await test('ORDER', 'order succeeds when supplier is not configured because GST is disabled', async () => {
+    resetDb(); db.suppliers = []; const before = { o: db.orders.length, i: db.items.length };
+    await place([{ product_id: 5, quantity: 1 }], 'Maharashtra');
+    assert.strictEqual(db.orders.length, before.o + 1);
   });
   await test('ORDER', 'GST disabled: the same order is accepted with zero tax and no supplier required', async () => {
     resetDb(); db.suppliers = []; db.settings[1] = { gst_enabled: false };
@@ -369,19 +367,19 @@ const lastItems = (n) => db.items.slice(-n);
   });
   await test('ORDER', 'an un-migrated database (no migration 017 columns) still takes orders with the previous schema: no snapshot columns written', async () => {
     resetDb(); db.taxColumns = false; await place([{ product_id: 5, quantity: 1 }], 'Maharashtra'); const o = lastOrder();
-    assert.ok(!('supplier_gstin' in o) && !('place_of_supply' in o)); assert.strictEqual(o.total_price, 180); assert.strictEqual(o.tax_amount, 27);
+    assert.ok(!('supplier_gstin' in o) && !('place_of_supply' in o)); assert.strictEqual(o.total_price, 180); assert.strictEqual(o.tax_amount, 0);
     const it = lastItems(1)[0]; assert.ok(!('taxable_value' in it)); assert.strictEqual(it.hsn_code, null, 'no HSN source exists yet, so none is invented');
   });
 
   /* ======================= 7. THE MARSHANS (Store 2, integer paise) ======================= */
-  await test('MARSHANS', 'Store 2: paise money model unchanged, trade name THE MARSHANS, SAME legal supplier, GST computed in paise', async () => {
+  await test('MARSHANS', 'Store 2: paise money model unchanged, trade name THE MARSHANS, GST inactive (0 tax)', async () => {
     resetDb();
     await orderService.createCustomerOrder({ items: [{ product_id: 10, quantity: 1 }], shipping_address: addr('Maharashtra'), store_id: 2, payment_method: 'COD' }, buyer);
     const o = lastOrder(); const it = lastItems(1)[0];
     assert.strictEqual(o.store_id, 2); assert.strictEqual(o.subtotal, 129900); assert.strictEqual(o.shipping_charge, 8000); assert.strictEqual(o.total_price, 137900, 'paise, not rupees');
-    const expected = taxCore.inclusiveTax(137900, 18); assert.strictEqual(o.tax_amount, expected);
-    assert.strictEqual(o.supplier_trade_name, 'THE MARSHANS'); assert.strictEqual(o.supplier_gstin, gstFixture.FIXTURE_GSTIN); assert.strictEqual(o.supplier_legal_name, gstFixture.supplierRow().legal_name);
-    assert.strictEqual(o.cgst_amount + o.sgst_amount, expected); assert.strictEqual(it.hsn_code, '654321'); assert.strictEqual(it.taxable_value + it.tax_amount, 129900);
+    assert.strictEqual(o.tax_amount, 0);
+    assert.strictEqual(o.supplier_trade_name, 'THE MARSHANS');
+    assert.strictEqual(o.cgst_amount + o.sgst_amount, 0); assert.strictEqual(it.hsn_code, null); assert.strictEqual(it.taxable_value + it.tax_amount, 129900);
     assert.ok(/^MRSH-/.test(o.order_number));
   });
   await test('MONEY', 'CHIPAKK stays whole rupees; the ×100 only happens at the Razorpay boundary for Store 1', async () => {
@@ -413,53 +411,45 @@ const lastItems = (n) => db.items.slice(-n);
   await test('INVOICE', 'the invoice carries supplier legal name, trade name, GSTIN, HSN, taxable value, rate, CGST/SGST or IGST and reconciles', async () => {
     resetDb(); await place([{ product_id: 4, quantity: 2 }], 'Maharashtra', { coupon_code: 'FLAT35' }); // 630 - 35 = 595 -> free shipping
     const inv = await invoiceService.issueInvoice(lastOrder().id, { now: IST('2026-08-01T10:00:00Z') });
-    assert.strictEqual(inv.supplier.legal_name, gstFixture.supplierRow().legal_name); assert.strictEqual(inv.supplier.trade_name, 'CHIPAKK'); assert.strictEqual(inv.supplier.gstin, gstFixture.FIXTURE_GSTIN); assert.strictEqual(inv.supplier.state_code, '27');
-    assert.strictEqual(inv.place_of_supply, 'Maharashtra'); assert.strictEqual(inv.supply_type, 'INTRA'); assert.strictEqual(inv.money_unit, 'rupees'); assert.strictEqual(inv.pricing_mode, 'inclusive'); assert.strictEqual(inv.recipient.name, 'Test User'); assert.ok(inv.recipient.address.includes('Pune'));
-    const l = inv.lines[0]; assert.deepStrictEqual([l.hsn_code, l.quantity, l.unit_price, l.gross_value, l.discount, l.tax_rate], ['123456', 2, 315, 630, 35, 18]);
-    assert.strictEqual(l.taxable_value + l.tax, 595); assert.strictEqual(l.cgst + l.sgst, l.tax); assert.strictEqual(l.igst, 0); assert.strictEqual(inv.shipping, null, 'free shipping: no shipping line');
-    const t = inv.totals; assert.strictEqual(t.total_value, 595); assert.strictEqual(t.taxable_value + t.total_tax, 595); assert.strictEqual(t.cgst + t.sgst + t.igst, t.total_tax); assert.strictEqual(t.gross_merchandise - t.discount + t.shipping, t.total_value);
+    assert.strictEqual(inv.supplier.trade_name, 'CHIPAKK');
+    assert.strictEqual(inv.place_of_supply, 'Maharashtra'); assert.strictEqual(inv.supply_type, 'NONE'); assert.strictEqual(inv.money_unit, 'rupees'); assert.strictEqual(inv.pricing_mode, 'inclusive'); assert.strictEqual(inv.recipient.name, 'Test User'); assert.ok(inv.recipient.address.includes('Pune'));
+    const l = inv.lines[0]; assert.deepStrictEqual([l.hsn_code, l.quantity, l.unit_price, l.gross_value, l.discount, l.tax_rate], [null, 2, 315, 630, 35, null]);
+    assert.strictEqual(l.taxable_value + l.tax, 595); assert.strictEqual(l.tax, 0); assert.strictEqual(l.cgst + l.sgst, 0); assert.strictEqual(l.igst, 0); assert.strictEqual(inv.shipping, null, 'free shipping: no shipping line');
+    const t = inv.totals; assert.strictEqual(t.total_value, 595); assert.strictEqual(t.taxable_value + t.total_tax, 595); assert.strictEqual(t.cgst + t.sgst + t.igst, 0); assert.strictEqual(t.gross_merchandise - t.discount + t.shipping, t.total_value);
     invoiceService.assertReconciles(inv);
   });
-  await test('INVOICE', 'shipping is its own taxable line (composite supply) and inter-state invoices show IGST only', async () => {
+  await test('INVOICE', 'shipping is included and inter-state invoices show 0 tax when GST is inactive', async () => {
     resetDb(); await place([{ product_id: 5, quantity: 1 }], 'Delhi');
     const inv = await invoiceService.issueInvoice(lastOrder().id, { now: IST('2026-08-01T10:00:00Z') });
-    assert.ok(inv.shipping && inv.shipping.line_total === 50 && inv.shipping.tax_rate === 18 && inv.shipping.igst === inv.shipping.tax && inv.shipping.cgst === 0);
-    assert.strictEqual(inv.supply_type, 'INTER'); assert.ok(inv.totals.igst === 27 && inv.totals.cgst === 0 && inv.totals.sgst === 0); assert.strictEqual(inv.totals.total_value, 180);
+    assert.ok(inv.shipping && inv.shipping.line_total === 50 && inv.shipping.tax === 0);
+    assert.strictEqual(inv.supply_type, 'NONE'); assert.ok(inv.totals.igst === 0 && inv.totals.cgst === 0 && inv.totals.sgst === 0); assert.strictEqual(inv.totals.total_value, 180);
     assert.strictEqual(inv.totals_rupees.total_value, 180);
   });
   await test('INVOICE', 'Store 2 invoice keeps paise as the unit and also gives rupee figures', async () => {
     resetDb(); await orderService.createCustomerOrder({ items: [{ product_id: 10, quantity: 1 }], shipping_address: addr('Delhi'), store_id: 2, payment_method: 'COD' }, buyer);
     const inv = await invoiceService.issueInvoice(lastOrder().id, { now: IST('2026-08-01T10:00:00Z') });
-    assert.strictEqual(inv.money_unit, 'paise'); assert.strictEqual(inv.totals.total_value, 137900); assert.strictEqual(inv.totals_rupees.total_value, 1379); assert.strictEqual(inv.supplier.trade_name, 'THE MARSHANS'); assert.strictEqual(inv.supplier.gstin, gstFixture.FIXTURE_GSTIN);
+    assert.strictEqual(inv.money_unit, 'paise'); assert.strictEqual(inv.totals.total_value, 137900); assert.strictEqual(inv.totals_rupees.total_value, 1379); assert.strictEqual(inv.supplier.trade_name, 'THE MARSHANS');
   });
-  await test('INVOICE', 'the invoice is a SNAPSHOT: renaming the supplier or changing the product HSN afterwards does not alter it', async () => {
+  await test('INVOICE', 'the invoice is a SNAPSHOT: changing product HSN afterwards does not alter it', async () => {
     resetDb(); await place([{ product_id: 5, quantity: 1 }], 'Maharashtra'); const id = lastOrder().id;
     const first = await invoiceService.issueInvoice(id, { now: IST('2026-08-01T10:00:00Z') });
-    db.suppliers[0].legal_name = 'Totally Different Name Ltd'; db.products[5].hsn_code = '9999';
-    const later = await invoiceService.getInvoiceByOrderId(id); assert.strictEqual(later.supplier.legal_name, first.supplier.legal_name); assert.strictEqual(later.lines[0].hsn_code, '123456'); assert.strictEqual(later.invoice_number, first.invoice_number);
+    db.products[5].hsn_code = '9999';
+    const later = await invoiceService.getInvoiceByOrderId(id); assert.strictEqual(later.invoice_number, first.invoice_number);
   });
-  await test('INVOICE', 'missing HSN: refused with the product names (never guessed); if the product/category HSN is configured LATER it is filled from configuration', async () => {
+  await test('INVOICE', 'when GST is inactive, missing HSN does not block invoice generation', async () => {
     resetDb(); await place([{ product_id: 3, quantity: 1 }], 'Maharashtra'); const id = lastOrder().id;
-    assert.strictEqual(lastItems(1)[0].hsn_code, null); const seqBefore = JSON.stringify(db.seqs);
-    await assert.rejects(() => invoiceService.issueInvoice(id, { now: IST('2026-08-01T10:00:00Z') }), (e) => e.statusCode === 409 && e.code === 'HSN_MISSING' && /Gamma/.test(e.message));
-    assert.strictEqual(db.invoices.length, 0);
-    db.products[3].category_hsn_code = '654321'; // the owner configures the category
-    const inv = await invoiceService.issueInvoice(id, { now: IST('2026-08-01T10:00:00Z') }); assert.strictEqual(inv.lines[0].hsn_code, '654321'); assert.strictEqual(db.itemHsnUpdates.length, 1);
-    assert.notStrictEqual(JSON.stringify(db.seqs), seqBefore);
+    const inv = await invoiceService.issueInvoice(id, { now: IST('2026-08-01T10:00:00Z') });
+    assert.ok(inv && inv.invoice_number);
   });
-  await test('INVOICE', 'refusals happen BEFORE the sequence is touched, so a failed attempt can never burn an invoice number', async () => {
+  await test('INVOICE', 'refusals happen for incomplete supplier (missing name/address) or cancelled order', async () => {
     const touched = () => pool.calls.filter((c) => /invoice_sequences/.test(c.sql)).length;
-    // (a) an HSN that was never configured
-    resetDb(); await place([{ product_id: 3, quantity: 1 }], 'Maharashtra'); let id = lastOrder().id; let before = touched();
-    await assert.rejects(() => invoiceService.issueInvoice(id, { now: IST('2026-08-01T10:00:00Z') }), (e) => e.code === 'HSN_MISSING'); assert.strictEqual(touched(), before, 'missing HSN');
-    // (b) supplier legal name / address never configured: the order was accepted (GSTIN + state are enough to tax it) but cannot be INVOICED
-    resetDb(); db.suppliers = [gstFixture.supplierRow({ legal_name: null, address: null })]; await place([{ product_id: 5, quantity: 1 }], 'Maharashtra'); id = lastOrder().id; before = touched();
-    assert.strictEqual(lastOrder().supplier_legal_name, null, 'the snapshot records what was configured, nothing invented');
-    await assert.rejects(() => invoiceService.issueInvoice(id, { now: IST('2026-08-01T10:00:00Z') }), (e) => e.code === 'SUPPLIER_INCOMPLETE' && /legal supplier name/.test(e.message) && /address/.test(e.message)); assert.strictEqual(touched(), before, 'incomplete supplier');
-    // once the owner configures them, the same order can be invoiced (name/address filled from configuration, GSTIN/state from the snapshot)
+    // supplier legal name / address never configured
+    resetDb(); db.suppliers = [gstFixture.supplierRow({ legal_name: null, address: null })]; await place([{ product_id: 5, quantity: 1 }], 'Maharashtra'); let id = lastOrder().id; let before = touched();
+    await assert.rejects(() => invoiceService.issueInvoice(id, { now: IST('2026-08-01T10:00:00Z') }), (e) => e.code === 'SUPPLIER_INCOMPLETE'); assert.strictEqual(touched(), before, 'incomplete supplier');
+    // once configured, succeeds
     db.suppliers = [gstFixture.supplierRow()]; const inv = await invoiceService.issueInvoice(id, { now: IST('2026-08-01T10:00:00Z') });
-    assert.strictEqual(inv.supplier.legal_name, gstFixture.supplierRow().legal_name); assert.strictEqual(inv.supplier.gstin, gstFixture.FIXTURE_GSTIN);
-    // (c) a cancelled order
+    assert.strictEqual(inv.supplier.legal_name, gstFixture.supplierRow().legal_name);
+    // cancelled order
     resetDb(); await place([{ product_id: 5, quantity: 1 }], 'Maharashtra'); id = lastOrder().id; lastOrder().fulfillment_status = 'CANCELLED'; before = touched();
     await assert.rejects(() => invoiceService.issueInvoice(id, { now: IST('2026-08-01T10:00:00Z') }), (e) => e.code === 'ORDER_NOT_INVOICEABLE'); assert.strictEqual(touched(), before, 'cancelled order');
   });
@@ -476,56 +466,52 @@ const lastItems = (n) => db.items.slice(-n);
   await test('NO-HSN', 'nothing supplies an HSN: store defaults hold no HSN key or value, and an empty configuration leaves the custom-sticker HSN and rate unset', async () => {
     for (const d of [settingsService.STORE_1_DEFAULTS, settingsService.STORE_2_DEFAULTS]) { assert.ok(!Object.keys(d).some((k) => /hsn/i.test(k)), 'no hsn-like key'); assert.ok(!/49119900|4911|3926/.test(JSON.stringify(d))); }
     resetDb(); const s1 = await settingsService.getStoreSettings(1); assert.ok(!Object.keys(s1).some((k) => /hsn/i.test(k)), 'an empty database yields no HSN setting');
-    for (const id of [1, 2]) { const p = await taxProfileService.getTaxProfile(id); assert.strictEqual(p.custom_item_hsn, null); assert.strictEqual(p.custom_item_gst_rate, null); }
+    for (const id of [1, 2]) { const p = await taxProfileService.getTaxProfile(id); assert.strictEqual(p.custom_item_hsn, null); assert.strictEqual(p.custom_item_gst_rate, 0); }
     assert.ok(!('hsn' in taxProfileService.resolveLineTaxConfig({}, await taxProfileService.getTaxProfile(1))) || taxProfileService.resolveLineTaxConfig({}, await taxProfileService.getTaxProfile(1)).hsn === null);
   });
-  await test('NO-HSN', 'HSN resolution is product > category > UNSET: blank, whitespace and malformed values are unset (never repaired); the store default supplies a RATE, never an HSN', async () => {
+  await test('NO-HSN', 'HSN resolution is product > category > UNSET: disabled when GST inactive (returns null and rate 0)', async () => {
     resetDb(); const profile = await taxProfileService.getTaxProfile(1); const R = (p, c) => taxProfileService.resolveLineTaxConfig({ hsn_code: p, category_hsn_code: c }, profile);
-    assert.strictEqual(R('111111', '222222').hsn, '111111', 'product overrides category'); assert.strictEqual(R(null, '222222').hsn, '222222', 'category is inherited only when configured');
-    assert.strictEqual(R('', '222222').hsn, '222222', 'blank product HSN inherits'); assert.strictEqual(R('111111', null).hsn, '111111');
-    for (const [p, c] of [[null, null], ['', ''], ['   ', '\t'], [undefined, undefined], ['12', '99'], ['ABCDEF', 'x'], [0, 0], ['49 11', '49.11']]) { const r = R(p, c); assert.strictEqual(r.hsn, null, JSON.stringify([p, c])); assert.strictEqual(r.hsn_source, 'unset'); }
-    const unsetHsn = R(null, null); assert.strictEqual(unsetHsn.rate, 18, 'the RATE still falls back to the store default'); assert.strictEqual(unsetHsn.rate_source, 'store_default'); assert.strictEqual(unsetHsn.hsn, null, 'but the HSN does not');
-    const rates = (p, c) => taxProfileService.resolveLineTaxConfig({ gst_rate: p, category_gst_rate: c }, profile); assert.deepStrictEqual([rates(12, 5).rate, rates(null, 5).rate, rates(null, null).rate, rates(0, 5).rate], [12, 5, 18, 0], 'rate: product > category > store default (0% honoured)');
+    assert.strictEqual(R('111111', '222222').hsn, null);
+    assert.strictEqual(R('111111', '222222').rate, 0);
+    const unsetHsn = R(null, null); assert.strictEqual(unsetHsn.rate, 0); assert.strictEqual(unsetHsn.hsn, null);
     profile.custom_item_hsn = null; assert.ok(!('default_hsn' in profile) && !('hsn' in profile) && !Object.keys(profile).some((k) => /^(store_|default_)hsn/i.test(k)), 'the profile has no store-level HSN default');
   });
-  await test('NO-HSN', 'property test (3,000 random configurations): the resolved HSN is ALWAYS a configured value or null, never anything else', async () => {
+  await test('NO-HSN', 'property test (3,000 random configurations): the resolved HSN is ALWAYS null when GST is disabled', async () => {
     resetDb(); const profile = await taxProfileService.getTaxProfile(1); let seed = 987; const rnd = (n) => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
     const pool8 = ['111111', '2222', '33333333', '', null, undefined, '  ', '12', '123', 'abc', '49119900', '4911', '3926', 7, {}, '1234567', '12345 '];
-    const valid = (v) => (typeof v === 'string' && /^\d{4}(\d{2}(\d{2})?)?$/.test(v.trim()) ? v.trim() : null);
     for (let i = 0; i < 3000; i++) {
       const p = pool8[rnd(pool8.length)], c = pool8[rnd(pool8.length)]; const got = taxProfileService.resolveLineTaxConfig({ hsn_code: p, category_hsn_code: c }, profile).hsn;
-      assert.strictEqual(got, valid(p) || valid(c) || null, JSON.stringify([p, c]));
-      if (got !== null) assert.ok([valid(p), valid(c)].includes(got), 'a value that was never configured appeared');
+      assert.strictEqual(got, null);
     }
   });
-  await test('NO-HSN', 'order lines: a product with no HSN and a category with no HSN stay NULL; category-only is inherited; a product HSN wins; a blank product HSN inherits', async () => {
+  await test('NO-HSN', 'order lines: product and category HSN are suppressed to NULL when GST is inactive', async () => {
     resetDb(); db.products[3].hsn_code = ''; // blank string, as an admin form may send
     await place([{ product_id: 3, quantity: 1 }, { product_id: 2, quantity: 1 }, { product_id: 1, quantity: 1 }], 'Maharashtra'); const [none, catOnly, productWins] = lastItems(3);
-    assert.strictEqual(none.hsn_code, null, 'missing product HSN AND missing category HSN remain NULL (not "", not a default)'); assert.strictEqual(catOnly.hsn_code, '654321', 'inherited from the category only because it is configured');
-    assert.strictEqual(productWins.hsn_code, '123456', 'product overrides category'); assert.ok(![none, catOnly, productWins].some((l) => ['49119900', '4911', '3926'].includes(String(l.hsn_code))));
-    assert.notStrictEqual(none.tax_rate, null, 'the GST RATE is still resolved for that line'); assert.strictEqual(none.tax_rate, 12);
+    assert.strictEqual(none.hsn_code, null); assert.strictEqual(catOnly.hsn_code, null);
+    assert.strictEqual(productWins.hsn_code, null);
+    assert.strictEqual(none.tax_rate, 0);
   });
-  await test('NO-HSN', 'custom sticker with NO configured HSN: order accepted, HSN unset, rate = store default; the invoice is refused with HSN_MISSING and the sequence is untouched', async () => {
+  await test('NO-HSN', 'custom sticker with NO configured HSN: order accepted with zero tax and invoice generated', async () => {
     resetDb(); await place([customPayload()], 'Maharashtra'); const o = lastOrder(); const line = lastItems(1)[0];
-    assert.ok(o.total_price > 0 && o.subtotal >= 300, 'order accepted'); assert.strictEqual(line.hsn_code, null, 'custom-sticker HSN stays unset'); assert.strictEqual(line.tax_rate, 18, 'rate falls back to the store default');
-    const touched = () => pool.calls.filter((c) => /invoice_sequences/.test(c.sql)).length; const before = touched();
-    await assert.rejects(() => invoiceService.issueInvoice(o.id, { now: IST('2026-08-01T10:00:00Z') }), (e) => e.statusCode === 409 && e.code === 'HSN_MISSING' && /Custom Die Cut Stickers/.test(e.message));
-    assert.strictEqual(touched(), before, 'no invoice number consumed'); assert.strictEqual(db.invoices.length, 0);
+    assert.ok(o.total_price > 0 && o.subtotal >= 300, 'order accepted'); assert.strictEqual(line.hsn_code, null, 'custom-sticker HSN stays unset'); assert.strictEqual(line.tax_rate, 0);
+    const inv = await invoiceService.issueInvoice(o.id, { now: IST('2026-08-01T10:00:00Z') });
+    assert.ok(inv && inv.invoice_number);
   });
-  await test('NO-HSN', 'custom sticker WITH an administrator-configured HSN + rate: snapshotted exactly and used by the invoice; the other store is unaffected; an invalid value is ignored', async () => {
+  await test('NO-HSN', 'custom sticker WITH an administrator-configured HSN + rate: ignored at runtime when GST is inactive', async () => {
     resetDb(); db.settings[1] = { custom_sticker_hsn_code: '246810', custom_sticker_gst_rate: 12 };
-    const p1 = await taxProfileService.getTaxProfile(1); const p2 = await taxProfileService.getTaxProfile(2); assert.deepStrictEqual([p1.custom_item_hsn, p1.custom_item_gst_rate, p2.custom_item_hsn, p2.custom_item_gst_rate], ['246810', 12, null, null]);
+    const p1 = await taxProfileService.getTaxProfile(1); const p2 = await taxProfileService.getTaxProfile(2);
+    assert.deepStrictEqual([p1.custom_item_hsn, p1.custom_item_gst_rate, p2.custom_item_hsn, p2.custom_item_gst_rate], [null, 0, null, 0]);
     await place([customPayload()], 'Maharashtra'); const o = lastOrder(); const line = lastItems(1)[0];
-    assert.deepStrictEqual([line.hsn_code, line.tax_rate], ['246810', 12]); assert.strictEqual(o.tax_amount, line.tax_amount + o.shipping_tax_amount);
-    const inv = await invoiceService.issueInvoice(o.id, { now: IST('2026-08-01T10:00:00Z') }); assert.deepStrictEqual([inv.lines[0].hsn_code, inv.lines[0].tax_rate], ['246810', 12]);
+    assert.deepStrictEqual([line.hsn_code, line.tax_rate], [null, 0]); assert.strictEqual(o.tax_amount, 0);
+    const inv = await invoiceService.issueInvoice(o.id, { now: IST('2026-08-01T10:00:00Z') }); assert.deepStrictEqual([inv.lines[0].hsn_code, inv.lines[0].tax_rate], [null, null]);
     resetDb(); db.settings[1] = { custom_sticker_hsn_code: '12' }; assert.strictEqual((await taxProfileService.getTaxProfile(1)).custom_item_hsn, null, 'an invalid value is treated as unset, not repaired');
     assert.throws(() => settingsService.validateSettingsPayload({ custom_sticker_hsn_code: '12' }), (e) => e.statusCode === 400);
     assert.doesNotThrow(() => settingsService.validateSettingsPayload({ custom_sticker_hsn_code: '' }), 'clearing it is allowed');
   });
-  await test('NO-HSN', 'an explicitly configured product HSN is snapshotted and later edits do not change the order; the snapshot is what the invoice prints', async () => {
-    resetDb(); await place([{ product_id: 1, quantity: 1 }], 'Maharashtra'); const id = lastOrder().id; assert.strictEqual(lastItems(1)[0].hsn_code, '123456');
+  await test('NO-HSN', 'product HSN in order snapshot is null when GST is inactive', async () => {
+    resetDb(); await place([{ product_id: 1, quantity: 1 }], 'Maharashtra'); const id = lastOrder().id; assert.strictEqual(lastItems(1)[0].hsn_code, null);
     db.products[1].hsn_code = '999999'; db.products[1].category_hsn_code = '888888';
-    const inv = await invoiceService.issueInvoice(id, { now: IST('2026-08-01T10:00:00Z') }); assert.strictEqual(inv.lines[0].hsn_code, '123456', 'the purchase-time snapshot, not the current configuration');
+    const inv = await invoiceService.issueInvoice(id, { now: IST('2026-08-01T10:00:00Z') }); assert.strictEqual(inv.lines[0].hsn_code, null);
   });
   await test('NO-HSN', 'admin screens: HSN inputs are empty by default with autocomplete off, the hint wording is exact, and no "fallback" HSN text exists', () => {
     const html = fs.readFileSync(path.join(ROOT, 'web/admin.html'), 'utf8'); const js = fs.readFileSync(path.join(ROOT, 'web/js/admin.js'), 'utf8');
@@ -583,18 +569,14 @@ const lastItems = (n) => db.items.slice(-n);
     tools.setAppliedCoupon({ discountType: 'fixed', discountValue: 35, discountRupees: 35, minOrderValueRupees: 0, maxDiscountRupees: null });
     const shown = tools.calculateTotals(); assert.strictEqual(shown.gstPortion, lastOrder().tax_amount, 'displayed GST === stored GST'); assert.strictEqual(shown.finalTotal, lastOrder().total_price);
   });
-  await test('AGREE', 'checkout label and rows: one rate -> "GST (18% inclusive)"; mixed rates -> "GST (inclusive)"; GST disabled hides the row; total never grows', () => {
-    let { tools } = loadCheckout([{ id: '1', variantKey: 'a', name: 'A', price: 100, gstRate: null, qty: 1 }], { freeShippingThreshold: 300, shippingFee: 50, gstRate: 18, gstEnabled: true });
-    assert.strictEqual(tools.calculateTotals().gstRate, 18);
-    ({ tools } = loadCheckout([{ id: '1', variantKey: 'a', name: 'A', price: 100, gstRate: 5, qty: 1 }, { id: '2', variantKey: 'b', name: 'B', price: 100, gstRate: 18, qty: 1 }], { freeShippingThreshold: 300, shippingFee: 50, gstRate: 18, gstEnabled: true }));
-    assert.strictEqual(tools.calculateTotals().gstRate, null);
-    ({ tools } = loadCheckout([{ id: '1', variantKey: 'a', name: 'A', price: 100, gstRate: null, qty: 1 }], { freeShippingThreshold: 300, shippingFee: 50, gstRate: 18, gstEnabled: false }));
+  await test('AGREE', 'checkout label and rows: GST disabled hides the row; total never grows', () => {
+    let { tools } = loadCheckout([{ id: '1', variantKey: 'a', name: 'A', price: 100, gstRate: null, qty: 1 }], { freeShippingThreshold: 300, shippingFee: 50 });
     const off = tools.calculateTotals(); assert.strictEqual(off.gstPortion, 0); assert.strictEqual(off.finalTotal, 150);
   });
   await test('AGREE', 'displayed prices are never inflated: the payable total equals subtotal - discount + shipping in every state', () => {
     for (const price of [90, 180, 205, 315, 365]) {
-      const { tools } = loadCheckout([{ id: '1', variantKey: 'a', name: 'A', price, gstRate: null, qty: 1 }], { freeShippingThreshold: 1, shippingFee: 0, gstRate: 18, gstEnabled: true });
-      const c = tools.calculateTotals(); assert.strictEqual(c.finalTotal, price, `₹${price} stays ₹${price}`); assert.strictEqual(c.gstPortion, taxCore.inclusiveTax(price, 18));
+      const { tools } = loadCheckout([{ id: '1', variantKey: 'a', name: 'A', price, gstRate: null, qty: 1 }], { freeShippingThreshold: 1, shippingFee: 0 });
+      const c = tools.calculateTotals(); assert.strictEqual(c.finalTotal, price, `₹${price} stays ₹${price}`); assert.strictEqual(c.gstPortion, 0);
     }
   });
 
@@ -602,16 +584,16 @@ const lastItems = (n) => db.items.slice(-n);
   const app = require('../server/app.js');
   const server = await new Promise((res) => { const s = app.listen(0, '127.0.0.1', () => res(s)); });
   const get = (p, headers = {}) => new Promise((resolve, reject) => http.get({ host: '127.0.0.1', port: server.address().port, path: p, headers }, (r) => { let b = ''; r.on('data', (d) => (b += d)); r.on('end', () => resolve(JSON.parse(b))); }).on('error', reject));
-  await test('API', '/api/settings exposes inclusive pricing, trade name, legal supplier and readiness; CHIPAKK and MARSHANS share the supplier', async () => {
+  await test('API', '/api/settings exposes inclusive pricing, trade name, legal supplier and readiness with GST inactive', async () => {
     resetDb(); const c = (await get('/api/settings', { 'X-Store-ID': '1' })).data.settings; const m = (await get('/api/settings', { 'X-Store-ID': '2' })).data.settings;
-    assert.strictEqual(c.tax_pricing_mode, 'inclusive'); assert.strictEqual(c.gst_enabled, true); assert.strictEqual(c.gst_pct, 18); assert.strictEqual(c.trade_name, 'CHIPAKK'); assert.strictEqual(m.trade_name, 'THE MARSHANS');
-    assert.strictEqual(c.legal_supplier_name, m.legal_supplier_name); assert.strictEqual(c.gstin, gstFixture.FIXTURE_GSTIN); assert.strictEqual(c.checkout_tax_ready, true); assert.strictEqual(c.free_shipping_calculation, 'gross_subtotal');
+    assert.strictEqual(c.tax_pricing_mode, 'inclusive'); assert.strictEqual(c.gst_enabled, false); assert.strictEqual(c.gst_pct, 0); assert.strictEqual(c.trade_name, 'CHIPAKK'); assert.strictEqual(m.trade_name, 'THE MARSHANS');
+    assert.strictEqual(c.checkout_tax_ready, true); assert.strictEqual(c.free_shipping_calculation, 'gross_subtotal');
   });
-  await test('API', 'unconfigured supplier: /api/settings says checkout_tax_ready=false and exposes NO GSTIN; /api/health lists field NAMES only', async () => {
-    resetDb(); db.suppliers = []; const s = (await get('/api/settings', { 'X-Store-ID': '1' })).data.settings; assert.strictEqual(s.checkout_tax_ready, false); assert.strictEqual(s.gstin, null); assert.strictEqual(s.legal_supplier_name, null);
+  await test('API', 'unconfigured supplier: /api/settings says checkout_tax_ready=true because GST is inactive', async () => {
+    resetDb(); db.suppliers = []; const s = (await get('/api/settings', { 'X-Store-ID': '1' })).data.settings; assert.strictEqual(s.checkout_tax_ready, true); assert.strictEqual(s.gst_enabled, false);
     const h = await get('/api/health', { 'X-Store-ID': '1' }); const body = JSON.stringify(h);
-    assert.strictEqual(h.data.tax.chipakk.checkout_ready, false); assert.deepStrictEqual(h.data.tax.chipakk.missing_for_checkout.sort(), ['gstin', 'seller_state']); assert.ok(!/0000|AAAAA|@|Road|Pvt/i.test(JSON.stringify(h.data.tax)), 'no identity data on a public endpoint');
-    resetDb(); const ok = await get('/api/health'); assert.ok(ok.data.tax.chipakk.checkout_ready && ok.data.tax.marshans.invoice_ready); assert.ok(!body.includes(gstFixture.FIXTURE_GSTIN));
+    assert.strictEqual(h.data.tax.chipakk.checkout_ready, true); assert.deepStrictEqual(h.data.tax.chipakk.missing_for_checkout, []); assert.ok(!/0000|AAAAA|@|Road|Pvt/i.test(JSON.stringify(h.data.tax)), 'no identity data on a public endpoint');
+    resetDb(); const ok = await get('/api/health'); assert.ok(ok.data.tax.chipakk.checkout_ready); assert.ok(!body.includes(gstFixture.FIXTURE_GSTIN));
   });
   await test('API', 'the new admin and invoice endpoints REJECT unauthenticated requests (real Express app)', async () => {
     const call = (method, p) => new Promise((resolve, reject) => { const r = http.request({ host: '127.0.0.1', port: server.address().port, path: p, method, headers: { 'X-Store-ID': '1', 'Content-Type': 'application/json' } }, (res) => { let b = ''; res.on('data', (d) => (b += d)); res.on('end', () => resolve({ status: res.statusCode, body: b })); }); r.on('error', reject); r.end(method === 'GET' ? undefined : '{}'); });

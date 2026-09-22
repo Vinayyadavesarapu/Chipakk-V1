@@ -222,6 +222,13 @@
 
       try {
         await window.CHIPAKK.auth.signUp(name, email, password);
+        // Proactively synchronize customer profile with MySQL database
+        try {
+          const updateProfileFn = window.CHIPAKK?.updateCustomerProfileApi || window.CHIPAKK?.api?.updateProfile;
+          if (updateProfileFn) {
+            await updateProfileFn({ full_name: name });
+          }
+        } catch (_) {}
         showToast("Account created! Welcome to CHIPAKK.");
       } catch (err) {
         if (errorBox) {
@@ -297,16 +304,25 @@
     });
   }
 
-  function populateUserProfile(user) {
-    if (!user) return;
+  function populateUserProfile(customer, user) {
+    const authUser = user || window.CHIPAKK?.auth?.getCurrentUser();
+    if (!customer && !authUser) return;
 
-    const displayName = window.CHIPAKK?.auth?.getDisplayName ? window.CHIPAKK.auth.getDisplayName(user) : (user.displayName || "CHIPAKK Member");
-    const email = user.email || "";
+    const displayName = (customer && (customer.full_name || customer.name)) ||
+      (window.CHIPAKK?.auth?.getDisplayName && authUser ? window.CHIPAKK.auth.getDisplayName(authUser) : (authUser?.displayName || "CHIPAKK Member"));
+    const email = (customer && customer.email) || authUser?.email || "";
     const firstInitial = displayName ? displayName.charAt(0).toUpperCase() : "🧑‍🚀";
-    let savedPhone = user.phoneNumber || "";
-    try {
-      if (!savedPhone) savedPhone = localStorage.getItem(`chipakk_user_phone_${user.uid}`) || "";
-    } catch (e) {}
+    
+    let phone = (customer && customer.phone) || authUser?.phoneNumber || "";
+    if (!phone && authUser?.uid) {
+      try {
+        phone = localStorage.getItem(`chipakk_user_phone_${authUser.uid}`) || "";
+      } catch (e) {}
+    } else if (phone && authUser?.uid) {
+      try {
+        localStorage.setItem(`chipakk_user_phone_${authUser.uid}`, phone);
+      } catch (e) {}
+    }
 
     const nameEl = $("#accountUserDisplayName");
     const emailEl = $("#accountUserEmail");
@@ -320,9 +336,9 @@
     if (emailEl) emailEl.textContent = email;
     if (avatarEl) avatarEl.textContent = firstInitial.match(/[A-Z0-9]/) ? firstInitial : "🧑‍🚀";
     if (addrNameEl) addrNameEl.textContent = displayName;
-    if (profileNameInput) profileNameInput.value = user.displayName || "";
+    if (profileNameInput) profileNameInput.value = displayName !== "CHIPAKK Member" ? displayName : "";
     if (profileEmailInput) profileEmailInput.value = email;
-    if (profilePhoneInput && savedPhone) profilePhoneInput.value = savedPhone;
+    if (profilePhoneInput) profilePhoneInput.value = phone;
   }
 
   function initProfileUpdates() {
@@ -336,25 +352,38 @@
       const currentUser = window.CHIPAKK?.auth?.getCurrentUser();
 
       if (!currentUser) return;
-      if (!newName) {
-        showToast("Please enter a valid display name.", "error");
+      if (!newName || newName.length < 2) {
+        showToast("Please enter a valid display name (minimum 2 characters).", "error");
         return;
       }
 
       setButtonLoading(updateBtn, true, "Saving…");
       try {
+        // 1. Update Firebase client profile
         if (currentUser.updateProfile) {
-          await currentUser.updateProfile({ displayName: newName });
+          await currentUser.updateProfile({ displayName: newName }).catch((err) => {
+            console.warn("[CHIPAKK Auth] Notice updating Firebase displayName:", err.message);
+          });
         }
+
+        // 2. Persist directly to authoritative backend MySQL users table
+        const updateProfileFn = window.CHIPAKK?.updateCustomerProfileApi || window.CHIPAKK?.api?.updateProfile;
+        let savedCustomer = null;
+        if (updateProfileFn) {
+          const resp = await updateProfileFn({ full_name: newName, phone: newPhone });
+          savedCustomer = resp?.customer || resp;
+        }
+
         if (currentUser.uid) {
           try {
             localStorage.setItem(`chipakk_user_phone_${currentUser.uid}`, newPhone);
           } catch (e) {}
         }
-        populateUserProfile(currentUser);
+
+        populateUserProfile(savedCustomer, currentUser);
         showToast("Profile details updated successfully!");
       } catch (err) {
-        showToast("Unable to update profile right now.", "error");
+        showToast(err.message || "Unable to update profile right now.", "error");
       } finally {
         setButtonLoading(updateBtn, false, "Update Profile");
       }
@@ -633,9 +662,14 @@
         const pId = btn.dataset.moveCart;
         const target = allProducts.find((x) => String(x.id) === String(pId));
         if (target) {
-          cart.addItem(target, 1);
-          wishlist.toggle(pId);
-          renderWishlistTab();
+          const proceed = () => {
+            wishlist.toggle(pId);
+            renderWishlistTab();
+          };
+          const added = cart.addItem(target, 1, { onAdded: proceed });
+          if (added) {
+            proceed();
+          }
         }
       });
     });
@@ -989,6 +1023,7 @@
     const dashContainer = $("#accountDashboardContainer");
 
     if (user) {
+      let customerRecord = null;
       // Check Admin vs Customer isolation via /customer/me
       try {
         const fetchAuthFn = window.CHIPAKK?.fetchAuthenticated || window.CHIPAKK?.api?.fetchAuthenticated;
@@ -1001,13 +1036,16 @@
             clearAuthErrors();
             return;
           }
+          if (meData && meData.customer) {
+            customerRecord = meData.customer;
+          }
         }
       } catch (_) {}
 
       // User is a valid logged-in customer
       if (authContainer) authContainer.style.display = "none";
       if (dashContainer) dashContainer.style.display = "block";
-      populateUserProfile(user);
+      populateUserProfile(customerRecord, user);
       renderOrdersTab();
       renderAddressesTab();
     } else {

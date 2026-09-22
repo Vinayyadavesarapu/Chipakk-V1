@@ -21,6 +21,7 @@
     showToast,
     escapeHtml,
     escapeAttr,
+    media,
     $,
     $$
   } = window.CHIPAKK;
@@ -132,8 +133,19 @@
 
     const discountedSubtotal = Math.max(0, subtotal - discount);
     const finalTotal = discountedSubtotal + shippingCharge;
-    const gstPct = gstRate / 100;
-    const gstPortion = Math.round(finalTotal * gstPct / (1 + gstPct)); // GST inclusive portion
+    // GST is INCLUSIVE and computed by the same core the API uses (js/tax.js == server/utils/taxCore.js):
+    // per-product rate, discount allocated across lines, shipping as a composite supply. It is never added on top.
+    const gstEnabled = settings.gstEnabled !== false;
+    const taxResult = window.CHIPAKK_TAX.computeOrderTax({
+      lines: cart.items.map((it, i) => ({ key: i, gross: (Number(it.price) || 0) * (Number(it.qty) || 0), rate: it.gstRate })),
+      discount,
+      shipping: shippingCharge,
+      gstEnabled,
+      defaultRate: gstRate
+    });
+    const gstPortion = taxResult.totals.tax;
+    const lineRates = Array.from(new Set(taxResult.lines.map((l) => l.rate)));
+    const uniformGstRate = !gstEnabled ? null : (lineRates.length === 1 ? lineRates[0] : (lineRates.length === 0 ? gstRate : null));
 
     return {
       subtotal,
@@ -141,7 +153,9 @@
       shippingCharge,
       finalTotal,
       gstPortion,
-      gstRate,
+      gstRate: uniformGstRate,
+      gstEnabled,
+      taxResult,
       freeShippingThreshold,
       standardShippingFee
     };
@@ -150,6 +164,49 @@
   /* =========================================================
      2. RENDER ORDER SUMMARY
      ========================================================= */
+
+  /** "Sold by <legal supplier>, trading as CHIPAKK" + a notice when GST orders cannot be taken yet. */
+  function renderTaxNotices() {
+    const s = window.CHIPAKK?.DATA?.settings || {};
+    const soldBy = $("#checkoutSoldBy");
+    if (soldBy) {
+      if (s.legalSupplierName && s.gstin) {
+        soldBy.textContent = `Sold by ${s.legalSupplierName} (GSTIN ${s.gstin}), trading as ${s.tradeName || "CHIPAKK"}. All prices include GST.`;
+        soldBy.style.display = "";
+      } else {
+        soldBy.style.display = "none";
+      }
+    }
+    const notice = $("#checkoutTaxNotice");
+    const placeBtn = $("#placeOrderBtn");
+    const blocked = s.checkoutTaxReady === false;
+    if (notice) notice.style.display = blocked ? "block" : "none";
+    if (placeBtn) {
+      if (blocked) { placeBtn.disabled = true; placeBtn.setAttribute("aria-disabled", "true"); }
+      else if (!isSubmitting) { placeBtn.disabled = false; placeBtn.removeAttribute("aria-disabled"); }
+    }
+  }
+
+  /** Refresh each cart line's GST rate from the live catalogue (a product's rate may have changed since it was added). */
+  async function syncCartTaxRates() {
+    try {
+      if (typeof window.CHIPAKK?.getProducts !== "function" || !cart.items.length) return;
+      const live = await window.CHIPAKK.getProducts();
+      if (!Array.isArray(live) || !live.length) return;
+      const map = new Map(live.map((p) => [String(p.id), p]));
+      let changed = false;
+      for (const item of cart.items) {
+        if (item.is_custom) continue;
+        const p = map.get(String(item.id));
+        if (!p) continue;
+        const rate = p.gstRate === undefined ? null : p.gstRate;
+        if ((item.gstRate === undefined ? null : item.gstRate) !== rate) { item.gstRate = rate; changed = true; }
+      }
+      if (changed) { cart.save(); renderCheckoutSummary(); }
+    } catch (err) {
+      console.warn("GST rate refresh skipped:", err);
+    }
+  }
 
   function renderCheckoutSummary() {
     const itemsContainer = $("#checkoutItemsList");
@@ -183,26 +240,16 @@
 
     if (placeBtn) placeBtn.disabled = false;
 
-    // Render list of cart items
+    // Render list of cart items (thumbnails go through the same media pipeline as the shop cards)
     itemsContainer.innerHTML = items.map(item => {
-      const isImgUrl = typeof item.image === "string" && (item.image.startsWith("http") || item.image.includes("/"));
-      const resolvedImage = isImgUrl
-        ? (window.CHIPAKK?.resolveImageUrl ? window.CHIPAKK.resolveImageUrl(item.image) : item.image)
-        : "";
-
+      const thumb = media.imgHtml({ src: item.image, alt: "", width: 56, height: 56 });
+      const material = item.material || "Glossy";
       return `
         <div class="checkout-item-row">
-          <div class="checkout-item-left">
-            <div class="checkout-item-thumb">
-              ${isImgUrl
-                ? `<img src="${escapeAttr(resolvedImage)}" alt="${escapeAttr(item.name)}" style="width:100%;height:100%;object-fit:cover;border-radius:3px;" onerror="this.onerror=null;this.parentElement.innerHTML='<span style=\\'font-size:20px;\\'>⚡</span>';" />`
-                : (item.image || "⚡")
-              }
-            </div>
-            <div class="checkout-item-details">
-              <div class="checkout-item-name" title="${escapeAttr(item.name)}">${escapeHtml(item.name)}</div>
-              <div style="font-size: 12px; color: #666;">${escapeHtml(item.material || 'Glossy')} • Qty: ${item.qty}</div>
-            </div>
+          <div class="checkout-item-thumb">${thumb}</div>
+          <div class="checkout-item-details">
+            <div class="checkout-item-name">${escapeHtml(item.name)}</div>
+            <div class="checkout-item-meta">${escapeHtml(material)} • Qty: ${Number(item.qty) || 1}</div>
           </div>
           <div class="checkout-item-price">${formatPrice(item.price * item.qty)}</div>
         </div>
@@ -226,7 +273,12 @@
       shippingEl.textContent = totals.shippingCharge === 0 ? "FREE" : formatPrice(totals.shippingCharge);
     }
 
+    const gstLabelEl = $("#checkoutGstLabel");
+    if (gstLabelEl) gstLabelEl.textContent = totals.gstRate === null ? "GST (inclusive):" : `GST (${totals.gstRate}% inclusive):`;
     if (taxEl) taxEl.textContent = formatPrice(totals.gstPortion);
+    const gstRow = gstLabelEl ? gstLabelEl.closest(".summary-row") : null;
+    if (gstRow) gstRow.style.display = totals.gstEnabled ? "" : "none";
+    renderTaxNotices();
     if (totalEl) totalEl.textContent = formatPrice(totals.finalTotal);
   }
 
@@ -406,6 +458,13 @@
         return;
       }
 
+      if (state.length >= 2 && (window.CHIPAKK?.DATA?.settings?.gstEnabled !== false) && !window.CHIPAKK_TAX.resolveStateCode(state)) {
+        // the state decides CGST+SGST vs IGST, so it must be a real Indian state / union territory
+        showToast("Please choose a valid Indian state or union territory.", "error");
+        $("#custState")?.focus();
+        isSubmitting = false;
+        return;
+      }
       if (state.length < 2) {
         showToast("Please enter your state.", "error");
         $("#custState")?.focus();
@@ -999,6 +1058,7 @@
 
     async function renderCheckoutAuthState(user) {
       if (user) {
+        let customerRecord = null;
         // Enforce Admin vs Customer Isolation: verify via /customer/me
         try {
           const meData = await fetchAuthenticated("/customer/me");
@@ -1007,11 +1067,13 @@
             renderSignedOutCheckout();
             return;
           }
+          if (meData && meData.customer) {
+            customerRecord = meData.customer;
+          }
         } catch (_) {}
 
-        const displayName = window.CHIPAKK?.auth?.getDisplayName
-          ? window.CHIPAKK.auth.getDisplayName(user)
-          : (user.displayName || user.email);
+        const displayName = (customerRecord && (customerRecord.full_name || customerRecord.name)) ||
+          (window.CHIPAKK?.auth?.getDisplayName ? window.CHIPAKK.auth.getDisplayName(user) : (user.displayName || user.email));
 
         if (banner) {
           banner.style.background = "#f0fdf4";
@@ -1024,11 +1086,14 @@
             <a href="account.html" style="font-size: 12px; color: #166534; font-weight: 700;">Manage Account →</a>
           `;
         }
-        if (emailInput && !emailInput.value && user.email) {
-          emailInput.value = user.email;
+        if (emailInput && !emailInput.value) {
+          emailInput.value = (customerRecord && customerRecord.email) || user.email || "";
         }
-        if (nameInput && !nameInput.value && user.displayName) {
-          nameInput.value = user.displayName;
+        if (nameInput && !nameInput.value) {
+          nameInput.value = (customerRecord && (customerRecord.full_name || customerRecord.name)) || user.displayName || "";
+        }
+        if (phoneInput && !phoneInput.value && customerRecord && customerRecord.phone) {
+          phoneInput.value = customerRecord.phone;
         }
 
         // Fetch saved addresses and render address selector for signed-in customer
@@ -1116,12 +1181,19 @@
      7. INITIALIZATION
      ========================================================= */
 
+  // Narrow, read-only surface so tests can execute the REAL totals logic (not a copy of it).
+  window.CHIPAKK.checkoutTools = {
+    calculateTotals,
+    setAppliedCoupon(c) { appliedCoupon = c; }
+  };
+
   function initCheckout() {
     renderCheckoutSummary();
     initCoupons();
     initShippingAndPayment();
     initPlaceOrder();
     initCheckoutAuthAndAutoFill();
+    syncCartTaxRates();
 
     // Listen for cart changes across drawers or tabs
     window.addEventListener("chipakk-cart-updated", renderCheckoutSummary);

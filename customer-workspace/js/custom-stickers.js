@@ -213,8 +213,16 @@
         }
       };
 
-      cart.addItem(customItem, 1, { material: customState.finish, size: customState.size });
-      openCart();
+      const added = cart.addItem(customItem, 1, {
+        material: customState.finish,
+        size: customState.size,
+        onAdded: () => {
+          openCart();
+        }
+      });
+      if (added) {
+        openCart();
+      }
     });
   }
 

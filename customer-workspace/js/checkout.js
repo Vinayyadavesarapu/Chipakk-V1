@@ -133,19 +133,17 @@
 
     const discountedSubtotal = Math.max(0, subtotal - discount);
     const finalTotal = discountedSubtotal + shippingCharge;
-    // GST is INCLUSIVE and computed by the same core the API uses (js/tax.js == server/utils/taxCore.js):
-    // per-product rate, discount allocated across lines, shipping as a composite supply. It is never added on top.
-    const gstEnabled = settings.gstEnabled !== false;
+    // GST is permanently inactive for the current release: ₹0 tax everywhere
+    const gstEnabled = false;
     const taxResult = window.CHIPAKK_TAX.computeOrderTax({
-      lines: cart.items.map((it, i) => ({ key: i, gross: (Number(it.price) || 0) * (Number(it.qty) || 0), rate: it.gstRate })),
+      lines: cart.items.map((it, i) => ({ key: i, gross: (Number(it.price) || 0) * (Number(it.qty) || 0), rate: 0 })),
       discount,
       shipping: shippingCharge,
-      gstEnabled,
-      defaultRate: gstRate
+      gstEnabled: false,
+      defaultRate: 0
     });
-    const gstPortion = taxResult.totals.tax;
-    const lineRates = Array.from(new Set(taxResult.lines.map((l) => l.rate)));
-    const uniformGstRate = !gstEnabled ? null : (lineRates.length === 1 ? lineRates[0] : (lineRates.length === 0 ? gstRate : null));
+    const gstPortion = 0;
+    const uniformGstRate = null;
 
     return {
       subtotal,
@@ -165,25 +163,16 @@
      2. RENDER ORDER SUMMARY
      ========================================================= */
 
-  /** "Sold by <legal supplier>, trading as CHIPAKK" + a notice when GST orders cannot be taken yet. */
+  /** GST notices are suppressed when GST is inactive. */
   function renderTaxNotices() {
-    const s = window.CHIPAKK?.DATA?.settings || {};
     const soldBy = $("#checkoutSoldBy");
-    if (soldBy) {
-      if (s.legalSupplierName && s.gstin) {
-        soldBy.textContent = `Sold by ${s.legalSupplierName} (GSTIN ${s.gstin}), trading as ${s.tradeName || "CHIPAKK"}. All prices include GST.`;
-        soldBy.style.display = "";
-      } else {
-        soldBy.style.display = "none";
-      }
-    }
+    if (soldBy) soldBy.style.display = "none";
     const notice = $("#checkoutTaxNotice");
+    if (notice) notice.style.display = "none";
     const placeBtn = $("#placeOrderBtn");
-    const blocked = s.checkoutTaxReady === false;
-    if (notice) notice.style.display = blocked ? "block" : "none";
-    if (placeBtn) {
-      if (blocked) { placeBtn.disabled = true; placeBtn.setAttribute("aria-disabled", "true"); }
-      else if (!isSubmitting) { placeBtn.disabled = false; placeBtn.removeAttribute("aria-disabled"); }
+    if (placeBtn && !isSubmitting && cart.items.length > 0) {
+      placeBtn.disabled = false;
+      placeBtn.removeAttribute("aria-disabled");
     }
   }
 
@@ -1058,6 +1047,7 @@
 
     async function renderCheckoutAuthState(user) {
       if (user) {
+        let customerRecord = null;
         // Enforce Admin vs Customer Isolation: verify via /customer/me
         try {
           const meData = await fetchAuthenticated("/customer/me");
@@ -1066,11 +1056,13 @@
             renderSignedOutCheckout();
             return;
           }
+          if (meData && meData.customer) {
+            customerRecord = meData.customer;
+          }
         } catch (_) {}
 
-        const displayName = window.CHIPAKK?.auth?.getDisplayName
-          ? window.CHIPAKK.auth.getDisplayName(user)
-          : (user.displayName || user.email);
+        const displayName = (customerRecord && (customerRecord.full_name || customerRecord.name)) ||
+          (window.CHIPAKK?.auth?.getDisplayName ? window.CHIPAKK.auth.getDisplayName(user) : (user.displayName || user.email));
 
         if (banner) {
           banner.style.background = "#f0fdf4";
@@ -1083,11 +1075,14 @@
             <a href="account.html" style="font-size: 12px; color: #166534; font-weight: 700;">Manage Account →</a>
           `;
         }
-        if (emailInput && !emailInput.value && user.email) {
-          emailInput.value = user.email;
+        if (emailInput && !emailInput.value) {
+          emailInput.value = (customerRecord && customerRecord.email) || user.email || "";
         }
-        if (nameInput && !nameInput.value && user.displayName) {
-          nameInput.value = user.displayName;
+        if (nameInput && !nameInput.value) {
+          nameInput.value = (customerRecord && (customerRecord.full_name || customerRecord.name)) || user.displayName || "";
+        }
+        if (phoneInput && !phoneInput.value && customerRecord && customerRecord.phone) {
+          phoneInput.value = customerRecord.phone;
         }
 
         // Fetch saved addresses and render address selector for signed-in customer

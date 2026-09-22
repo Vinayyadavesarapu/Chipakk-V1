@@ -108,7 +108,12 @@ console.log('\n--- 3. CART MANAGER: CUSTOM STICKER PRESERVATION (EXECUTED) ---')
 
 const mockStorage = {};
 const mockWindow = {
-  dispatchEvent: () => {}
+  dispatchEvent: () => {},
+  CHIPAKK: {
+    auth: {
+      getCurrentUser: () => ({ uid: 'test-user', email: 'test@example.com' })
+    }
+  }
 };
 const mockLocalStorage = {
   getItem: (key) => mockStorage[key] || null,

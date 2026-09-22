@@ -128,6 +128,9 @@
       const storeParam = urlParams.get('store_id') || urlParams.get('store');
       if (storeParam === '2' || storeParam === 'marshans' || storeParam === 'themarshans') return 2;
       if (storeParam === '1' || storeParam === 'chipakk') return 1;
+      const host = (window.location.hostname || '').toLowerCase();
+      if (host === 'themarshans.shop' || host === 'www.themarshans.shop') return 2;
+      if (host === 'chipakk.shop' || host === 'www.chipakk.shop') return 1;
       if (window.CHIPAKK_STORE_ID) return Number(window.CHIPAKK_STORE_ID);
       try {
         const stored = localStorage.getItem('chipakk_active_store_id');
@@ -344,6 +347,26 @@
   }
 
   /**
+   * Fetch Authenticated Customer Profile
+   * GET /api/customer/me
+   */
+  async function getCustomerProfileApi() {
+    return fetchAuthenticated("/customer/me");
+  }
+
+  /**
+   * Update Authenticated Customer Profile (full_name, phone)
+   * PUT /api/customer/me
+   */
+  async function updateCustomerProfileApi(profileData) {
+    return fetchAuthenticated("/customer/me", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(profileData)
+    });
+  }
+
+  /**
    * Fetch Saved Customer Addresses
    * GET /api/customer/addresses
    */
@@ -470,10 +493,10 @@
       shippingFee = raw >= 1000 ? Math.round(raw / 100) : raw;
     }
 
-    const gstRate = actual.gst_pct !== undefined ? Number(actual.gst_pct) : (actual.gst_rate !== undefined ? Number(actual.gst_rate) : 18);
+    const gstRate = actual.gst_pct !== undefined ? Number(actual.gst_pct) : (actual.gst_rate !== undefined ? Number(actual.gst_rate) : 0);
     const gstin = actual.gstin || "";
-    // GST facts: prices are GST-inclusive (tax_pricing_mode) and gst_enabled/checkout_tax_ready come from the API
-    const gstEnabled = actual.gst_enabled !== false;
+    // GST is permanently inactive: gstEnabled defaults to false, checkoutTaxReady is always true
+    const gstEnabled = actual.gst_enabled === true;
     const checkoutTaxReady = actual.checkout_tax_ready !== false;
     const tradeName = actual.trade_name || storeName;
     const legalSupplierName = actual.legal_supplier_name || "";
@@ -915,16 +938,187 @@
      3. PERSISTENT CART MANAGER (localStorage)
      ========================================================= */
 
+  /* =========================================================
+     2.5 AUTHENTICATION / LOGIN PROMPT MODAL
+     ========================================================= */
+
+  let pendingCartAction = null;
+
+  function ensureLoginModal() {
+    if (typeof document === "undefined" || !document.body) return null;
+    let modal = document.getElementById("customerLoginModal");
+    if (modal) return modal;
+
+    modal = document.createElement("div");
+    modal.className = "order-success-modal";
+    modal.id = "customerLoginModal";
+    modal.style.display = "none";
+    modal.setAttribute("role", "dialog");
+    modal.setAttribute("aria-modal", "true");
+    modal.setAttribute("aria-labelledby", "loginModalTitle");
+
+    modal.innerHTML = `
+      <div class="order-success-card" style="text-align: left; max-width: 440px; padding: 28px; position: relative;">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; border-bottom: 2px solid var(--black); padding-bottom: 12px;">
+          <div>
+            <span style="display: inline-block; font-size: 11px; font-weight: 800; text-transform: uppercase; background: var(--yellow); border: 1.5px solid var(--black); border-radius: 4px; padding: 2px 8px; margin-bottom: 6px; box-shadow: 1px 1px 0 var(--black);">Sign In Required</span>
+            <h3 style="font-family: var(--font-display); font-size: 22px; text-transform: uppercase; margin: 0;" id="loginModalTitle">Sign In to Continue</h3>
+          </div>
+          <button type="button" class="panel-close" id="closeLoginModalBtn" aria-label="Close modal" style="font-size: 16px;">✕</button>
+        </div>
+        <p style="font-size: 13px; color: #444; margin: 0 0 16px 0; line-height: 1.4;" id="loginModalSubtitle">
+          Please sign in to your account to add items to your cart.
+        </p>
+        <div class="auth-alert-error" id="loginModalError" style="display: none; background: #fef2f2; border: 1.5px solid #b91c1c; color: #991b1b; padding: 8px 12px; font-size: 13px; font-weight: 600; border-radius: var(--radius-sm); margin-bottom: 14px;"></div>
+        <form id="loginModalForm" novalidate>
+          <div class="form-field" style="margin-bottom: 12px;">
+            <label for="loginModalEmail" style="font-size: 12px; font-weight: 700; display: block; margin-bottom: 4px;">Email Address *</label>
+            <input type="email" id="loginModalEmail" required placeholder="you@domain.com" autocomplete="email" style="width: 100%; border: 2px solid var(--black); border-radius: var(--radius-sm); padding: 9px 12px; font-family: inherit; font-size: 14px;" />
+          </div>
+          <div class="form-field" style="margin-bottom: 16px;">
+            <label for="loginModalPassword" style="font-size: 12px; font-weight: 700; display: block; margin-bottom: 4px;">Password *</label>
+            <input type="password" id="loginModalPassword" required placeholder="Your password" autocomplete="current-password" style="width: 100%; border: 2px solid var(--black); border-radius: var(--radius-sm); padding: 9px 12px; font-family: inherit; font-size: 14px;" />
+          </div>
+          <button type="submit" class="btn btn-primary btn-block" id="loginModalSubmitBtn" style="width: 100%; padding: 12px; font-size: 14px; font-weight: 700; margin-bottom: 10px;">Sign In & Add to Cart</button>
+        </form>
+        <div style="text-align: center; margin: 10px 0 12px 0; position: relative;">
+          <span style="background: var(--white); padding: 0 10px; font-size: 12px; font-weight: 700; color: #888; position: relative; z-index: 1;">OR</span>
+          <div style="position: absolute; top: 50%; left: 0; right: 0; height: 1px; background: #ddd; z-index: 0;"></div>
+        </div>
+        <button type="button" class="btn btn-block google-auth-btn" id="loginModalGoogleBtn" style="display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; background: #ffffff; border: 2px solid var(--black); border-radius: var(--radius-sm); padding: 10px; font-weight: 700; font-size: 13px; cursor: pointer; box-shadow: 2px 2px 0 var(--black); margin-bottom: 14px;">
+          <svg width="18" height="18" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/></svg>
+          Sign in with Google
+        </button>
+        <div style="text-align: center; font-size: 12px; color: #555;">
+          Don't have an account? <a href="account.html" id="loginModalSignupLink" style="font-weight: 700; color: var(--blue); text-decoration: underline;">Create one →</a>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    const closeBtn = modal.querySelector("#closeLoginModalBtn");
+    const form = modal.querySelector("#loginModalForm");
+    const googleBtn = modal.querySelector("#loginModalGoogleBtn");
+    const errorBox = modal.querySelector("#loginModalError");
+    const submitBtn = modal.querySelector("#loginModalSubmitBtn");
+
+    const hide = () => {
+      modal.style.display = "none";
+      if (errorBox) {
+        errorBox.style.display = "none";
+        errorBox.textContent = "";
+      }
+      form?.reset();
+      pendingCartAction = null;
+    };
+
+    modal.addEventListener("click", (e) => {
+      if (e.target === modal) hide();
+    });
+    closeBtn?.addEventListener("click", hide);
+
+    form?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const email = modal.querySelector("#loginModalEmail")?.value.trim();
+      const password = modal.querySelector("#loginModalPassword")?.value;
+
+      if (!email || !password) {
+        if (errorBox) {
+          errorBox.style.display = "block";
+          errorBox.textContent = "Please enter both email and password.";
+        }
+        return;
+      }
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Signing In...";
+      if (errorBox) errorBox.style.display = "none";
+
+      try {
+        if (window.CHIPAKK?.auth?.signIn) {
+          await window.CHIPAKK.auth.signIn(email, password);
+        }
+        const action = pendingCartAction;
+        hide();
+        if (action && typeof action.onSuccess === "function") {
+          action.onSuccess();
+        }
+      } catch (err) {
+        if (errorBox) {
+          errorBox.style.display = "block";
+          errorBox.textContent = err.message || "Failed to sign in. Please check your credentials.";
+        }
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Sign In & Add to Cart";
+      }
+    });
+
+    googleBtn?.addEventListener("click", async () => {
+      googleBtn.disabled = true;
+      if (errorBox) errorBox.style.display = "none";
+      try {
+        if (window.CHIPAKK?.auth?.signInWithGoogle) {
+          await window.CHIPAKK.auth.signInWithGoogle();
+        }
+        const action = pendingCartAction;
+        hide();
+        if (action && typeof action.onSuccess === "function") {
+          action.onSuccess();
+        }
+      } catch (err) {
+        if (errorBox) {
+          errorBox.style.display = "block";
+          errorBox.textContent = err.message || "Google sign-in was not completed.";
+        }
+      } finally {
+        googleBtn.disabled = false;
+      }
+    });
+
+    return modal;
+  }
+
+  function showLoginPrompt({ productName, onSuccess, onCancel } = {}) {
+    const modal = ensureLoginModal();
+    pendingCartAction = { productName, onSuccess, onCancel };
+
+    if (modal) {
+      const subtitle = modal.querySelector("#loginModalSubtitle");
+      if (subtitle) {
+        subtitle.textContent = productName
+          ? `Please sign in to add "${productName}" to your cart.`
+          : "Please sign in to add items to your cart.";
+      }
+      modal.style.display = "flex";
+      const emailInput = modal.querySelector("#loginModalEmail");
+      if (emailInput) setTimeout(() => emailInput.focus(), 50);
+    }
+  }
+
   const CART_STORAGE_KEY = "chipakk_cart_v1";
+
+  function getCartStorageKey() {
+    const storeId = typeof getActiveStoreId === 'function' ? getActiveStoreId() : (typeof window !== 'undefined' && window.CHIPAKK?.getActiveStoreId ? window.CHIPAKK.getActiveStoreId() : 1);
+    return storeId === 2 ? "marshans_cart_v1" : "chipakk_cart_v1";
+  }
+
+  /* =========================================================
+     3. PERSISTENT CART MANAGER (localStorage)
+     ========================================================= */
 
   class CartManager {
     constructor() {
       this.items = this.load();
+      this._lastAddKey = null;
+      this._lastAddTime = 0;
     }
 
     load() {
       try {
-        const raw = localStorage.getItem(CART_STORAGE_KEY);
+        const key = getCartStorageKey();
+        const raw = localStorage.getItem(key);
         const parsed = raw ? JSON.parse(raw) : [];
         if (!Array.isArray(parsed)) return [];
         // NOTE: do not "self-heal" prices by dividing values >= 1000 by 100 (CHIPAKK legitimately
@@ -946,7 +1140,8 @@
 
     save() {
       try {
-        localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(this.items));
+        const key = getCartStorageKey();
+        localStorage.setItem(key, JSON.stringify(this.items));
       } catch (e) {
         console.warn("[CHIPAKK] Failed to save cart to localStorage", e);
       }
@@ -959,6 +1154,43 @@
     }
 
     addItem(product, qty = 1, options = {}) {
+      if (!product) return false;
+
+      // 1. Store isolation guard
+      const activeStore = typeof getActiveStoreId === 'function' ? getActiveStoreId() : (typeof window !== 'undefined' && window.CHIPAKK?.getActiveStoreId ? window.CHIPAKK.getActiveStoreId() : 1);
+      const prodStore = product.store_id || product.storeId;
+      if (prodStore && Number(prodStore) !== activeStore) {
+        console.warn(`[CHIPAKK Cart] Store isolation rejection: product store (${prodStore}) does not match active store (${activeStore})`);
+        if (typeof showToast === 'function') showToast("This item is not available in the current store.", "error");
+        return false;
+      }
+
+      // 2. Rapid double-click debounce (< 350ms)
+      const now = Date.now();
+      const clickKey = `${product.id || ''}_${options.material || ''}_${options.size || ''}_${options.variantId || ''}`;
+      if (!options.skipAuthCheck && this._lastAddKey === clickKey && (now - this._lastAddTime) < 350) {
+        return false;
+      }
+      this._lastAddKey = clickKey;
+      this._lastAddTime = now;
+
+      // 3. Login Gate: require authenticated customer
+      const user = (typeof window !== 'undefined' && window.CHIPAKK?.auth?.getCurrentUser) ? window.CHIPAKK.auth.getCurrentUser() : null;
+      if (!user && !options.skipAuthCheck) {
+        if (typeof showLoginPrompt === 'function') {
+          showLoginPrompt({
+            productName: product.name,
+            onSuccess: () => {
+              this.addItem(product, qty, { ...options, skipAuthCheck: true });
+              if (typeof options.onAdded === "function") options.onAdded();
+            },
+            onCancel: options.onCancel
+          });
+        }
+        return false;
+      }
+
+      // 4. Continue with item preparation & storage
       const material = options.material || (product.materials && product.materials[0]) || "Glossy";
       const size = options.size || (product.sizes && product.sizes[0]) || '3"';
       const isCustom = Boolean(product.is_custom || (!product.id && product.name) || String(product.id || '').startsWith('custom_'));
@@ -979,15 +1211,18 @@
       } else {
         this.items.push({
           id: product.id,
+          store_id: activeStore,
           variantId: variantId,
           variantKey,
           name: product.name,
-          price: product.price,
+          price: options.price !== undefined ? options.price : product.price,
           // GST rate of this product (product > category); null = the store default. The server re-resolves it.
           gstRate: product.gstRate === undefined ? null : product.gstRate,
           image: resolvedImage,
           material,
           size,
+          options: options.selectedOptions || { material, size },
+          options_snapshot: options.selectedOptions || { material, size },
           materials: product.materials || (material ? [material] : []),
           sizes: product.sizes || (size ? [size] : []),
           is_custom: isCustom,
@@ -996,7 +1231,25 @@
         });
       }
       this.save();
-      showToast(`${product.name} added to cart!`);
+      if (typeof showToast === 'function') showToast(`${product.name} added to cart!`);
+
+      // Background server cart sync when authenticated
+      if (user && product.id && !isCustom && !isNaN(Number(product.id)) && typeof fetchAuthenticated === 'function') {
+        fetchAuthenticated('/cart/items', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            product_id: Number(product.id),
+            variant_id: variantId ? Number(variantId) : null,
+            quantity: qty,
+            options: options.selectedOptions || { material, size }
+          })
+        }).catch(err => {
+          console.warn('[CHIPAKK Cart] Server cart sync notice:', err.message);
+        });
+      }
+
+      return true;
     }
 
     removeItem(variantKey) {
@@ -1414,13 +1667,30 @@
       searchCloseBtn.addEventListener("click", closePanel);
     }
 
-    function handleSearchSubmit(query) {
+    async function handleSearchSubmit(query) {
       const q = (query || "").trim();
-      if (q) {
-        window.location.href = `shop.html?search=${encodeURIComponent(q)}`;
-      } else {
+      if (!q) {
         showToast("Type something to search stickers!");
+        return;
       }
+
+      // Priority 1 & 2: Check if query matches a category in the active store
+      try {
+        let categories = CHIPAKK_DATA.categories;
+        if (!Array.isArray(categories) || categories.length === 0) {
+          categories = await getCategories();
+        }
+        const matched = catalog.matchCategoryQuery(q, categories);
+        if (matched && matched.slug) {
+          window.location.href = `shop.html?category=${encodeURIComponent(matched.slug)}`;
+          return;
+        }
+      } catch (err) {
+        console.warn("[CHIPAKK Search] Category match lookup notice:", err);
+      }
+
+      // Priority 3: Fallback to standard product text search
+      window.location.href = `shop.html?search=${encodeURIComponent(q)}`;
     }
 
     if (searchPanelForm) {
@@ -1474,8 +1744,14 @@
   function initHeaderAuth() {
     const accountBtn = $("#accountBtn");
     const drawerAccountLink = $("#drawerAccountLink");
+    let previousUser = undefined;
 
     async function renderAuthState(user) {
+      if (previousUser && !user) {
+        cart.clear();
+      }
+      previousUser = user;
+
       if (user) {
         // Enforce Admin vs Customer Isolation: verify via /customer/me
         try {
@@ -1645,18 +1921,71 @@
      10. NEWSLETTER & FOOTER HELPERS
      ========================================================= */
 
+  async function renderFooterCategories() {
+    const listEl = $("#footerCategoryList");
+    if (!listEl) return;
+
+    try {
+      let categories = CHIPAKK_DATA.categories;
+      if (!Array.isArray(categories) || categories.length === 0) {
+        categories = await getCategories();
+      }
+      const activeCats = (categories || []).filter(c => c && c.active !== false && c.slug).slice(0, 6);
+      if (activeCats.length > 0) {
+        listEl.innerHTML = activeCats.map(c => `
+          <li>
+            <a href="shop.html?category=${encodeURIComponent(c.slug)}">
+              ${escapeHtml(c.name)}
+            </a>
+          </li>
+        `).join("");
+      } else {
+        listEl.innerHTML = `<li><a href="shop.html">All Stickers</a></li><li><a href="categories.html">All Categories</a></li>`;
+      }
+    } catch (err) {
+      console.warn("[CHIPAKK Footer] Could not load dynamic categories:", err);
+      listEl.innerHTML = `<li><a href="shop.html">All Stickers</a></li><li><a href="categories.html">All Categories</a></li>`;
+    }
+  }
+
   function initFooter() {
     const yearEl = $("#footerYear");
     if (yearEl) yearEl.textContent = String(new Date().getFullYear());
+
+    const brandNameEl = $("#footerBrandName");
+    if (brandNameEl) {
+      brandNameEl.textContent = getActiveStoreId() === 2 ? "THE MARSHANS" : "CHIPAKK";
+    }
 
     const newsletterForm = $("#newsletterForm");
     if (newsletterForm) {
       newsletterForm.addEventListener("submit", (e) => {
         e.preventDefault();
-        showToast("Thanks for subscribing to CHIPAKK drops!");
+        const storeLabel = getActiveStoreId() === 2 ? "THE MARSHANS" : "CHIPAKK";
+        showToast(`Thanks for subscribing to ${storeLabel} drops!`);
         newsletterForm.reset();
       });
     }
+
+    // Populate dynamic categories
+    renderFooterCategories();
+
+    // Friendly click feedback for placeholder support/policy links
+    document.addEventListener("click", (e) => {
+      const link = e.target.closest("a[data-placeholder]");
+      if (link) {
+        const href = link.getAttribute("href") || "";
+        if (href.startsWith("#")) {
+          e.preventDefault();
+          const placeholderMsg = link.dataset.placeholder || "Coming soon";
+          if (placeholderMsg.includes("INSTAGRAM") || placeholderMsg.includes("YOUTUBE")) {
+            showToast("Official social channel launching soon!");
+          } else {
+            showToast("This policy is currently being updated for compliance. Coming soon!");
+          }
+        }
+      }
+    });
   }
 
   /* =========================================================
@@ -1709,6 +2038,7 @@
 
   window.CHIPAKK = {
     auth: existingAuth,
+    getActiveStoreId,
     DATA: CHIPAKK_DATA,
     API_BASE,
     fetchApi,
@@ -1717,6 +2047,8 @@
     createOrderApi,
     getCustomerOrdersApi,
     getCustomerOrderByIdApi,
+    getCustomerProfileApi,
+    updateCustomerProfileApi,
     getCustomerAddressesApi,
     createCustomerAddressApi,
     updateCustomerAddressApi,
@@ -1731,6 +2063,8 @@
       createOrder: createOrderApi,
       getOrders: getCustomerOrdersApi,
       getOrderById: getCustomerOrderByIdApi,
+      getProfile: getCustomerProfileApi,
+      updateProfile: updateCustomerProfileApi,
       getAddresses: getCustomerAddressesApi,
       createAddress: createCustomerAddressApi,
       updateAddress: updateCustomerAddressApi,
@@ -1753,6 +2087,7 @@
     renderProductCard,
     renderProductGrid,
     categoryMediaHtml: catalog.categoryMediaHtml,
+    matchCategoryQuery: catalog.matchCategoryQuery,
     media,
     imgHtml: media.imgHtml,
     loader,
@@ -1762,6 +2097,7 @@
     resolveImageUrl: resolveCustomerImageUrl,
     resolveCustomerImageUrl,
     openCart: () => openPanel($("#cartDrawer")),
+    showLoginModal: showLoginPrompt,
     $,
     $$
   };

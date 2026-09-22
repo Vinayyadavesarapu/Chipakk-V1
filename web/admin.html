@@ -976,7 +976,7 @@
                                 </div>
                                 <small class="form-hint" style="color: #8c5300; margin: 0 0 0 26px;">Marks this product as a Best Seller. This is a product label/showcase filter, not a category.</small>
                             </div>
-                            <div class="retro-field" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 6px 0;">
+                            <div class="retro-field" style="display: none; grid-template-columns: 1fr 1fr; gap: 10px; margin: 6px 0;">
                                 <div>
                                     <label for="prod-hsn-code">HSN Code</label>
                                     <input type="text" id="prod-hsn-code" class="retro-input" inputmode="numeric" maxlength="8" placeholder="unset" autocomplete="off">
@@ -1109,6 +1109,33 @@
                                 <small class="form-hint">Controls whether this product is available and purchasable on the storefront.</small>
                             </div>
 
+                            <!-- Dynamic Product Options & Variants Configuration (Store 1: CHIPAKK) -->
+                            <div class="store-module-chipakk" id="prod-dynamic-options-section" style="background: #fafafa; border: 1.5px solid #000; padding: 12px; margin-bottom: 15px;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                    <h4 style="font-size: 0.82rem; font-weight: 900; margin: 0; text-transform: uppercase; color: #2563eb;">🎨 Product Options &amp; Variants (Customization)</h4>
+                                    <button type="button" class="retro-btn" id="add-option-group-btn" style="padding: 2px 8px; font-size: 0.72rem; font-weight: bold; background: #2563eb; color: #fff;">+ ADD OPTION</button>
+                                </div>
+                                <small class="form-hint" style="margin-bottom: 8px;">Define custom options (e.g. Size, Finish, Pack Size) and their values. If no options are added, this product sells as a single standard item.</small>
+
+                                <!-- Configured Options Container -->
+                                <div id="prod-options-builder-list" style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;">
+                                    <!-- Dynamic Option Rows -->
+                                </div>
+
+                                <!-- Variant Generation & Matrix -->
+                                <div id="prod-variant-matrix-section" style="border-top: 1.5px dashed #ccc; padding-top: 10px; margin-top: 10px; display: none;">
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                        <div style="font-size: 0.78rem; font-weight: bold;">Sellable Variants Matrix</div>
+                                        <button type="button" class="retro-btn" id="generate-variants-btn" style="padding: 2px 8px; font-size: 0.7rem; background: #10b981; color: #fff; font-weight: bold;">⚡ GENERATE COMBINATIONS</button>
+                                    </div>
+                                    <small class="form-hint" style="margin-bottom: 6px;">Variants are generated from option combinations. Adjust individual prices (₹), stock, and active status below.</small>
+                                    
+                                    <div id="prod-variants-list" style="max-height: 240px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; background: #fff; border: 1px solid #000; padding: 6px;">
+                                        <!-- Dynamic Variant Cards -->
+                                    </div>
+                                </div>
+                            </div>
+
                             <!-- Image Management Component -->
                             <div class="retro-field">
                                 <label>Product Images <span style="color:red;">* (At least 1 image
@@ -1199,7 +1226,7 @@
                         <input type="text" id="cat-desc" class="retro-input" placeholder="Short sector description">
                         <small class="form-hint">Short category summary displayed on category headers and previews.</small>
                     </div>
-                    <div class="retro-field" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                    <div class="retro-field" style="display: none; grid-template-columns: 1fr 1fr; gap: 10px;">
                         <div>
                             <label for="cat-hsn-code">Default HSN Code</label>
                             <input type="text" id="cat-hsn-code" class="retro-input" inputmode="numeric" maxlength="8" placeholder="unset" autocomplete="off">
@@ -2448,7 +2475,7 @@
                 <div class="admin-grid-2col" style="gap: 20px; max-width: 1400px; width: 100%;">
                     <!-- Business & Tax Policies -->
                     <div class="retro-panel" style="background-color: #fff; display: flex; flex-direction: column;">
-                        <h3 style="margin-bottom: 20px; font-weight: bold;">[BUSINESS & TAX POLICIES]</h3>
+                        <h3 style="margin-bottom: 20px; font-weight: bold;">[BUSINESS POLICIES]</h3>
                         <div class="retro-field"><label>Store Name</label><input type="text" id="set-store-name"
                                 class="retro-input" value="CHIPAKK Stickers"><small class="form-hint">The brand name shown across the customer storefront header, emails, and receipts.</small></div>
                         <div class="retro-field"><label>Support Email</label><input type="email" id="set-support-email"
@@ -2456,13 +2483,13 @@
                         <div class="retro-field"><label>Support Phone</label><input type="text" id="set-support-phone"
                                 class="retro-input" value="+91 98765 00000"></div>
                         <div class="retro-field"><label>Trade Name</label><input type="text" id="set-trade-name"
-                                class="retro-input" placeholder="CHIPAKK"><small class="form-hint">The brand this store trades under. Printed on invoices next to the legal supplier name.</small></div>
-                        <div class="retro-field"><label>GST</label><select id="set-gst-enabled" class="retro-input"><option value="true">Enabled</option><option value="false">Disabled</option></select><small class="form-hint">Prices are always GST-inclusive: GST is never added on top of a displayed price.</small></div>
-                        <div class="retro-field"><label>Default GST Rate (%) <span style="color:red;">*</span></label><input
-                                type="number" id="set-gst-rate" class="retro-input" value="18" min="0" max="100"><small class="form-hint">Used for products/categories with no GST rate of their own. The tax shown is the part of the price that is GST (e.g. 18% -> price x 18 / 118).</small></div>
-                        <div class="retro-field"><label>Invoice Number Prefix</label><input type="text" id="set-invoice-prefix"
+                                class="retro-input" placeholder="CHIPAKK"><small class="form-hint">The brand this store trades under.</small></div>
+                        <div class="retro-field" style="display: none;"><label>GST</label><select id="set-gst-enabled" class="retro-input"><option value="true">Enabled</option><option value="false">Disabled</option></select><small class="form-hint">Prices are always GST-inclusive: GST is never added on top of a displayed price.</small></div>
+                        <div class="retro-field" style="display: none;"><label>Default GST Rate (%) <span style="color:red;">*</span></label><input
+                                type="number" id="set-gst-rate" class="retro-input" value="0" min="0" max="100"><small class="form-hint">Used for products/categories with no GST rate of their own. The tax shown is the part of the price that is GST (e.g. 18% -> price x 18 / 118).</small></div>
+                        <div class="retro-field" style="display: none;"><label>Invoice Number Prefix</label><input type="text" id="set-invoice-prefix"
                                 class="retro-input" maxlength="3" placeholder="CHP"><small class="form-hint">1-3 letters/digits. Invoices are numbered PREFIX/YY-YY/000001, sequential per financial year.</small></div>
-                        <div class="retro-field" style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                        <div class="retro-field" style="display: none; grid-template-columns: 1fr 1fr; gap: 10px;">
                             <div><label>Custom Sticker HSN</label><input type="text" id="set-custom-hsn" class="retro-input" inputmode="numeric" maxlength="8" placeholder="unset" autocomplete="off"></div>
                             <div><label>Custom Sticker GST %</label><input type="number" id="set-custom-gst-rate" class="retro-input" min="0" max="100" step="0.01" placeholder="store default" autocomplete="off"></div>
                             <small class="form-hint" style="grid-column: 1 / -1;">Custom sticker orders have no catalogue record. The HSN is <strong>unset</strong> until you enter one here (it is never guessed; without it those orders cannot be invoiced). The GST rate falls back to the store default.</small>
@@ -2475,13 +2502,12 @@
                                 id="set-default-rating" class="retro-input" value="4.7" step="0.1"></div>
                         <div style="margin-top: auto; padding-top: 15px;">
                             <button class="retro-btn retro-btn-primary" id="save-business-settings-btn"
-                                style="width: 100%; padding: 10px; font-size: 0.85rem;">SAVE BUSINESS & TAX
-                                SETTINGS</button>
+                                style="width: 100%; padding: 10px; font-size: 0.85rem;">SAVE BUSINESS SETTINGS</button>
                         </div>
                     </div>
 
-                    <!-- Legal Supplier (shared by CHIPAKK and THE MARSHANS) -->
-                    <div class="retro-panel" style="background-color: #fff; display: flex; flex-direction: column;">
+                    <!-- Legal Supplier (shared by CHIPAKK and THE MARSHANS - hidden while GST is inactive) -->
+                    <div class="retro-panel" style="display: none; background-color: #fff; flex-direction: column;">
                         <h3 style="margin-bottom: 8px; font-weight: bold; color: #0f766e;">[LEGAL SUPPLIER &amp; GST REGISTRATION]</h3>
                         <p style="font-size: 0.8rem; color: #555; margin: 0 0 14px 0; line-height: 1.4;">CHIPAKK is a trade name of the same GST-registered legal entity as THE MARSHANS. There is <strong>one</strong> registration: enter it once and both stores use it. Nothing here is pre-filled; enter the details exactly as on the GST registration certificate.</p>
                         <div id="supplier-readiness" role="status" style="font-size: 0.8rem; font-weight: 700; padding: 8px 10px; border: 1.5px solid #ccc; background: #f8f8f8; margin-bottom: 12px;">Checking tax configuration...</div>

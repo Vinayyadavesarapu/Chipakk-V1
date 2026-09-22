@@ -304,7 +304,14 @@ async function testApiExecutionAndErrorExtraction() {
 
 function testCustomStickerFlow() {
   const mockStorage = {};
-  const mockWindow = { dispatchEvent: () => {} };
+  const mockWindow = {
+    dispatchEvent: () => {},
+    CHIPAKK: {
+      auth: {
+        getCurrentUser: () => ({ uid: 'test-user', email: 'test@example.com' })
+      }
+    }
+  };
   const mockLocalStorage = {
     getItem: (key) => mockStorage[key] || null,
     setItem: (key, val) => { mockStorage[key] = String(val); },

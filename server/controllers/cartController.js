@@ -1,5 +1,6 @@
 const cartService = require('../services/cartService');
 const { pool } = require('../config/database');
+const customerService = require('../services/customerService');
 const { sendSuccess, sendError } = require('../utils/responseHandler');
 
 /**
@@ -8,15 +9,11 @@ const { sendSuccess, sendError } = require('../utils/responseHandler');
 const resolveDbUserId = async (req) => {
   if (!req.user || !req.user.uid) return null;
   try {
-    const [rows] = await pool.execute(
-      'SELECT id FROM users WHERE firebase_uid = ? LIMIT 1',
-      [req.user.uid]
-    );
-    if (rows && rows.length > 0) {
-      return rows[0].id;
-    }
-  } catch (_) {}
-  return null;
+    const customer = await customerService.resolveOrCreateCustomer(req.user);
+    return customer ? customer.id : null;
+  } catch (_) {
+    return null;
+  }
 };
 
 /**
@@ -36,8 +33,8 @@ const extractCartContext = async (req) => {
 const getCartHandler = async (req, res, next) => {
   try {
     const { userId, sessionId, storeId } = await extractCartContext(req);
-    if (!userId && !sessionId) {
-      return sendError(res, 'Authentication token or X-Session-ID header is required to access the cart.', 400);
+    if (!userId) {
+      return sendError(res, 'Authentication required to access the cart.', 401);
     }
 
     const cart = await cartService.getCart({ userId, sessionId, storeId });
@@ -53,8 +50,8 @@ const getCartHandler = async (req, res, next) => {
 const addItemHandler = async (req, res, next) => {
   try {
     const { userId, sessionId, storeId } = await extractCartContext(req);
-    if (!userId && !sessionId) {
-      return sendError(res, 'Authentication token or X-Session-ID header is required to add items to the cart.', 400);
+    if (!userId) {
+      return sendError(res, 'Authentication required to add items to the cart.', 401);
     }
 
     const { product_id, id, variant_id, quantity, options } = req.body || {};
@@ -89,6 +86,9 @@ const addItemHandler = async (req, res, next) => {
 const updateItemHandler = async (req, res, next) => {
   try {
     const { userId, sessionId, storeId } = await extractCartContext(req);
+    if (!userId) {
+      return sendError(res, 'Authentication required to update cart items.', 401);
+    }
     const { id } = req.params;
     const { quantity } = req.body || {};
 
@@ -119,6 +119,9 @@ const updateItemHandler = async (req, res, next) => {
 const removeItemHandler = async (req, res, next) => {
   try {
     const { userId, sessionId, storeId } = await extractCartContext(req);
+    if (!userId) {
+      return sendError(res, 'Authentication required to remove cart items.', 401);
+    }
     const { id } = req.params;
 
     const cart = await cartService.removeItem({
@@ -143,6 +146,9 @@ const removeItemHandler = async (req, res, next) => {
 const clearCartHandler = async (req, res, next) => {
   try {
     const { userId, sessionId, storeId } = await extractCartContext(req);
+    if (!userId) {
+      return sendError(res, 'Authentication required to clear the cart.', 401);
+    }
     const result = await cartService.clearCart({
       userId,
       sessionId,

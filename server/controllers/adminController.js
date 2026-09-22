@@ -3,45 +3,212 @@ const { writeAuditLog } = require('../services/auditService');
 const { sendSuccess, sendError } = require('../utils/responseHandler');
 const { getAuth } = require('../config/firebase');
 
+const { isMarshansHybridCatalogEnabled } = require('../config/features');
+
 /**
  * Get Admin Dashboard Overview Metrics
  * GET /api/admin/dashboard
  */
 const getAdminDashboardHandler = async (req, res, next) => {
   try {
-    // 1. Total Products Count
-    const [prodRows] = await pool.execute('SELECT COUNT(*) AS total FROM products');
-    const totalProducts = prodRows[0].total || 0;
+    const storeId = req.storeId ? parseInt(req.storeId, 10) : 1;
+    const isStore2 = storeId === 2;
+    const timeframe = (req.query.timeframe || 'last_6_months').toLowerCase();
 
-    // 2. Total Categories Count
-    const [catRows] = await pool.execute('SELECT COUNT(*) AS total FROM categories');
-    const totalCategories = catRows[0].total || 0;
+    // 1. Order store scoping condition
+    // Store 1 covers store_id = 1 and legacy NULL rows; Store 2 is strictly store_id = 2
+    const orderStoreWhere = isStore2 ? 'o.store_id = 2' : '(o.store_id = 1 OR o.store_id IS NULL)';
 
-    // 3. Total Orders Count & Revenue Sum (Store 1 whole rupees, Store 2 paise)
-    const [orderRows] = await pool.execute(`
+    // 2. Commercial Revenue Filter Definition:
+    // payment_status = 'paid' AND fulfillment_status NOT IN ('cancelled', 'failed') AND payment_status != 'failed'
+    const commercialPaidCondition = `
+      LOWER(o.payment_status) = 'paid'
+      AND LOWER(o.fulfillment_status) NOT IN ('cancelled', 'failed')
+      AND LOWER(o.payment_status) != 'failed'
+    `;
+
+    // 3. Total Orders Count (Authoritative from DB)
+    const [totalOrderRows] = await pool.execute(
+      `SELECT COUNT(*) AS total FROM orders o WHERE ${orderStoreWhere}`
+    );
+    const totalOrders = totalOrderRows[0]?.total || 0;
+
+    // 4. Cancelled Orders Count (Authoritative from DB)
+    const [cancelledRows] = await pool.execute(
+      `SELECT COUNT(*) AS total FROM orders o WHERE ${orderStoreWhere} AND (LOWER(o.fulfillment_status) = 'cancelled' OR LOWER(o.payment_status) = 'cancelled')`
+    );
+    const cancelledOrders = cancelledRows[0]?.total || 0;
+
+    // 5. Total Commercial Revenue (Store 1 whole rupees, Store 2 paise / 100)
+    const [revenueRows] = await pool.execute(`
       SELECT
-        COUNT(*) AS total,
-        COALESCE(SUM(CASE WHEN store_id = 2 THEN ROUND(total_price / 100) ELSE total_price END), 0) AS total_revenue_rupees
-      FROM orders
+        COALESCE(SUM(CASE WHEN o.store_id = 2 THEN ROUND(o.total_price / 100) ELSE o.total_price END), 0) AS total_revenue
+      FROM orders o
+      WHERE ${orderStoreWhere} AND ${commercialPaidCondition}
     `);
-    const totalOrders = orderRows[0].total || 0;
-    const totalRevenueRupees = parseInt(orderRows[0].total_revenue_rupees, 10) || 0;
+    const totalRevenueRupees = parseInt(revenueRows[0]?.total_revenue, 10) || 0;
+
+    // 6. Revenue This Month (Current Calendar Month, Paid & Non-Cancelled)
+    const [monthRevRows] = await pool.execute(`
+      SELECT
+        COALESCE(SUM(CASE WHEN o.store_id = 2 THEN ROUND(o.total_price / 100) ELSE o.total_price END), 0) AS month_revenue
+      FROM orders o
+      WHERE ${orderStoreWhere}
+        AND ${commercialPaidCondition}
+        AND o.created_at >= DATE_FORMAT(CURDATE(), '%Y-%m-01 00:00:00')
+    `);
+    const monthRevenueRupees = parseInt(monthRevRows[0]?.month_revenue, 10) || 0;
+
+    // 7. Orders Placed Today (Current Date)
+    const [todayRows] = await pool.execute(`
+      SELECT COUNT(*) AS total
+      FROM orders o
+      WHERE ${orderStoreWhere} AND DATE(o.created_at) = CURDATE()
+    `);
+    const ordersToday = todayRows[0]?.total || 0;
+
+    // 8. Average Order Worth (AOV in Rupees)
     const averageOrderValueRupees = totalOrders > 0 ? Math.round(totalRevenueRupees / totalOrders) : 0;
 
-    // 4. Total Registered Users Count
+    // 9. Production Queue Counts (Authoritative & Store-Isolated)
+    // Awaiting Confirmation: orders with pending/new fulfillment status
+    const [awaitingRows] = await pool.execute(`
+      SELECT COUNT(*) AS total
+      FROM orders o
+      WHERE ${orderStoreWhere}
+        AND LOWER(o.fulfillment_status) IN ('pending', 'new')
+        AND LOWER(o.fulfillment_status) != 'cancelled'
+    `);
+    const awaitingConfirmation = awaitingRows[0]?.total || 0;
+
+    let readyToPrint = 0;
+    let printingCutting = 0;
+    let readyToPack = 0;
+
+    if (isStore2) {
+      // For Store 2 (THE MARSHANS), check production_jobs first
+      try {
+        const [jobRows] = await pool.execute(`
+          SELECT
+            COUNT(CASE WHEN pj.stage IN ('Order Received', 'Preparing') THEN 1 END) AS ready_count,
+            COUNT(CASE WHEN pj.stage IN ('Printing', 'Finishing') THEN 1 END) AS in_prod_count,
+            COUNT(CASE WHEN pj.stage IN ('Quality Check', 'Ready') THEN 1 END) AS ready_pack_count
+          FROM production_jobs pj
+          WHERE pj.store_id = 2
+        `);
+        if (jobRows && jobRows.length > 0) {
+          readyToPrint = parseInt(jobRows[0].ready_count, 10) || 0;
+          printingCutting = parseInt(jobRows[0].in_prod_count, 10) || 0;
+          readyToPack = parseInt(jobRows[0].ready_pack_count, 10) || 0;
+        }
+      } catch (_) {
+        // Fall back to order items if production_jobs table is not available
+      }
+    }
+
+    // If Store 1 or if Store 2 had no production jobs, query order_items
+    if (!isStore2 || (readyToPrint === 0 && printingCutting === 0 && readyToPack === 0)) {
+      try {
+        const [queueRows] = await pool.execute(`
+          SELECT
+            COUNT(CASE WHEN oi.production_status IN ('READY_TO_PRINT', 'NEW', 'NOT_STARTED') THEN 1 END) AS ready_count,
+            COUNT(CASE WHEN oi.production_status IN ('PRINTING', 'PRINTED', 'CUTTING', 'CUT', 'PROCESSING') THEN 1 END) AS in_prod_count,
+            COUNT(CASE WHEN oi.production_status IN ('READY_TO_PACK', 'PACKED') THEN 1 END) AS ready_pack_count
+          FROM order_items oi
+          JOIN orders o ON oi.order_id = o.id
+          WHERE ${orderStoreWhere} AND LOWER(o.fulfillment_status) != 'cancelled'
+        `);
+        if (queueRows && queueRows.length > 0) {
+          readyToPrint = parseInt(queueRows[0].ready_count, 10) || 0;
+          printingCutting = parseInt(queueRows[0].in_prod_count, 10) || 0;
+          readyToPack = parseInt(queueRows[0].ready_pack_count, 10) || 0;
+        }
+      } catch (_) {}
+    }
+
+    // 10. Low Stock Count (Store-Aware)
+    let lowStockCount = 0;
+    if (isStore2) {
+      // For Store 2: check materials table with safety_stock threshold
+      try {
+        const [matRows] = await pool.execute(`
+          SELECT COUNT(*) AS total
+          FROM materials
+          WHERE store_id = 2 AND stock <= safety_stock AND active = 1
+        `);
+        lowStockCount = parseInt(matRows[0]?.total, 10) || 0;
+      } catch (_) {
+        lowStockCount = 0;
+      }
+    } else {
+      // For Store 1: check inventory table joined with products of Store 1
+      try {
+        const [stockRows] = await pool.execute(`
+          SELECT COUNT(DISTINCT i.id) AS total
+          FROM inventory i
+          JOIN product_variants pv ON i.variant_id = pv.id
+          JOIN products p ON pv.product_id = p.id
+          WHERE (p.store_id = 1 OR p.store_id IS NULL) AND i.stock <= 10
+        `);
+        lowStockCount = parseInt(stockRows[0]?.total, 10) || 0;
+      } catch (_) {
+        try {
+          const [fallbackStock] = await pool.execute('SELECT COUNT(*) AS total FROM inventory WHERE stock <= 10');
+          lowStockCount = parseInt(fallbackStock[0]?.total, 10) || 0;
+        } catch (__) {
+          lowStockCount = 0;
+        }
+      }
+    }
+
+    // 11. Total Products & Categories Count (Store-Scoped)
+    let totalProducts = 0;
+    let totalCategories = 0;
+    const useHybrid = isMarshansHybridCatalogEnabled();
+
+    if (isStore2 && useHybrid) {
+      try {
+        const [pRows] = await pool.execute('SELECT COUNT(*) AS total FROM marshans_products WHERE store_id = 2');
+        totalProducts = pRows[0]?.total || 0;
+      } catch (_) {
+        const [pRows] = await pool.execute('SELECT COUNT(*) AS total FROM products WHERE store_id = 2');
+        totalProducts = pRows[0]?.total || 0;
+      }
+      try {
+        const [cRows] = await pool.execute('SELECT COUNT(*) AS total FROM marshans_categories WHERE store_id = 2');
+        totalCategories = cRows[0]?.total || 0;
+      } catch (_) {
+        const [cRows] = await pool.execute('SELECT COUNT(*) AS total FROM categories WHERE store_id = 2');
+        totalCategories = cRows[0]?.total || 0;
+      }
+    } else {
+      const prodWhere = isStore2 ? 'store_id = 2' : '(store_id = 1 OR store_id IS NULL)';
+      const catWhere = isStore2 ? 'store_id = 2' : '(store_id = 1 OR store_id IS NULL)';
+      const [pRows] = await pool.execute(`SELECT COUNT(*) AS total FROM products WHERE ${prodWhere}`);
+      totalProducts = pRows[0]?.total || 0;
+      const [cRows] = await pool.execute(`SELECT COUNT(*) AS total FROM categories WHERE ${catWhere}`);
+      totalCategories = cRows[0]?.total || 0;
+    }
+
+    // 12. Total Users Count (Unified Identity Pool)
     const [userRows] = await pool.execute('SELECT COUNT(*) AS total FROM users');
-    const totalUsers = userRows[0].total || 0;
+    const totalUsers = userRows[0]?.total || 0;
 
-    // 5. Low Stock Count (stock <= 10)
-    const [stockRows] = await pool.execute('SELECT COUNT(*) AS total FROM inventory WHERE stock <= 10');
-    const lowStockCount = stockRows[0].total || 0;
+    // 13. Monthly Historical Sales & Order Volume (Timeframe-Aware: 2, 3, or 6 months)
+    let numMonths = 6;
+    if (timeframe === 'current_vs_prev') {
+      numMonths = 2;
+    } else if (timeframe === 'last_3_months') {
+      numMonths = 3;
+    } else {
+      numMonths = 6;
+    }
 
-    // 6. Monthly historical sales and order volume (last 6 months chronological)
     const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
     const now = new Date();
     const monthlyStats = [];
 
-    for (let i = 5; i >= 0; i--) {
+    for (let i = numMonths - 1; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const y = d.getFullYear();
       const m = d.getMonth();
@@ -59,18 +226,16 @@ const getAdminDashboardHandler = async (req, res, next) => {
     try {
       const [monthlyRows] = await pool.execute(`
         SELECT
-          DATE_FORMAT(created_at, '%Y-%m') AS month_key,
-          COALESCE(SUM(CASE
-            WHEN fulfillment_status != 'cancelled' THEN
-              CASE WHEN store_id = 2 THEN ROUND(total_price / 100) ELSE total_price END
-            ELSE 0
-          END), 0) AS revenue_rupees,
-          COUNT(CASE WHEN fulfillment_status != 'cancelled' THEN 1 ELSE NULL END) AS order_count
-        FROM orders
-        WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
+          DATE_FORMAT(o.created_at, '%Y-%m') AS month_key,
+          COALESCE(SUM(CASE WHEN o.store_id = 2 THEN ROUND(o.total_price / 100) ELSE o.total_price END), 0) AS revenue_rupees,
+          COUNT(*) AS order_count
+        FROM orders o
+        WHERE ${orderStoreWhere}
+          AND ${commercialPaidCondition}
+          AND o.created_at >= DATE_SUB(DATE_FORMAT(CURDATE(), '%Y-%m-01'), INTERVAL ? MONTH)
         GROUP BY month_key
         ORDER BY month_key ASC
-      `);
+      `, [numMonths]);
 
       monthlyRows.forEach(row => {
         const match = monthlyStats.find(s => s.monthKey === row.month_key);
@@ -83,6 +248,79 @@ const getAdminDashboardHandler = async (req, res, next) => {
       console.warn('[Dashboard Monthly Stats Warning]', chartErr.message);
     }
 
+    // 14. Recent Orders (Store-Scoped, up to 5)
+    let recentOrders = [];
+    try {
+      const [recentRows] = await pool.execute(`
+        SELECT
+          o.id,
+          o.order_number,
+          o.customer_name,
+          CASE WHEN o.store_id = 2 THEN ROUND(o.total_price / 100) ELSE o.total_price END AS total_price,
+          o.payment_status,
+          o.fulfillment_status AS status,
+          o.created_at
+        FROM orders o
+        WHERE ${orderStoreWhere}
+        ORDER BY o.created_at DESC, o.id DESC
+        LIMIT 5
+      `);
+      recentOrders = (recentRows || []).map(r => ({
+        id: r.id,
+        order_id: r.order_number,
+        customer_name: r.customer_name,
+        total_price: parseInt(r.total_price, 10) || 0,
+        payment_status: r.payment_status,
+        status: r.status,
+        created_at: r.created_at
+      }));
+    } catch (_) {}
+
+    // 15. Top Products (Store-Scoped, up to 5)
+    let topProducts = [];
+    try {
+      if (isStore2 && useHybrid) {
+        const [tpRows] = await pool.execute(`
+          SELECT
+            p.id,
+            p.name AS title,
+            ROUND(p.price / 100) AS price,
+            p.lumo_light_image AS image_url
+          FROM marshans_products p
+          WHERE p.store_id = 2 AND p.active = 1
+          ORDER BY p.featured DESC, p.id DESC
+          LIMIT 5
+        `);
+        topProducts = (tpRows || []).map(p => ({
+          id: p.id,
+          title: p.title,
+          price: parseInt(p.price, 10) || 0,
+          images: p.image_url ? [p.image_url] : [],
+          rating: 5
+        }));
+      } else {
+        const prodScope = isStore2 ? 'p.store_id = 2' : '(p.store_id = 1 OR p.store_id IS NULL)';
+        const [tpRows] = await pool.execute(`
+          SELECT
+            p.id,
+            p.name AS title,
+            p.price,
+            (SELECT image_url FROM product_images pi WHERE pi.product_id = p.id ORDER BY sort_order ASC, id ASC LIMIT 1) AS image_url
+          FROM products p
+          WHERE ${prodScope} AND p.active = 1
+          ORDER BY p.featured DESC, p.id DESC
+          LIMIT 5
+        `);
+        topProducts = (tpRows || []).map(p => ({
+          id: p.id,
+          title: p.title,
+          price: parseInt(p.price, 10) || 0,
+          images: p.image_url ? [p.image_url] : [],
+          rating: 5
+        }));
+      }
+    } catch (_) {}
+
     return sendSuccess(res, {
       admin: {
         id: req.admin.id,
@@ -91,14 +329,33 @@ const getAdminDashboardHandler = async (req, res, next) => {
         firebase_uid: req.admin.firebase_uid
       },
       metrics: {
+        storeId,
+        storeCode: isStore2 ? 'marshans' : 'chipakk',
         totalProducts,
         totalCategories,
         totalOrders,
+        cancelledOrders,
         totalRevenue: totalRevenueRupees,
+        monthRevenue: monthRevenueRupees,
+        ordersToday,
         averageOrderWorth: averageOrderValueRupees,
+        awaitingConfirmation,
+        readyToPrint,
+        printingCutting,
+        inProduction: printingCutting,
+        readyToPack,
         totalUsers,
         lowStockCount,
-        monthlyStats
+        monthlyStats,
+        timeframe,
+        productionQueue: {
+          awaitingConfirmation,
+          readyToPrint,
+          printingCutting,
+          readyToPack
+        },
+        recentOrders,
+        topProducts
       },
       status: 'authenticated',
       message: 'Admin authorization verified successfully'

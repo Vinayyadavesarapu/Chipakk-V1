@@ -133,24 +133,71 @@ Approved values: fee **₹50**, threshold **₹300**, calculation **gross_subtot
 
 ## 9. Product / category images (persistent storage)
 
-The database paths (`/uploads/<file>`) are correct, but the files are missing on the server because `server/uploads` lives
-inside the deployed application folder and is wiped by a redeploy. Uploaded files are **git-ignored and must never be
-committed**.
+### What was observed in production (2026-09-21)
 
-Production requirement: set the environment variable **`UPLOADS_DIR`** to the **absolute path of a directory that**
+* `GET https://api.chipakk.shop/uploads/product-1789920844722-880658550.webp` answered
+  `{"error":{"message":"Route not found: GET /uploads/..."}}`.
+* `GET /api/health` reported `uploads: { externalDirectory: false, writable: true, fileCount: 0 }`: the server serves the
+  default `server/uploads` folder **inside the deployed app**, it can write there, and it holds **no files**.
+* The database references 210 upload files (200 product images, 10 category images); every one sampled returned 404,
+  including the newest (uploaded 20 Sep, ~16:00-16:14 UTC).
 
-1. is **outside** the deployed application directory (so a redeploy cannot replace it),
-2. is **writable by the user that runs the Node app**, and
-3. **persists** across deployments and restarts.
+### Root cause
 
-Provide it in the Node.js application's environment-variable settings in the Hostinger control panel (not in a committed
-file). **The exact absolute path depends on your hosting account and is not stated here**: create the directory with
-Hostinger's File Manager / SSH and copy the absolute path the panel shows; do not guess it. Then:
+The route is correct (`/uploads` is mounted before the API routes and the 404 handler, and uploads are written to the
+same directory they are served from). The **files are not on the server's disk**. Uploaded files are git-ignored and, by
+default, live inside the application folder, so any deployment that replaces that folder deletes them while the database
+keeps pointing at `/uploads/<file>`. A missing file falls through `express.static`; before this fix that produced the
+API's generic "Route not found", which looks like a routing bug but is not.
 
-* restore the previously uploaded files into that directory (from a backup) so existing `/uploads/...` URLs resolve;
-* restart the app; confirm `GET /api/health` shows `uploads.externalDirectory: true`, `writable: true`, and a `fileCount`
-  that matches what you restored;
-* the fallback `server/uploads` is for local development only.
+### What the code now does
+
+* A missing upload answers `404 {"error":{"code":"UPLOAD_NOT_FOUND","message":"Upload file not found"}}` with
+  `Cache-Control: no-store`, so a CDN cannot keep the 404 after the file is restored. Normal API 404s are unchanged.
+* Private custom-artwork files can no longer be fetched with a percent-encoded name (`custom%2Dartwork-...` used to
+  bypass the guard); uploads are served with `X-Content-Type-Options: nosniff` and SVG with a sandboxing CSP.
+* With `NODE_ENV=production`, startup logs a warning and `/api/health` carries an `uploads.warning` (never a path)
+  when `UPLOADS_DIR` is unset, is a relative path, or points **inside** the application folder (all of which a
+  deployment can still wipe). `/api/health` reports full diagnostic indicators (`configured`, `isAbsolute`, `outsideAppDirectory`,
+  `insideAppDirectory`, `exists`, `writable`, `fileCount`, `serving: true`) without exposing sensitive server paths.
+
+### Restoring production (needs your Hostinger account; nothing here changes the database)
+
+The database is correct and stays untouched: `products -> product_images` (CHIPAKK) and `marshans_products ->
+marshans_product_images` (THE MARSHANS) keep their `/uploads/<file>` paths. Only the physical files are missing.
+Helper scripts (all in `scripts/`, plain Node, no dependencies) make each step checkable:
+
+| Script | Where it runs | What it does |
+|---|---|---|
+| `verify-production-uploads.js` | anywhere | **Read-only.** Reads the published catalogue for both stores and HEADs every `/uploads/<file>`; `--out missing.txt` writes the exact file names still missing. Exit 0 only when every file is served as an image. |
+| `uploads-diagnostics.js` | **on the server** (SSH / hPanel terminal) | **Read-only.** Prints the app folder, home directory, the effective uploads folder (exists? writable? file count? inside the app?) and candidate folders outside the app. `--probe <dir>` / `--check <dir>` prove a folder survives a deployment. |
+| `restore-uploads.js` | **on the server** | Copies image files from an extracted backup into `UPLOADS_DIR` under their **exact names**. **Dry run unless `--apply`**, never overwrites (unless `--overwrite`), never deletes, refuses a destination inside the app or a relative one, skips symlinks/unsafe names/non-images. `--manifest missing.txt` reports what the backup could not provide. |
+
+`database/ops/list_upload_paths.sql` (**SELECT only**) lists every path the database references, including inactive
+products, category media, LUMO images, banners, hero settings and private custom artwork, for **both** stores. The public
+API cannot see those (and currently publishes no THE MARSHANS product images), so use it as the authoritative list.
+
+1. **Baseline (from your computer, safe):** `node scripts/verify-production-uploads.js --out missing.txt`
+   (on 2026-09-21 this reported **0 of 249 files served**).
+2. **Find a persistent location (on the server):** `node scripts/uploads-diagnostics.js`. Create a folder **outside** the
+   application folder, then prove it survives a deployment:
+   `node scripts/uploads-diagnostics.js --probe /that/absolute/folder`, redeploy, then
+   `node scripts/uploads-diagnostics.js --check /that/absolute/folder` (it must say PRESENT).
+   **Only your host can tell you which folders it preserves; the probe is how you prove it. Do not guess.**
+3. **Set `UPLOADS_DIR`** to that absolute path in the Node.js application's environment-variable settings in the
+   Hostinger control panel (not in a committed file), and restart the app. If it is relative, unset, or inside the app
+   folder, `/api/health` shows an `uploads.warning`.
+4. **Restore from a Hostinger backup/snapshot:** extract the backup somewhere on the server, then
+   `node scripts/restore-uploads.js --from /extracted/backup --to /that/absolute/folder --manifest missing.txt`
+   (dry run), review, and repeat with `--apply`. File names are never changed. Anything reported as "NOT in the backup"
+   needs an older backup or a re-upload in Admin.
+5. **Verify (from anywhere):** `node scripts/verify-production-uploads.js` must exit 0, and `/api/health` must show
+   `externalDirectory: true`, `insideAppDirectory: false`, `writable: true`, the right `fileCount` and no `warning`.
+   Then upload a new product image and a new category image in the Admin (both stores) and confirm they load.
+6. **Persistence proof:** after the next deployment or restart, `fileCount` must not drop.
+
+Uploaded files must never be committed to Git; `server/uploads/*` stays ignored, and the fallback `server/uploads` is for
+local development only.
 
 ## 10. Remaining decisions / limits
 

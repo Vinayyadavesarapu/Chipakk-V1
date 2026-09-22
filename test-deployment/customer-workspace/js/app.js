@@ -104,24 +104,22 @@
 
   const API_BASE = resolveApiBaseUrl();
 
+  /* ---------------------------------------------------------
+     SHARED MEDIA + CATALOG MODULES (js/media.js, js/catalog.js)
+     One image resolver, one <img> builder, one product model and
+     one product-card renderer for the whole storefront.
+     --------------------------------------------------------- */
+  if (!window.CHIPAKK_MEDIA || !window.CHIPAKK_CATALOG) {
+    console.error("[CHIPAKK] js/media.js and js/catalog.js must load before js/app.js");
+  }
+  const media = window.CHIPAKK_MEDIA.createMedia({ apiBase: API_BASE });
+  window.CHIPAKK_MEDIA.installFallback(document, (failedSrc) => {
+    console.warn("[CHIPAKK Media] Image unavailable, showing placeholder:", failedSrc);
+  });
+
+  // Back-compat alias: every image reference is resolved by media.resolve()
   function resolveCustomerImageUrl(url) {
-    if (!url || typeof url !== 'string') return '';
-    const trimmed = url.trim();
-    if (!trimmed) return '';
-
-    // Handle Google Drive links to direct view URLs
-    if (trimmed.includes('drive.google.com')) {
-      const fileIdMatch = trimmed.match(/\/file\/d\/([a-zA-Z0-9_-]+)/) || trimmed.match(/[?&]id=([a-zA-Z0-9_-]+)/);
-      if (fileIdMatch && fileIdMatch[1]) {
-        return `https://drive.google.com/uc?export=view&id=${fileIdMatch[1]}`;
-      }
-    }
-
-    if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('data:') || trimmed.startsWith('blob:')) {
-      return trimmed;
-    }
-    const apiOrigin = API_BASE.replace(/\/api\/?$/, '');
-    return trimmed.startsWith('/') ? `${apiOrigin}${trimmed}` : `${apiOrigin}/${trimmed}`;
+    return media.resolve(url);
   }
 
   function getActiveStoreId() {
@@ -130,6 +128,9 @@
       const storeParam = urlParams.get('store_id') || urlParams.get('store');
       if (storeParam === '2' || storeParam === 'marshans' || storeParam === 'themarshans') return 2;
       if (storeParam === '1' || storeParam === 'chipakk') return 1;
+      const host = (window.location.hostname || '').toLowerCase();
+      if (host === 'themarshans.shop' || host === 'www.themarshans.shop') return 2;
+      if (host === 'chipakk.shop' || host === 'www.chipakk.shop') return 1;
       if (window.CHIPAKK_STORE_ID) return Number(window.CHIPAKK_STORE_ID);
       try {
         const stored = localStorage.getItem('chipakk_active_store_id');
@@ -292,6 +293,10 @@
 
       const json = await res.json().catch(() => ({}));
 
+      if (res.status >= 500) {
+        // Never surface server wording for unexpected failures
+        return { valid: false, serverError: true, message: "We couldn't check that code right now. Please try again in a moment." };
+      }
       if (!res.ok || !json.success) {
         return {
           valid: false,
@@ -339,6 +344,26 @@
    */
   async function getCustomerOrderByIdApi(id) {
     return fetchAuthenticated(`/orders/${encodeURIComponent(id)}`);
+  }
+
+  /**
+   * Fetch Authenticated Customer Profile
+   * GET /api/customer/me
+   */
+  async function getCustomerProfileApi() {
+    return fetchAuthenticated("/customer/me");
+  }
+
+  /**
+   * Update Authenticated Customer Profile (full_name, phone)
+   * PUT /api/customer/me
+   */
+  async function updateCustomerProfileApi(profileData) {
+    return fetchAuthenticated("/customer/me", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(profileData)
+    });
   }
 
   /**
@@ -424,136 +449,18 @@
      DATA NORMALIZATION HELPERS
      --------------------------------------------------------- */
 
+  const catalog = window.CHIPAKK_CATALOG.createCatalog({
+    media,
+    formatPrice: (n) => "₹" + Math.round(Number(n || 0)).toLocaleString("en-IN"),
+    storeId: () => getActiveStoreId()
+  });
+
   function normalizeProduct(p) {
-    if (!p) return null;
-
-    const id = String(p.id);
-    const adminProductId = p.admin_product_id || p.sku || id;
-    const name = p.name || p.title || "Sticker";
-    const slug = p.slug || adminProductId.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-
-    // Canonical price handling: For CHIPAKK (Store 1), prices are stored in WHOLE RUPEES (₹1 = DB 1, ₹15 = DB 15).
-    // Storefront operates in whole rupees for display and cart totals.
-    let price;
-    if (p.price_rupees !== undefined && p.price_rupees !== null) {
-      price = Number(p.price_rupees);
-    } else {
-      const rawPrice = typeof p.price === "number" ? p.price : (parseFloat(p.price) || 0);
-      price = Math.round(rawPrice);
-    }
-
-    let compareAtPrice = null;
-    if (p.compare_at_price_rupees !== undefined && p.compare_at_price_rupees !== null) {
-      compareAtPrice = Number(p.compare_at_price_rupees);
-    } else if (p.compare_at_price !== undefined && p.compare_at_price !== null && p.compare_at_price !== '') {
-      const rawComp = typeof p.compare_at_price === "number" ? p.compare_at_price : (parseFloat(p.compare_at_price) || 0);
-      compareAtPrice = Math.round(rawComp);
-    } else if (p.compareAtPrice !== undefined && p.compareAtPrice !== null) {
-      compareAtPrice = typeof p.compareAtPrice === "number" ? p.compareAtPrice : (parseFloat(p.compareAtPrice) || null);
-    }
-
-    const pricePaise = typeof p.price_paise === "number" ? p.price_paise : (typeof p.price === "number" ? p.price : price * 100);
-    const compPricePaise = typeof p.compare_at_price_paise === "number" ? p.compare_at_price_paise : (compareAtPrice !== null ? compareAtPrice * 100 : null);
-
-    const rating = typeof p.average_rating === "number" ? p.average_rating : (typeof p.rating === "number" ? p.rating : (parseFloat(p.rating) || 4.7));
-    const ratingCount = p.review_count !== undefined ? parseInt(p.review_count, 10) : (p.ratingCount !== undefined ? parseInt(p.ratingCount, 10) : 0);
-    const ratingTier = p.rating_tier || getRatingTier(rating);
-    const active = p.active === 1 || p.active === true || p.active === undefined;
-    const featured = p.featured === 1 || p.featured === true;
-
-    // Image resolution: primary image, images array, or fallback emoji
-    let images = [];
-    if (Array.isArray(p.images) && p.images.length > 0) {
-      images = p.images.map(img => {
-        const rawUrl = typeof img === "string" ? img : (img.image_url || img.external_url || img.url || "");
-        return resolveCustomerImageUrl(rawUrl);
-      }).filter(Boolean);
-    } else if (p.primary_image_url) {
-      images = [resolveCustomerImageUrl(p.primary_image_url)];
-    } else if (p.image && (p.image.startsWith("http") || p.image.includes("/"))) {
-      images = [resolveCustomerImageUrl(p.image)];
-    }
-
-    const primaryImg = (images.length > 0 ? images[0] : null) || resolveCustomerImageUrl(p.primary_image_url) || p.image || "⚡";
-
-    // Category mapping
-    const categoryId = p.category_id !== undefined ? String(p.category_id) : (p.categoryId || "");
-    const categoryName = p.category_name || p.categoryName || "";
-    const categorySlug = p.category_slug || (categoryName ? categoryName.toLowerCase().replace(/[^a-z0-9]+/g, "-") : "");
-
-    // Options mapping (materials & sizes)
-    let materials = ["Glossy", "Matte", "Holographic", "Transparent"];
-    let sizes = ['2"', '3"', '4"'];
-    if (Array.isArray(p.options) && p.options.length > 0) {
-      const matOpt = p.options.find(o => /material|finish/i.test(o.name));
-      if (matOpt && Array.isArray(matOpt.values) && matOpt.values.length > 0) {
-        materials = matOpt.values.map(v => typeof v === "string" ? v : (v.value || v.name));
-      }
-      const szOpt = p.options.find(o => /size|dimension/i.test(o.name));
-      if (szOpt && Array.isArray(szOpt.values) && szOpt.values.length > 0) {
-        sizes = szOpt.values.map(v => typeof v === "string" ? v : (v.value || v.name));
-      }
-    } else if (Array.isArray(p.materials) && p.materials.length > 0) {
-      materials = p.materials;
-    }
-
-    const inStock = p.stock !== undefined ? p.stock > 0 : (p.inStock !== undefined ? p.inStock : true);
-
-    return {
-      id,
-      admin_product_id: adminProductId,
-      name,
-      slug,
-      price,
-      price_rupees: price,
-      price_paise: pricePaise,
-      compareAtPrice,
-      compare_at_price: compareAtPrice,
-      compare_at_price_rupees: compareAtPrice,
-      compare_at_price_paise: compPricePaise,
-      rating,
-      ratingCount,
-      rating_tier: ratingTier,
-      active,
-      featured,
-      image: primaryImg,
-      images: images.length > 0 ? images : (primaryImg.startsWith("http") || primaryImg.includes("/") ? [primaryImg] : []),
-      categoryId,
-      categoryName,
-      categorySlug,
-      tags: Array.isArray(p.tags) ? p.tags : (typeof p.tags === "string" ? (function() { try { return JSON.parse(p.tags); } catch(e) { return []; } })() : []),
-      description: p.description || "",
-      materials,
-      sizes,
-      inStock,
-      stock: p.stock !== undefined ? p.stock : 100,
-      is_best_seller: p.is_best_seller === 1 || p.is_best_seller === true,
-      isBestSeller: p.is_best_seller === 1 || p.is_best_seller === true
-    };
+    return catalog.normalizeProduct(p);
   }
 
   function normalizeCategory(c) {
-    if (!c) return null;
-    const id = String(c.id);
-    const name = c.name || "Category";
-    const slug = c.slug || name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-    const active = c.active === 1 || c.active === true || c.active === undefined;
-    const rawImg = c.image_url || (typeof c.image === "string" && (c.image.startsWith("http") || c.image.includes("/")) ? c.image : null);
-    const imageUrl = rawImg ? resolveCustomerImageUrl(rawImg) : null;
-    const productCount = parseInt(c.product_count !== undefined ? c.product_count : (c.productCount || 0), 10) || 0;
-    const icon = c.icon || c.image || "✨";
-
-    return {
-      id,
-      name,
-      slug,
-      active,
-      description: c.description || "",
-      image_url: imageUrl,
-      image: imageUrl || icon,
-      icon,
-      productCount
-    };
+    return catalog.normalizeCategory(c);
   }
 
   function normalizeSettings(s) {
@@ -588,6 +495,11 @@
 
     const gstRate = actual.gst_pct !== undefined ? Number(actual.gst_pct) : (actual.gst_rate !== undefined ? Number(actual.gst_rate) : 18);
     const gstin = actual.gstin || "";
+    // GST facts: prices are GST-inclusive (tax_pricing_mode) and gst_enabled/checkout_tax_ready come from the API
+    const gstEnabled = actual.gst_enabled !== false;
+    const checkoutTaxReady = actual.checkout_tax_ready !== false;
+    const tradeName = actual.trade_name || storeName;
+    const legalSupplierName = actual.legal_supplier_name || "";
 
     const announcementActive = actual.announcement_active !== false && Boolean(actual.announcement_text);
     const announcementText = actual.announcement_text || "";
@@ -606,6 +518,10 @@
       currencySymbol: "₹",
       gstRate,
       gstin,
+      gstEnabled,
+      checkoutTaxReady,
+      tradeName,
+      legalSupplierName,
       announcementActive,
       announcementText
     };
@@ -725,6 +641,9 @@
 
     // 4. Update Cart display with new threshold
     renderGlobalCart();
+
+    // 5. Let page scripts (checkout totals) recompute with the real store settings
+    try { window.dispatchEvent(new CustomEvent("chipakk-settings-updated", { detail: { settings } })); } catch (_) {}
   }
 
   function checkMaintenanceGate(settings) {
@@ -787,38 +706,83 @@
   }
 
   function syncShippingThresholdUi(settings) {
+    // Free shipping is INCLUSIVE: a gross subtotal >= threshold ships free ("₹300+"), never "> ₹300".
     const thresh = (settings && settings.freeShippingThreshold !== undefined && settings.freeShippingThreshold !== null)
       ? Number(settings.freeShippingThreshold)
       : 300;
     const formatted = formatPrice(thresh);
+    const fee = (settings && settings.shippingFee !== undefined && settings.shippingFee !== null) ? Number(settings.shippingFee) : 50;
 
     const trustEl = $("#trustFreeShippingSub");
     if (trustEl) {
-      trustEl.textContent = thresh > 0 ? `On orders above ${formatted}` : `On all orders`;
+      trustEl.textContent = thresh > 0 ? `On orders of ${formatted}+` : `On all orders`;
     }
 
     const prodBadge = $("#prodFreeShippingBadge");
     if (prodBadge) {
-      prodBadge.textContent = thresh > 0 ? `Free Shipping on Orders > ${formatted}` : `Free Shipping on All Orders`;
+      prodBadge.textContent = thresh > 0 ? `Free Shipping on Orders of ${formatted}+` : `Free Shipping on All Orders`;
     }
 
     const checkoutBadge = $("#checkoutShippingRuleBadge");
     if (checkoutBadge) {
-      checkoutBadge.textContent = thresh > 0 ? `FREE on orders > ${formatted}` : `FREE Shipping`;
+      checkoutBadge.textContent = thresh > 0 ? `${formatPrice(fee)} · FREE ${formatted}+` : `FREE Shipping`;
+    }
+    const checkoutNote = $("#checkoutShippingRuleNote");
+    if (checkoutNote) {
+      checkoutNote.textContent = thresh > 0
+        ? `Rigid stay-flat cardboard mailer • Free on orders ${formatted}+`
+        : `Rigid stay-flat cardboard mailer • Free shipping on all orders`;
     }
 
     $$(".cart-note").forEach(el => {
-      el.textContent = thresh > 0 ? `Free shipping automatically applied on orders above ${formatted}.` : `Free shipping applied on all orders.`;
+      el.textContent = thresh > 0 ? `Free shipping automatically applied on orders of ${formatted} or more.` : `Free shipping applied on all orders.`;
     });
-
-    if (typeof renderCartDrawer === "function") {
-      renderCartDrawer();
-    }
   }
 
   /* ---------------------------------------------------------
      ASYNC REPOSITORY FUNCTIONS (API-BACKED)
      --------------------------------------------------------- */
+
+  // One in-flight catalog load shared by every caller on the page (home, cart checks, ...)
+  let catalogInflight = null;
+
+  function forActiveStore(list) {
+    const storeId = getActiveStoreId();
+    return list.filter((p) => p && (p.store_id === undefined || p.store_id === null || Number(p.store_id) === Number(storeId)));
+  }
+
+  async function loadFullCatalog(params, fetchOpts) {
+    const PAGE_CHUNK = 100;
+    const MAX_PAGES = 20; // safe termination ceiling
+    const seenIds = new Set();
+    const all = [];
+    const pageUrl = (offset) => {
+      const p = new URLSearchParams(params.toString());
+      p.set("limit", PAGE_CHUNK);
+      p.set("offset", offset);
+      return `/products?${p.toString()}`;
+    };
+    const rowsOf = (data) => (Array.isArray(data) ? data : (data && Array.isArray(data.products) ? data.products : []));
+    const take = (data) => {
+      for (const item of rowsOf(data)) {
+        const norm = normalizeProduct(item);
+        if (norm && !seenIds.has(norm.id)) { seenIds.add(norm.id); all.push(norm); }
+      }
+    };
+
+    // Page 1 reveals `total`; every remaining page is then requested IN PARALLEL, so the loader waits for two
+    // round-trips whatever the catalogue size (sequential paging cost one round-trip per 100 products).
+    const first = await fetchApi(pageUrl(0), fetchOpts);
+    const firstRows = rowsOf(first);
+    const total = (first && typeof first.total === "number") ? first.total : firstRows.length;
+    take(first);
+    if (firstRows.length >= PAGE_CHUNK && total > firstRows.length) {
+      const pages = Math.min(Math.ceil(total / PAGE_CHUNK), MAX_PAGES);
+      const rest = await Promise.all(Array.from({ length: pages - 1 }, (_, i) => fetchApi(pageUrl((i + 1) * PAGE_CHUNK), fetchOpts)));
+      rest.forEach(take); // in offset order, so the catalogue order is identical to sequential paging
+    }
+    return forActiveStore(all);
+  }
 
   async function getProducts(options = {}) {
     try {
@@ -832,7 +796,9 @@
       if (options.is_best_seller !== undefined && options.is_best_seller !== null) params.set('is_best_seller', options.is_best_seller);
       if (options.drop_status) params.set('drop_status', options.drop_status);
 
-      // If single-page pagination is explicitly requested
+      const fetchOpts = { ...(options.fetchOptions || {}), ...(options.refresh ? { refresh: true } : {}) };
+
+      // Single-page pagination explicitly requested
       if (options.offset !== undefined || options.page !== undefined) {
         const limit = Math.min(Math.max(parseInt(options.limit, 10) || 50, 1), 100);
         const offset = options.offset !== undefined
@@ -842,72 +808,38 @@
         params.set('limit', limit);
         params.set('offset', offset);
 
-        const data = await fetchApi(`/products?${params.toString()}`, options.fetchOptions || {});
+        const data = await fetchApi(`/products?${params.toString()}`, fetchOpts);
         const rawList = Array.isArray(data) ? data : (data && Array.isArray(data.products) ? data.products : []);
         const total = (data && typeof data.total === 'number') ? data.total : rawList.length;
-        const normalized = rawList.map(normalizeProduct).filter(Boolean);
-        const hasMore = offset + rawList.length < total;
-
         return {
-          products: normalized,
+          products: forActiveStore(rawList.map(normalizeProduct).filter(Boolean)),
           total,
           limit,
           offset,
-          hasMore
+          hasMore: offset + rawList.length < total
         };
       }
 
-      // Check if this is a general un-filtered catalog query and we already have products cached in session
       const isPlainCatalogQuery = (options.category_id === undefined || options.category_id === null || options.category_id === '') &&
         !options.search && options.active === undefined && options.featured === undefined &&
-        options.is_best_seller === undefined && !options.drop_status &&
-        options.offset === undefined && options.page === undefined;
+        options.is_best_seller === undefined && !options.drop_status;
 
-      if (isPlainCatalogQuery && !options.refresh && Array.isArray(CHIPAKK_DATA.products) && CHIPAKK_DATA.products.length > 0) {
-        return CHIPAKK_DATA.products;
+      if (isPlainCatalogQuery && !options.refresh) {
+        if (Array.isArray(CHIPAKK_DATA.products) && CHIPAKK_DATA.products.length > 0) return CHIPAKK_DATA.products;
+        if (catalogInflight) return await catalogInflight;
       }
 
-      // Default: fetch the complete catalog for this query via safe server pagination (limit=100 per page)
-      const PAGE_CHUNK = 100;
-      let currentOffset = 0;
-      let allFetched = [];
-      let total = 0;
-      const seenIds = new Set();
-      const MAX_PAGES = 20; // Safe termination ceiling: prevents infinite loops under all circumstances
-      let pageCount = 0;
-
-      while (pageCount < MAX_PAGES) {
-        pageCount++;
-        params.set('limit', PAGE_CHUNK);
-        params.set('offset', currentOffset);
-
-        const data = await fetchApi(`/products?${params.toString()}`, options.fetchOptions || {});
-        const rawList = Array.isArray(data) ? data : (data && Array.isArray(data.products) ? data.products : []);
-        total = (data && typeof data.total === 'number') ? data.total : (total || rawList.length);
-
-        if (!rawList || rawList.length === 0) {
-          break; // Empty page, completed
-        }
-
-        for (const item of rawList) {
-          const norm = normalizeProduct(item);
-          if (norm && !seenIds.has(norm.id)) {
-            seenIds.add(norm.id);
-            allFetched.push(norm);
-          }
-        }
-
-        currentOffset += rawList.length;
-
-        // Termination condition: reached total or returned fewer items than requested
-        if (currentOffset >= total || rawList.length < PAGE_CHUNK) {
-          break;
-        }
+      const run = loadFullCatalog(params, fetchOpts).then((list) => {
+        if (isPlainCatalogQuery) CHIPAKK_DATA.products = list;
+        return list;
+      });
+      if (isPlainCatalogQuery) {
+        catalogInflight = run.finally(() => { catalogInflight = null; });
+        return await catalogInflight;
       }
-
-      CHIPAKK_DATA.products = allFetched;
-      return allFetched;
+      return await run;
     } catch (err) {
+      if (options.strict) throw err;
       console.warn("[CHIPAKK] Falling back to local products repository:", err.message);
       return CHIPAKK_DATA.products.map(normalizeProduct).filter(Boolean);
     }
@@ -1006,25 +938,200 @@
      3. PERSISTENT CART MANAGER (localStorage)
      ========================================================= */
 
+  /* =========================================================
+     2.5 AUTHENTICATION / LOGIN PROMPT MODAL
+     ========================================================= */
+
+  let pendingCartAction = null;
+
+  function ensureLoginModal() {
+    if (typeof document === "undefined" || !document.body) return null;
+    let modal = document.getElementById("customerLoginModal");
+    if (modal) return modal;
+
+    modal = document.createElement("div");
+    modal.className = "order-success-modal";
+    modal.id = "customerLoginModal";
+    modal.style.display = "none";
+    modal.setAttribute("role", "dialog");
+    modal.setAttribute("aria-modal", "true");
+    modal.setAttribute("aria-labelledby", "loginModalTitle");
+
+    modal.innerHTML = `
+      <div class="order-success-card" style="text-align: left; max-width: 440px; padding: 28px; position: relative;">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; border-bottom: 2px solid var(--black); padding-bottom: 12px;">
+          <div>
+            <span style="display: inline-block; font-size: 11px; font-weight: 800; text-transform: uppercase; background: var(--yellow); border: 1.5px solid var(--black); border-radius: 4px; padding: 2px 8px; margin-bottom: 6px; box-shadow: 1px 1px 0 var(--black);">Sign In Required</span>
+            <h3 style="font-family: var(--font-display); font-size: 22px; text-transform: uppercase; margin: 0;" id="loginModalTitle">Sign In to Continue</h3>
+          </div>
+          <button type="button" class="panel-close" id="closeLoginModalBtn" aria-label="Close modal" style="font-size: 16px;">✕</button>
+        </div>
+        <p style="font-size: 13px; color: #444; margin: 0 0 16px 0; line-height: 1.4;" id="loginModalSubtitle">
+          Please sign in to your account to add items to your cart.
+        </p>
+        <div class="auth-alert-error" id="loginModalError" style="display: none; background: #fef2f2; border: 1.5px solid #b91c1c; color: #991b1b; padding: 8px 12px; font-size: 13px; font-weight: 600; border-radius: var(--radius-sm); margin-bottom: 14px;"></div>
+        <form id="loginModalForm" novalidate>
+          <div class="form-field" style="margin-bottom: 12px;">
+            <label for="loginModalEmail" style="font-size: 12px; font-weight: 700; display: block; margin-bottom: 4px;">Email Address *</label>
+            <input type="email" id="loginModalEmail" required placeholder="you@domain.com" autocomplete="email" style="width: 100%; border: 2px solid var(--black); border-radius: var(--radius-sm); padding: 9px 12px; font-family: inherit; font-size: 14px;" />
+          </div>
+          <div class="form-field" style="margin-bottom: 16px;">
+            <label for="loginModalPassword" style="font-size: 12px; font-weight: 700; display: block; margin-bottom: 4px;">Password *</label>
+            <input type="password" id="loginModalPassword" required placeholder="Your password" autocomplete="current-password" style="width: 100%; border: 2px solid var(--black); border-radius: var(--radius-sm); padding: 9px 12px; font-family: inherit; font-size: 14px;" />
+          </div>
+          <button type="submit" class="btn btn-primary btn-block" id="loginModalSubmitBtn" style="width: 100%; padding: 12px; font-size: 14px; font-weight: 700; margin-bottom: 10px;">Sign In & Add to Cart</button>
+        </form>
+        <div style="text-align: center; margin: 10px 0 12px 0; position: relative;">
+          <span style="background: var(--white); padding: 0 10px; font-size: 12px; font-weight: 700; color: #888; position: relative; z-index: 1;">OR</span>
+          <div style="position: absolute; top: 50%; left: 0; right: 0; height: 1px; background: #ddd; z-index: 0;"></div>
+        </div>
+        <button type="button" class="btn btn-block google-auth-btn" id="loginModalGoogleBtn" style="display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; background: #ffffff; border: 2px solid var(--black); border-radius: var(--radius-sm); padding: 10px; font-weight: 700; font-size: 13px; cursor: pointer; box-shadow: 2px 2px 0 var(--black); margin-bottom: 14px;">
+          <svg width="18" height="18" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/></svg>
+          Sign in with Google
+        </button>
+        <div style="text-align: center; font-size: 12px; color: #555;">
+          Don't have an account? <a href="account.html" id="loginModalSignupLink" style="font-weight: 700; color: var(--blue); text-decoration: underline;">Create one →</a>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    const closeBtn = modal.querySelector("#closeLoginModalBtn");
+    const form = modal.querySelector("#loginModalForm");
+    const googleBtn = modal.querySelector("#loginModalGoogleBtn");
+    const errorBox = modal.querySelector("#loginModalError");
+    const submitBtn = modal.querySelector("#loginModalSubmitBtn");
+
+    const hide = () => {
+      modal.style.display = "none";
+      if (errorBox) {
+        errorBox.style.display = "none";
+        errorBox.textContent = "";
+      }
+      form?.reset();
+      pendingCartAction = null;
+    };
+
+    modal.addEventListener("click", (e) => {
+      if (e.target === modal) hide();
+    });
+    closeBtn?.addEventListener("click", hide);
+
+    form?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const email = modal.querySelector("#loginModalEmail")?.value.trim();
+      const password = modal.querySelector("#loginModalPassword")?.value;
+
+      if (!email || !password) {
+        if (errorBox) {
+          errorBox.style.display = "block";
+          errorBox.textContent = "Please enter both email and password.";
+        }
+        return;
+      }
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Signing In...";
+      if (errorBox) errorBox.style.display = "none";
+
+      try {
+        if (window.CHIPAKK?.auth?.signIn) {
+          await window.CHIPAKK.auth.signIn(email, password);
+        }
+        const action = pendingCartAction;
+        hide();
+        if (action && typeof action.onSuccess === "function") {
+          action.onSuccess();
+        }
+      } catch (err) {
+        if (errorBox) {
+          errorBox.style.display = "block";
+          errorBox.textContent = err.message || "Failed to sign in. Please check your credentials.";
+        }
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Sign In & Add to Cart";
+      }
+    });
+
+    googleBtn?.addEventListener("click", async () => {
+      googleBtn.disabled = true;
+      if (errorBox) errorBox.style.display = "none";
+      try {
+        if (window.CHIPAKK?.auth?.signInWithGoogle) {
+          await window.CHIPAKK.auth.signInWithGoogle();
+        }
+        const action = pendingCartAction;
+        hide();
+        if (action && typeof action.onSuccess === "function") {
+          action.onSuccess();
+        }
+      } catch (err) {
+        if (errorBox) {
+          errorBox.style.display = "block";
+          errorBox.textContent = err.message || "Google sign-in was not completed.";
+        }
+      } finally {
+        googleBtn.disabled = false;
+      }
+    });
+
+    return modal;
+  }
+
+  function showLoginPrompt({ productName, onSuccess, onCancel } = {}) {
+    const modal = ensureLoginModal();
+    pendingCartAction = { productName, onSuccess, onCancel };
+
+    if (modal) {
+      const subtitle = modal.querySelector("#loginModalSubtitle");
+      if (subtitle) {
+        subtitle.textContent = productName
+          ? `Please sign in to add "${productName}" to your cart.`
+          : "Please sign in to add items to your cart.";
+      }
+      modal.style.display = "flex";
+      const emailInput = modal.querySelector("#loginModalEmail");
+      if (emailInput) setTimeout(() => emailInput.focus(), 50);
+    }
+  }
+
   const CART_STORAGE_KEY = "chipakk_cart_v1";
+
+  function getCartStorageKey() {
+    const storeId = typeof getActiveStoreId === 'function' ? getActiveStoreId() : (typeof window !== 'undefined' && window.CHIPAKK?.getActiveStoreId ? window.CHIPAKK.getActiveStoreId() : 1);
+    return storeId === 2 ? "marshans_cart_v1" : "chipakk_cart_v1";
+  }
+
+  /* =========================================================
+     3. PERSISTENT CART MANAGER (localStorage)
+     ========================================================= */
 
   class CartManager {
     constructor() {
       this.items = this.load();
+      this._lastAddKey = null;
+      this._lastAddTime = 0;
     }
 
     load() {
       try {
-        const raw = localStorage.getItem(CART_STORAGE_KEY);
+        const key = getCartStorageKey();
+        const raw = localStorage.getItem(key);
         const parsed = raw ? JSON.parse(raw) : [];
-        // NOTE: do not "self-heal" cart item prices by dividing values >= 1000 by 100.
-        // CHIPAKK legitimately prices products at and above ₹1000 (e.g. ₹1500, ₹9999),
-        // and that heuristic cannot distinguish a real high-value rupee price from stale
-        // pre-migration paise data, silently corrupting the former. Cart items only ever
-        // carry `product_id`/`quantity` to the backend at checkout (see checkout.js), which
-        // recomputes the authoritative price server-side, so displaying a stored price as-is
-        // here is safe; any genuinely stale cached price is harmless once re-added to cart.
-        return Array.isArray(parsed) ? parsed : [];
+        if (!Array.isArray(parsed)) return [];
+        // NOTE: do not "self-heal" prices by dividing values >= 1000 by 100 (CHIPAKK legitimately
+        // sells at >= ₹1000). The server recomputes every price from product_id at checkout.
+        // Images ARE re-resolved on load: older carts persisted URLs that were resolved against the
+        // wrong origin (https://chipakk.shop/uploads/...) - the shared resolver rewrites those.
+        return parsed
+          .filter((item) => item && typeof item === "object" && item.variantKey)
+          .map((item) => {
+            const qty = parseInt(item.qty, 10);
+            const image = typeof item.image === "string" ? media.resolve(item.image) : "";
+            return { ...item, qty: qty > 0 ? qty : 1, image };
+          });
       } catch (e) {
         console.warn("[CHIPAKK] Failed to load cart from localStorage", e);
         return [];
@@ -1033,7 +1140,8 @@
 
     save() {
       try {
-        localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(this.items));
+        const key = getCartStorageKey();
+        localStorage.setItem(key, JSON.stringify(this.items));
       } catch (e) {
         console.warn("[CHIPAKK] Failed to save cart to localStorage", e);
       }
@@ -1046,6 +1154,43 @@
     }
 
     addItem(product, qty = 1, options = {}) {
+      if (!product) return false;
+
+      // 1. Store isolation guard
+      const activeStore = typeof getActiveStoreId === 'function' ? getActiveStoreId() : (typeof window !== 'undefined' && window.CHIPAKK?.getActiveStoreId ? window.CHIPAKK.getActiveStoreId() : 1);
+      const prodStore = product.store_id || product.storeId;
+      if (prodStore && Number(prodStore) !== activeStore) {
+        console.warn(`[CHIPAKK Cart] Store isolation rejection: product store (${prodStore}) does not match active store (${activeStore})`);
+        if (typeof showToast === 'function') showToast("This item is not available in the current store.", "error");
+        return false;
+      }
+
+      // 2. Rapid double-click debounce (< 350ms)
+      const now = Date.now();
+      const clickKey = `${product.id || ''}_${options.material || ''}_${options.size || ''}_${options.variantId || ''}`;
+      if (!options.skipAuthCheck && this._lastAddKey === clickKey && (now - this._lastAddTime) < 350) {
+        return false;
+      }
+      this._lastAddKey = clickKey;
+      this._lastAddTime = now;
+
+      // 3. Login Gate: require authenticated customer
+      const user = (typeof window !== 'undefined' && window.CHIPAKK?.auth?.getCurrentUser) ? window.CHIPAKK.auth.getCurrentUser() : null;
+      if (!user && !options.skipAuthCheck) {
+        if (typeof showLoginPrompt === 'function') {
+          showLoginPrompt({
+            productName: product.name,
+            onSuccess: () => {
+              this.addItem(product, qty, { ...options, skipAuthCheck: true });
+              if (typeof options.onAdded === "function") options.onAdded();
+            },
+            onCancel: options.onCancel
+          });
+        }
+        return false;
+      }
+
+      // 4. Continue with item preparation & storage
       const material = options.material || (product.materials && product.materials[0]) || "Glossy";
       const size = options.size || (product.sizes && product.sizes[0]) || '3"';
       const isCustom = Boolean(product.is_custom || (!product.id && product.name) || String(product.id || '').startsWith('custom_'));
@@ -1054,11 +1199,8 @@
         ? `custom_${product.id || Date.now()}_${material}_${size}`.toLowerCase().replace(/[^a-z0-9]/g, "_")
         : (variantId ? `${product.id}_v${variantId}` : `${product.id}_${material}_${size}`).toLowerCase().replace(/[^a-z0-9]/g, "_");
 
-      // Robust image resolution: check images array first, then image URL or emoji
-      const rawImage = (product.images && product.images.length > 0 && product.images[0]) || product.image || "⚡";
-      const resolvedImage = (typeof rawImage === "string" && (rawImage.startsWith("http") || rawImage.includes("/")))
-        ? resolveCustomerImageUrl(rawImage)
-        : rawImage;
+      // One resolver for every image reference (gallery first, then the primary image)
+      const resolvedImage = media.resolveFirst(product.images) || media.resolve(product.imageUrl) || media.resolve(product.image) || "";
 
       const existingIndex = this.items.findIndex(i => i.variantKey === variantKey);
       if (existingIndex > -1) {
@@ -1069,13 +1211,18 @@
       } else {
         this.items.push({
           id: product.id,
+          store_id: activeStore,
           variantId: variantId,
           variantKey,
           name: product.name,
-          price: product.price,
+          price: options.price !== undefined ? options.price : product.price,
+          // GST rate of this product (product > category); null = the store default. The server re-resolves it.
+          gstRate: product.gstRate === undefined ? null : product.gstRate,
           image: resolvedImage,
           material,
           size,
+          options: options.selectedOptions || { material, size },
+          options_snapshot: options.selectedOptions || { material, size },
           materials: product.materials || (material ? [material] : []),
           sizes: product.sizes || (size ? [size] : []),
           is_custom: isCustom,
@@ -1084,7 +1231,25 @@
         });
       }
       this.save();
-      showToast(`${product.name} added to cart!`);
+      if (typeof showToast === 'function') showToast(`${product.name} added to cart!`);
+
+      // Background server cart sync when authenticated
+      if (user && product.id && !isCustom && !isNaN(Number(product.id)) && typeof fetchAuthenticated === 'function') {
+        fetchAuthenticated('/cart/items', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            product_id: Number(product.id),
+            variant_id: variantId ? Number(variantId) : null,
+            quantity: qty,
+            options: options.selectedOptions || { material, size }
+          })
+        }).catch(err => {
+          console.warn('[CHIPAKK Cart] Server cart sync notice:', err.message);
+        });
+      }
+
+      return true;
     }
 
     removeItem(variantKey) {
@@ -1204,19 +1369,10 @@
     return "₹" + Math.round(Number(n || 0)).toLocaleString("en-IN");
   }
 
-  function starsMarkup(rating) {
-    const full = Math.round(rating || 5);
-    let out = "";
-    for (let i = 0; i < 5; i++) {
-      out += i < full
-        ? '<svg viewBox="0 0 24 24"><polygon points="12 2 15 9 22 9.5 16.5 14 18 22 12 18 6 22 7.5 14 2 9.5 9 9"/></svg>'
-        : '<svg class="star-empty" viewBox="0 0 24 24"><polygon points="12 2 15 9 22 9.5 16.5 14 18 22 12 18 6 22 7.5 14 2 9.5 9 9"/></svg>';
-    }
-    return out;
-  }
+  const { starsMarkup, getRatingTier } = window.CHIPAKK_CATALOG;
 
   function escapeHtml(str) {
-    return String(str || "").replace(/[&<>"']/g, (c) => ({
+    return String(str === undefined || str === null ? "" : str).replace(/[&<>"']/g, (c) => ({
       "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
     }[c]));
   }
@@ -1226,92 +1382,23 @@
   }
 
   /* =========================================================
-     AUTHENTIC RATING TIER & REUSABLE PRODUCT CARD CONTRACT
+     REUSABLE PRODUCT CARD (single renderer: js/catalog.js)
      ========================================================= */
-
-  function getRatingTier(rating) {
-    const r = Math.round((parseFloat(rating) || 0.0) * 10) / 10;
-    if (r >= 4.9) return "LEGENDARY";
-    if (r >= 4.7) return "RARE";
-    if (r >= 4.4) return "EPIC";
-    if (r >= 4.0) return "UNCOMMON";
-    if (r >= 3.0) return "COMMON";
-    return "BASIC";
-  }
 
   function renderProductCard(p, options = {}) {
     if (!p) return "";
     const isWishlisted = options.isWishlisted !== undefined ? options.isWishlisted : wishlist.has(p.id);
-    const mode = options.mode || "standard"; // 'standard' or 'wishlist'
+    return catalog.productCardHtml(p, { ...options, isWishlisted });
+  }
 
-    const ratingVal = typeof p.rating === "number" ? p.rating : (parseFloat(p.rating) || 4.7);
-    const ratingCount = p.ratingCount !== undefined ? p.ratingCount : (p.review_count !== undefined ? p.review_count : 0);
-    const ratingTier = p.rating_tier || getRatingTier(ratingVal);
-
-    const isImgUrl = (p.image && (p.image.startsWith("http") || p.image.includes("/"))) ||
-                     (p.images && p.images.length && (p.images[0].startsWith("http") || p.images[0].includes("/")));
-    const imgSrc = (p.image && (p.image.startsWith("http") || p.image.includes("/"))) ? p.image : (p.images && p.images[0]);
-
-    return `
-      <article class="product-card" data-product-id="${p.id}">
-        <!-- 1. LARGE SQUARE PRODUCT IMAGE (DOMINANT ELEMENT) -->
-        <div class="product-media">
-          ${mode !== "wishlist" ? `
-            <button class="product-wishlist ${isWishlisted ? 'is-active' : ''}" type="button" data-wishlist-id="${p.id}" aria-label="Wishlist ${escapeAttr(p.name)}" aria-pressed="${isWishlisted}">
-              <svg viewBox="0 0 24 24"><path d="M12 21s-7-4.6-10-9.2C0 8 1.8 4 6 4c2.2 0 3.8 1.2 6 4 2.2-2.8 3.8-4 6-4 4.2 0 6 4 4 7.8C19 16.4 12 21 12 21z"/></svg>
-            </button>
-          ` : ""}
-          <a href="product.html?id=${encodeURIComponent(p.id)}" class="product-media-link" aria-label="${escapeAttr(p.name)}">
-            ${isImgUrl
-              ? `<img src="${escapeAttr(imgSrc)}" alt="${escapeAttr(p.name)}" width="300" height="300" loading="lazy" decoding="async" onerror="if(!this.dataset.failed){this.dataset.failed='true';this.src='assets/images/logo.png';}" />`
-              : `<div class="product-media-art"><span class="product-media-emoji">${p.image || "⚡"}</span></div>`
-            }
-          </a>
-        </div>
-
-        <div class="product-body">
-          <!-- 2. RATING + RATING TIER (ABOVE PRODUCT NAME) -->
-          <div class="product-rating" aria-label="${ratingVal.toFixed(1)} out of 5 stars, tier ${ratingTier}">
-            <span class="stars">${starsMarkup(ratingVal)}</span>
-            <span class="rating-val">${ratingVal.toFixed(1)}</span>
-            ${ratingCount ? `<span class="rating-count">(${ratingCount})</span>` : ""}
-            <span class="rating-divider" aria-hidden="true">·</span>
-            <span class="rating-tier tier-${ratingTier.toLowerCase()}">${escapeHtml(ratingTier)}</span>
-          </div>
-
-          <!-- 3. PRODUCT NAME -->
-          <h3 class="product-name">
-            <a href="product.html?id=${encodeURIComponent(p.id)}">
-              ${escapeHtml(p.name)}
-            </a>
-          </h3>
-
-          <!-- 4. PRICE / COMPARE-AT PRICE -->
-          <div class="product-pricing">
-            <span class="product-price">${formatPrice(p.price)}</span>
-            ${(p.compareAtPrice && p.compareAtPrice > p.price) ? `<span class="product-price-orig">${formatPrice(p.compareAtPrice)}</span>` : ""}
-          </div>
-
-          <!-- 5. ADD TO CART / ACTIONS -->
-          ${mode === "wishlist" ? `
-            <div class="product-card-actions" style="display: flex; gap: 8px; margin-top: 4px;">
-              <button class="product-add move-to-cart-btn" type="button" data-move-cart="${p.id}" style="flex: 1; margin-top: 0;">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 4h2l2.4 12.2a2 2 0 0 0 2 1.6h7.6a2 2 0 0 0 2-1.6L21 8H6"/><circle cx="9.5" cy="21" r="1.4"/><circle cx="17.5" cy="21" r="1.4"/></svg>
-                <span>Move to Cart</span>
-              </button>
-              <button type="button" class="btn-icon remove-wish-btn" data-remove-wish="${p.id}" style="border: 3px solid var(--black); border-radius: var(--radius-sm); box-shadow: 2px 2px 0 var(--black); padding: 10px;" aria-label="Remove from wishlist">
-                ✕
-              </button>
-            </div>
-          ` : `
-            <button class="product-add" type="button" data-add-to-cart="${p.id}">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 4h2l2.4 12.2a2 2 0 0 0 2 1.6h7.6a2 2 0 0 0 2-1.6L21 8H6"/><circle cx="9.5" cy="21" r="1.4"/><circle cx="17.5" cy="21" r="1.4"/></svg>
-              <span>Add to Cart</span>
-            </button>
-          `}
-        </div>
-      </article>
-    `;
+  /** Whole grid: tolerant of non-arrays, de-duplicates ids, eager-loads the first row. */
+  function renderProductGrid(list, options = {}) {
+    return catalog.productGridHtml(list, {
+      mode: options.mode,
+      emptyHtml: options.emptyHtml,
+      priorityCount: options.priorityCount,
+      isWishlisted: options.isWishlisted || ((p) => wishlist.has(p.id))
+    });
   }
 
   let toastTimer = null;
@@ -1432,31 +1519,25 @@
     }
 
     list.innerHTML = cart.items.map(item => {
-      const isImgUrl = typeof item.image === "string" && (item.image.startsWith("http") || item.image.includes("/"));
-      const resolvedSrc = isImgUrl ? resolveCustomerImageUrl(item.image) : "";
       const lineTotal = item.price * item.qty;
+      const thumb = media.imgHtml({ src: item.image, alt: "", width: 64, height: 64 });
 
       return `
-        <div class="cart-item" data-variant-key="${item.variantKey}">
-          <div class="cart-item-media" aria-hidden="true">
-            ${isImgUrl
-              ? `<img src="${escapeAttr(resolvedSrc)}" alt="${escapeAttr(item.name)}" loading="lazy" onerror="this.onerror=null;this.parentElement.innerHTML='<span class=\\'cart-item-emoji\\'>⚡</span>';" />`
-              : `<span class="cart-item-emoji">${item.image || "⚡"}</span>`
-            }
-          </div>
+        <div class="cart-item" data-variant-key="${escapeAttr(item.variantKey)}">
+          <div class="cart-item-media">${thumb}</div>
           <div class="cart-item-info">
             <div class="cart-item-header">
               <h4 class="cart-item-name">${escapeHtml(item.name)}</h4>
-              <button class="cart-item-remove" type="button" data-remove-item="${item.variantKey}" aria-label="Remove ${escapeAttr(item.name)}" title="Remove item">
+              <button class="cart-item-remove" type="button" data-remove-item="${escapeAttr(item.variantKey)}" aria-label="Remove ${escapeAttr(item.name)}" title="Remove item">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
               </button>
             </div>
             <div class="cart-item-variant">${escapeHtml(item.material || "Glossy")} • ${escapeHtml(item.size || '3"')}</div>
             <div class="cart-item-bottom">
               <div class="cart-qty-stepper">
-                <button type="button" class="cart-qty-btn" data-qty-decrease="${item.variantKey}" aria-label="Decrease quantity">−</button>
+                <button type="button" class="cart-qty-btn" data-qty-decrease="${escapeAttr(item.variantKey)}" aria-label="Decrease quantity">−</button>
                 <span class="cart-qty-val">${item.qty}</span>
-                <button type="button" class="cart-qty-btn" data-qty-increase="${item.variantKey}" aria-label="Increase quantity">+</button>
+                <button type="button" class="cart-qty-btn" data-qty-increase="${escapeAttr(item.variantKey)}" aria-label="Increase quantity">+</button>
               </div>
               <div class="cart-item-prices">
                 ${item.qty > 1 ? `<span class="cart-item-unit-price">${formatPrice(item.price)} ea</span>` : ""}
@@ -1586,13 +1667,30 @@
       searchCloseBtn.addEventListener("click", closePanel);
     }
 
-    function handleSearchSubmit(query) {
+    async function handleSearchSubmit(query) {
       const q = (query || "").trim();
-      if (q) {
-        window.location.href = `shop.html?search=${encodeURIComponent(q)}`;
-      } else {
+      if (!q) {
         showToast("Type something to search stickers!");
+        return;
       }
+
+      // Priority 1 & 2: Check if query matches a category in the active store
+      try {
+        let categories = CHIPAKK_DATA.categories;
+        if (!Array.isArray(categories) || categories.length === 0) {
+          categories = await getCategories();
+        }
+        const matched = catalog.matchCategoryQuery(q, categories);
+        if (matched && matched.slug) {
+          window.location.href = `shop.html?category=${encodeURIComponent(matched.slug)}`;
+          return;
+        }
+      } catch (err) {
+        console.warn("[CHIPAKK Search] Category match lookup notice:", err);
+      }
+
+      // Priority 3: Fallback to standard product text search
+      window.location.href = `shop.html?search=${encodeURIComponent(q)}`;
     }
 
     if (searchPanelForm) {
@@ -1646,8 +1744,14 @@
   function initHeaderAuth() {
     const accountBtn = $("#accountBtn");
     const drawerAccountLink = $("#drawerAccountLink");
+    let previousUser = undefined;
 
     async function renderAuthState(user) {
+      if (previousUser && !user) {
+        cart.clear();
+      }
+      previousUser = user;
+
       if (user) {
         // Enforce Admin vs Customer Isolation: verify via /customer/me
         try {
@@ -1711,74 +1815,213 @@
      9. CIRCULAR LOADING OVERLAY LIFECYCLE
      ========================================================= */
 
-  function initLoadingOverlay() {
-    const overlay = $("#loadingOverlay");
-    if (!overlay) return;
+  /**
+   * State-driven loader shared by every storefront page.
+   *
+   *   const done = CHIPAKK.loader.hold("products");   // synchronously, at script start
+   *   try { await ...critical work... } finally { done(); }
+   *
+   * The overlay fades out as soon as (a) the DOM is ready AND (b) every hold has been
+   * released. There is no fixed delay. Holds must be released in a `finally`, so a failed
+   * API request can never keep the overlay up; a hard ceiling (MAX_WAIT_MS) is the last
+   * line of defence against a hung request/handler, not part of the normal lifecycle.
+   * Nothing here waits for the window "load" event, so large non-critical assets (images,
+   * the loader video itself) can never delay the content.
+   */
+  const loader = (() => {
+    const MAX_WAIT_MS = Number(window.CHIPAKK_LOADER_MAX_WAIT_MS) || 8000; // override only in tests
+    const holds = new Map();
+    let seq = 0;
+    let domReady = document.readyState !== "loading";
+    let hidden = false;
+    let checkQueued = false;
 
-    const vid = overlay.querySelector("video");
-    if (vid) {
+    const overlayEl = () => document.getElementById("loadingOverlay");
+
+    function startVideo() {
+      const vid = overlayEl()?.querySelector("video");
+      if (!vid) return;
+      // iOS/Android autoplay policy: the *property* must be muted + inline before play()
       vid.muted = true;
+      vid.defaultMuted = true;
       vid.playsInline = true;
-      const playPromise = vid.play();
-      if (playPromise !== undefined) {
-        playPromise.catch(() => {});
-      }
+      vid.setAttribute("webkit-playsinline", "");
+      const played = vid.play();
+      if (played && typeof played.catch === "function") played.catch(() => { /* badge stays visible */ });
     }
 
-    let hidden = false;
-    function hideOverlay() {
+    function hide(reason) {
       if (hidden) return;
       hidden = true;
+      const overlay = overlayEl();
+      if (!overlay) return;
       overlay.setAttribute("data-hidden", "true");
       overlay.setAttribute("aria-hidden", "true");
-      setTimeout(() => {
+      overlay.setAttribute("data-hide-reason", reason);
+      const vid = overlay.querySelector("video");
+      const finish = () => {
         overlay.style.display = "none";
-      }, 400);
+        if (vid) { try { vid.pause(); } catch (_) {} }
+      };
+      overlay.addEventListener("transitionend", finish, { once: true });
+      setTimeout(finish, 600); // cleanup only: the overlay is already fading
     }
 
-    // Clean fadeout as soon as DOM and initial data are ready — zero artificial delays
-    if (document.readyState === "complete") {
-      requestAnimationFrame(() => hideOverlay());
-    } else {
-      window.addEventListener("load", hideOverlay, { once: true });
-      document.addEventListener("DOMContentLoaded", () => {
-        setTimeout(hideOverlay, 250);
-      }, { once: true });
-      // Fallback ceiling ensures the overlay never hangs under slow networks
-      setTimeout(hideOverlay, 2000);
+    function check() {
+      checkQueued = false;
+      if (hidden) return;
+      if (domReady && holds.size === 0) hide("ready");
     }
+
+    // Evaluate on the frame *after* the current task so every synchronous hold() taken by
+    // page scripts during DOMContentLoaded is visible before we decide.
+    function queueCheck() {
+      if (checkQueued || hidden) return;
+      checkQueued = true;
+      requestAnimationFrame(check);
+    }
+
+    function hold(name) {
+      const id = ++seq;
+      holds.set(id, name || "task");
+      let released = false;
+      return function release() {
+        if (released) return;
+        released = true;
+        holds.delete(id);
+        queueCheck();
+      };
+    }
+
+    function init() {
+      startVideo();
+      // init() runs from the DOMContentLoaded handler (or later), never while parsing, so the
+      // DOM is ready here. Re-read the state instead of relying on the value captured at load.
+      domReady = document.readyState !== "loading";
+      if (domReady) queueCheck();
+      else document.addEventListener("DOMContentLoaded", () => { domReady = true; queueCheck(); }, { once: true });
+      setTimeout(() => {
+        if (!hidden) {
+          console.warn("[CHIPAKK Loader] Ceiling reached; releasing overlay. Pending:", Array.from(holds.values()));
+          hide("ceiling");
+        }
+      }, MAX_WAIT_MS);
+      // Back/forward cache restore must never resurrect a stale overlay
+      window.addEventListener("pageshow", (e) => { if (e.persisted) hide("pageshow"); });
+    }
+
+    return { hold, init, isHidden: () => hidden, pending: () => Array.from(holds.values()) };
+  })();
+
+  function initLoadingOverlay() {
+    loader.init();
   }
 
   /* =========================================================
      10. NEWSLETTER & FOOTER HELPERS
      ========================================================= */
 
+  async function renderFooterCategories() {
+    const listEl = $("#footerCategoryList");
+    if (!listEl) return;
+
+    try {
+      let categories = CHIPAKK_DATA.categories;
+      if (!Array.isArray(categories) || categories.length === 0) {
+        categories = await getCategories();
+      }
+      const activeCats = (categories || []).filter(c => c && c.active !== false && c.slug).slice(0, 6);
+      if (activeCats.length > 0) {
+        listEl.innerHTML = activeCats.map(c => `
+          <li>
+            <a href="shop.html?category=${encodeURIComponent(c.slug)}">
+              ${escapeHtml(c.name)}
+            </a>
+          </li>
+        `).join("");
+      } else {
+        listEl.innerHTML = `<li><a href="shop.html">All Stickers</a></li><li><a href="categories.html">All Categories</a></li>`;
+      }
+    } catch (err) {
+      console.warn("[CHIPAKK Footer] Could not load dynamic categories:", err);
+      listEl.innerHTML = `<li><a href="shop.html">All Stickers</a></li><li><a href="categories.html">All Categories</a></li>`;
+    }
+  }
+
   function initFooter() {
     const yearEl = $("#footerYear");
     if (yearEl) yearEl.textContent = String(new Date().getFullYear());
+
+    const brandNameEl = $("#footerBrandName");
+    if (brandNameEl) {
+      brandNameEl.textContent = getActiveStoreId() === 2 ? "THE MARSHANS" : "CHIPAKK";
+    }
 
     const newsletterForm = $("#newsletterForm");
     if (newsletterForm) {
       newsletterForm.addEventListener("submit", (e) => {
         e.preventDefault();
-        showToast("Thanks for subscribing to CHIPAKK drops!");
+        const storeLabel = getActiveStoreId() === 2 ? "THE MARSHANS" : "CHIPAKK";
+        showToast(`Thanks for subscribing to ${storeLabel} drops!`);
         newsletterForm.reset();
       });
     }
+
+    // Populate dynamic categories
+    renderFooterCategories();
+
+    // Friendly click feedback for placeholder support/policy links
+    document.addEventListener("click", (e) => {
+      const link = e.target.closest("a[data-placeholder]");
+      if (link) {
+        const href = link.getAttribute("href") || "";
+        if (href.startsWith("#")) {
+          e.preventDefault();
+          const placeholderMsg = link.dataset.placeholder || "Coming soon";
+          if (placeholderMsg.includes("INSTAGRAM") || placeholderMsg.includes("YOUTUBE")) {
+            showToast("Official social channel launching soon!");
+          } else {
+            showToast("This policy is currently being updated for compliance. Coming soon!");
+          }
+        }
+      }
+    });
   }
 
   /* =========================================================
      11. INIT APP ENGINE
      ========================================================= */
 
+  function initHeaderCollapse() {
+    const header = document.querySelector(".site-header");
+    if (!header) return;
+    const apply = () => {
+      const bars = header.querySelectorAll("#globalAnnouncementBar, .brand-family-bar");
+      let h = 0;
+      bars.forEach((el) => { if (el.offsetParent !== null) h += el.getBoundingClientRect().height; });
+      document.documentElement.style.setProperty("--header-collapse", `${Math.round(h)}px`);
+    };
+    apply();
+    window.addEventListener("resize", apply, { passive: true });
+    window.addEventListener("chipakk-settings-updated", apply);
+    if (typeof ResizeObserver !== "undefined") {
+      const ro = new ResizeObserver(apply);
+      header.querySelectorAll("#globalAnnouncementBar, .brand-family-bar").forEach((el) => ro.observe(el));
+    }
+  }
+
   function initApp() {
     initLoadingOverlay();
+    initHeaderCollapse();
     initPanels();
     initActiveNav();
     initHeaderAuth();
     initFooter();
     renderGlobalCart();
-    getStoreSettings().catch(err => console.warn("[CHIPAKK] Settings init notice:", err.message));
+    const releaseSettings = loader.hold("settings");
+    getStoreSettings()
+      .catch(err => console.warn("[CHIPAKK] Settings init notice:", err.message))
+      .finally(releaseSettings);
   }
 
   if (document.readyState === "loading") {
@@ -1795,6 +2038,7 @@
 
   window.CHIPAKK = {
     auth: existingAuth,
+    getActiveStoreId,
     DATA: CHIPAKK_DATA,
     API_BASE,
     fetchApi,
@@ -1803,6 +2047,8 @@
     createOrderApi,
     getCustomerOrdersApi,
     getCustomerOrderByIdApi,
+    getCustomerProfileApi,
+    updateCustomerProfileApi,
     getCustomerAddressesApi,
     createCustomerAddressApi,
     updateCustomerAddressApi,
@@ -1817,6 +2063,8 @@
       createOrder: createOrderApi,
       getOrders: getCustomerOrdersApi,
       getOrderById: getCustomerOrderByIdApi,
+      getProfile: getCustomerProfileApi,
+      updateProfile: updateCustomerProfileApi,
       getAddresses: getCustomerAddressesApi,
       createAddress: createCustomerAddressApi,
       updateAddress: updateCustomerAddressApi,
@@ -1837,11 +2085,19 @@
     starsMarkup,
     getRatingTier,
     renderProductCard,
+    renderProductGrid,
+    categoryMediaHtml: catalog.categoryMediaHtml,
+    matchCategoryQuery: catalog.matchCategoryQuery,
+    media,
+    imgHtml: media.imgHtml,
+    loader,
     showToast,
     escapeHtml,
     escapeAttr,
     resolveImageUrl: resolveCustomerImageUrl,
+    resolveCustomerImageUrl,
     openCart: () => openPanel($("#cartDrawer")),
+    showLoginModal: showLoginPrompt,
     $,
     $$
   };

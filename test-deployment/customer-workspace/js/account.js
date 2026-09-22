@@ -1,7 +1,7 @@
 /* =========================================================
    CHIPAKK — Customer Account Module
    js/account.js
-   
+
    AUTHENTICATED ACCOUNT ENGINE:
    - Real Firebase Authentication lifecycle
    - Dual-state interface: Sign In / Sign Up vs Customer Dashboard
@@ -21,6 +21,9 @@
     getProducts,
     formatPrice,
     renderProductCard,
+    renderProductGrid,
+    media,
+    loader,
     showToast,
     escapeHtml,
     escapeAttr,
@@ -219,6 +222,13 @@
 
       try {
         await window.CHIPAKK.auth.signUp(name, email, password);
+        // Proactively synchronize customer profile with MySQL database
+        try {
+          const updateProfileFn = window.CHIPAKK?.updateCustomerProfileApi || window.CHIPAKK?.api?.updateProfile;
+          if (updateProfileFn) {
+            await updateProfileFn({ full_name: name });
+          }
+        } catch (_) {}
         showToast("Account created! Welcome to CHIPAKK.");
       } catch (err) {
         if (errorBox) {
@@ -294,16 +304,25 @@
     });
   }
 
-  function populateUserProfile(user) {
-    if (!user) return;
+  function populateUserProfile(customer, user) {
+    const authUser = user || window.CHIPAKK?.auth?.getCurrentUser();
+    if (!customer && !authUser) return;
 
-    const displayName = window.CHIPAKK?.auth?.getDisplayName ? window.CHIPAKK.auth.getDisplayName(user) : (user.displayName || "CHIPAKK Member");
-    const email = user.email || "";
+    const displayName = (customer && (customer.full_name || customer.name)) ||
+      (window.CHIPAKK?.auth?.getDisplayName && authUser ? window.CHIPAKK.auth.getDisplayName(authUser) : (authUser?.displayName || "CHIPAKK Member"));
+    const email = (customer && customer.email) || authUser?.email || "";
     const firstInitial = displayName ? displayName.charAt(0).toUpperCase() : "🧑‍🚀";
-    let savedPhone = user.phoneNumber || "";
-    try {
-      if (!savedPhone) savedPhone = localStorage.getItem(`chipakk_user_phone_${user.uid}`) || "";
-    } catch (e) {}
+    
+    let phone = (customer && customer.phone) || authUser?.phoneNumber || "";
+    if (!phone && authUser?.uid) {
+      try {
+        phone = localStorage.getItem(`chipakk_user_phone_${authUser.uid}`) || "";
+      } catch (e) {}
+    } else if (phone && authUser?.uid) {
+      try {
+        localStorage.setItem(`chipakk_user_phone_${authUser.uid}`, phone);
+      } catch (e) {}
+    }
 
     const nameEl = $("#accountUserDisplayName");
     const emailEl = $("#accountUserEmail");
@@ -317,9 +336,9 @@
     if (emailEl) emailEl.textContent = email;
     if (avatarEl) avatarEl.textContent = firstInitial.match(/[A-Z0-9]/) ? firstInitial : "🧑‍🚀";
     if (addrNameEl) addrNameEl.textContent = displayName;
-    if (profileNameInput) profileNameInput.value = user.displayName || "";
+    if (profileNameInput) profileNameInput.value = displayName !== "CHIPAKK Member" ? displayName : "";
     if (profileEmailInput) profileEmailInput.value = email;
-    if (profilePhoneInput && savedPhone) profilePhoneInput.value = savedPhone;
+    if (profilePhoneInput) profilePhoneInput.value = phone;
   }
 
   function initProfileUpdates() {
@@ -333,25 +352,38 @@
       const currentUser = window.CHIPAKK?.auth?.getCurrentUser();
 
       if (!currentUser) return;
-      if (!newName) {
-        showToast("Please enter a valid display name.", "error");
+      if (!newName || newName.length < 2) {
+        showToast("Please enter a valid display name (minimum 2 characters).", "error");
         return;
       }
 
       setButtonLoading(updateBtn, true, "Saving…");
       try {
+        // 1. Update Firebase client profile
         if (currentUser.updateProfile) {
-          await currentUser.updateProfile({ displayName: newName });
+          await currentUser.updateProfile({ displayName: newName }).catch((err) => {
+            console.warn("[CHIPAKK Auth] Notice updating Firebase displayName:", err.message);
+          });
         }
+
+        // 2. Persist directly to authoritative backend MySQL users table
+        const updateProfileFn = window.CHIPAKK?.updateCustomerProfileApi || window.CHIPAKK?.api?.updateProfile;
+        let savedCustomer = null;
+        if (updateProfileFn) {
+          const resp = await updateProfileFn({ full_name: newName, phone: newPhone });
+          savedCustomer = resp?.customer || resp;
+        }
+
         if (currentUser.uid) {
           try {
             localStorage.setItem(`chipakk_user_phone_${currentUser.uid}`, newPhone);
           } catch (e) {}
         }
-        populateUserProfile(currentUser);
+
+        populateUserProfile(savedCustomer, currentUser);
         showToast("Profile details updated successfully!");
       } catch (err) {
-        showToast("Unable to update profile right now.", "error");
+        showToast(err.message || "Unable to update profile right now.", "error");
       } finally {
         setButtonLoading(updateBtn, false, "Update Profile");
       }
@@ -423,7 +455,7 @@
       const dateStr = new Date(dateVal).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
       const fulfillStatus = ord.fulfillment_status || ord.status || "PROCESSING";
       const statusClass = fulfillStatus === "DELIVERED" ? "status-delivered" : (fulfillStatus === "SHIPPED" ? "status-shipped" : "status-processing");
-      const orderTotal = ord.total_price_inr ?? ord.total ?? 0;
+      const orderTotal = ord.total_price_rupees ?? ord.total_price ?? ord.total_price_inr ?? ord.total ?? 0;
       const rawPayStatus = (ord.payment_status || "").toLowerCase();
       const rawPayMethod = (ord.payment_method || "").toUpperCase();
       let paymentNote = "Pending Payment";
@@ -461,12 +493,15 @@
 
           <!-- Items Preview Rail -->
           <div style="display: flex; gap: 10px; margin: 14px 0; overflow-x: auto; padding-bottom: 4px;">
-            ${items.map((item) => `
-              <div style="display: flex; align-items: center; gap: 8px; background: var(--white); border: 1px solid var(--black); border-radius: 6px; padding: 6px 10px; font-size: 12px; font-weight: 600; flex-shrink: 0;">
-                <span style="font-size: 18px;">${typeof item.image === 'string' && item.image.startsWith('http') ? '⚡' : (item.image || '⚡')}</span>
-                <span>${escapeHtml(item.product_title || item.name || 'Sticker')} (x${item.quantity || item.qty || 1})</span>
-              </div>
-            `).join("")}
+            ${items.map((item) => {
+              const thumb = media.imgHtml({ src: item.img || item.image_url || item.image, alt: "", cls: "order-thumb order-thumb-sm", width: 20, height: 20 });
+              return `
+                <div style="display: flex; align-items: center; gap: 8px; background: var(--white); border: 1px solid var(--black); border-radius: 6px; padding: 6px 10px; font-size: 12px; font-weight: 600; flex-shrink: 0;">
+                  ${thumb}
+                  <span>${escapeHtml(item.product_title || item.name || 'Sticker')} (x${item.quantity || item.qty || 1})</span>
+                </div>
+              `;
+            }).join("")}
           </div>
 
           <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 10px;">
@@ -482,7 +517,7 @@
       btn.addEventListener("click", async () => {
         const orderIdentifier = btn.dataset.viewOrder;
         let targetOrder = orders.find((o) => String(o.id) === orderIdentifier || String(o.orderId) === orderIdentifier || String(o.order_number) === orderIdentifier);
-        
+
         if (targetOrder && targetOrder.id && (!targetOrder.items || targetOrder.items.length === 0)) {
           try {
             const getOrderFn = window.CHIPAKK?.getCustomerOrderByIdApi || window.CHIPAKK?.api?.getCustomerOrderById;
@@ -511,7 +546,7 @@
     if (msgEl) {
       msgEl.textContent = getOrderStatusCustomerMessage(order.fulfillment_status || order.status, order.payment_status);
     }
-    
+
     const paymentEl = $("#trackModalPayment");
     if (paymentEl) {
       const rawPayStatus = (order.payment_status || "").toLowerCase();
@@ -531,7 +566,7 @@
       }
     }
 
-    const orderTotal = order.total_price_inr ?? order.total ?? 0;
+    const orderTotal = order.total_price_rupees ?? order.total_price ?? order.total_price_inr ?? order.total ?? 0;
     $("#trackModalTotal").textContent = formatPrice(orderTotal);
     $("#trackModalCourier").textContent = order.courier_name || (order.tracking_number ? "BlueDart Express" : "Standard Shipping (Awaiting Dispatch)");
     $("#trackModalTrackingNo").textContent = order.tracking_number || "Will be assigned once package is dispatched";
@@ -564,11 +599,12 @@
           const title = item.product_title || item.name || "Sticker";
           const variant = item.variant_name || item.material || "Standard Vinyl";
           const qty = item.quantity || item.qty || 1;
-          const price = item.unit_price_inr ?? item.price ?? 0;
+          const price = item.unit_price_rupees ?? item.unit_price ?? item.unit_price_inr ?? item.price ?? 0;
+          const thumb = media.imgHtml({ src: item.img || item.image_url || item.image, alt: "", cls: "order-thumb order-thumb-md", width: 28, height: 28 });
           return `
             <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #eee;">
               <div style="display: flex; align-items: center; gap: 10px;">
-                <span style="font-size: 24px;">${typeof item.image === 'string' && item.image.startsWith('http') ? '⚡' : (item.image || '⚡')}</span>
+                ${thumb}
                 <div>
                   <div style="font-weight: 700; font-size: 13px;">${escapeHtml(title)}</div>
                   <div style="font-size: 11px; color: #666;">${escapeHtml(variant)} • Qty: ${qty}</div>
@@ -619,16 +655,21 @@
       return;
     }
 
-    grid.innerHTML = wishProducts.map((p) => renderProductCard(p, { mode: "wishlist" })).join("");
+    grid.innerHTML = renderProductGrid(wishProducts, { mode: "wishlist", isWishlisted: () => true, priorityCount: 0 });
 
     grid.querySelectorAll(".move-to-cart-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
         const pId = btn.dataset.moveCart;
         const target = allProducts.find((x) => String(x.id) === String(pId));
         if (target) {
-          cart.addItem(target, 1);
-          wishlist.toggle(pId);
-          renderWishlistTab();
+          const proceed = () => {
+            wishlist.toggle(pId);
+            renderWishlistTab();
+          };
+          const added = cart.addItem(target, 1, { onAdded: proceed });
+          if (added) {
+            proceed();
+          }
         }
       });
     });
@@ -982,6 +1023,7 @@
     const dashContainer = $("#accountDashboardContainer");
 
     if (user) {
+      let customerRecord = null;
       // Check Admin vs Customer isolation via /customer/me
       try {
         const fetchAuthFn = window.CHIPAKK?.fetchAuthenticated || window.CHIPAKK?.api?.fetchAuthenticated;
@@ -994,13 +1036,16 @@
             clearAuthErrors();
             return;
           }
+          if (meData && meData.customer) {
+            customerRecord = meData.customer;
+          }
         }
       } catch (_) {}
 
       // User is a valid logged-in customer
       if (authContainer) authContainer.style.display = "none";
       if (dashContainer) dashContainer.style.display = "block";
-      populateUserProfile(user);
+      populateUserProfile(customerRecord, user);
       renderOrdersTab();
       renderAddressesTab();
     } else {
@@ -1031,6 +1076,12 @@
 
   function initAccount() {
     initAuthForms();
+    // The page content depends on whether a customer is signed in: hold the loader until the
+    // first auth state is known (success or failure), then release.
+    const releaseLoader = loader.hold("account-auth");
+    const authReady = window.CHIPAKK?.auth?.isAuthReady ? window.CHIPAKK.auth.isAuthReady() : Promise.resolve();
+    authReady.catch((err) => console.error("[CHIPAKK Account] Auth did not initialise:", err)).finally(releaseLoader);
+
     initTabs();
     initOrderModal();
     initAddressModal();

@@ -39,27 +39,26 @@ const parseJson = (v, fallback = {}) => { if (v && typeof v === 'object') return
 const buildInvoiceDocument = ({ invoice, order, items }) => {
   const unit = invoice.money_unit;
   const lines = items.map((it, i) => {
-    const gross = toUnits(it.total_price); const discount = toUnits(it.discount_allocated); const taxable = toUnits(it.taxable_value);
-    const cgst = toUnits(it.cgst_amount); const sgst = toUnits(it.sgst_amount); const igst = toUnits(it.igst_amount);
+    const gross = toUnits(it.total_price); const discount = toUnits(it.discount_allocated);
     return {
-      line_no: i + 1, description: it.product_name, sku: it.sku || null, hsn_code: it.hsn_code, quantity: toUnits(it.quantity),
-      unit_price: toUnits(it.unit_price), gross_value: gross, discount, taxable_value: taxable,
-      tax_rate: it.tax_rate === null || it.tax_rate === undefined ? null : parseFloat(it.tax_rate),
-      cgst: cgst, sgst: sgst, igst: igst, tax: toUnits(it.tax_amount), line_total: gross - discount
+      line_no: i + 1, description: it.product_name, sku: it.sku || null, hsn_code: null, quantity: toUnits(it.quantity),
+      unit_price: toUnits(it.unit_price), gross_value: gross, discount, taxable_value: gross - discount,
+      tax_rate: null,
+      cgst: 0, sgst: 0, igst: 0, tax: 0, line_total: gross - discount
     };
   });
   const shippingCharge = toUnits(invoice.shipping_charge);
   const shipping = shippingCharge > 0 ? {
-    description: 'Shipping / delivery charges (composite supply, taxed at the principal supply rate)', hsn_code: null,
-    taxable_value: toUnits(order.shipping_taxable_value), tax_rate: parseFloat(order.shipping_tax_rate) || 0,
-    cgst: toUnits(order.shipping_cgst_amount), sgst: toUnits(order.shipping_sgst_amount), igst: toUnits(order.shipping_igst_amount),
-    tax: toUnits(order.shipping_tax_amount), line_total: shippingCharge
+    description: 'Shipping / delivery charges', hsn_code: null,
+    taxable_value: shippingCharge, tax_rate: 0,
+    cgst: 0, sgst: 0, igst: 0,
+    tax: 0, line_total: shippingCharge
   } : null;
   const totals = {
     gross_merchandise: lines.reduce((a, l) => a + l.gross_value, 0), discount: toUnits(invoice.discount_total),
-    shipping: shippingCharge, taxable_value: toUnits(invoice.taxable_value),
-    cgst: toUnits(invoice.cgst_amount), sgst: toUnits(invoice.sgst_amount), igst: toUnits(invoice.igst_amount),
-    total_tax: toUnits(invoice.cgst_amount) + toUnits(invoice.sgst_amount) + toUnits(invoice.igst_amount), total_value: toUnits(invoice.total_value)
+    shipping: shippingCharge, taxable_value: toUnits(invoice.total_value),
+    cgst: 0, sgst: 0, igst: 0,
+    total_tax: 0, total_value: toUnits(invoice.total_value)
   };
   const addr = parseJson(order.shipping_address, {});
   return {
@@ -69,7 +68,7 @@ const buildInvoiceDocument = ({ invoice, order, items }) => {
       address: invoice.supplier_address, state: invoice.supplier_state, state_code: invoice.supplier_state_code },
     recipient: { name: invoice.recipient_name, address: invoice.recipient_address, gstin: invoice.recipient_gstin || null,
       pincode: addr.pincode || null },
-    place_of_supply: invoice.place_of_supply, place_of_supply_code: invoice.place_of_supply_code, supply_type: invoice.supply_type,
+    place_of_supply: invoice.place_of_supply, place_of_supply_code: invoice.place_of_supply_code, supply_type: 'NONE',
     lines, shipping, totals,
     totals_rupees: Object.fromEntries(Object.entries(totals).map(([k, v]) => [k, rupees(v, unit)]))
   };
@@ -138,32 +137,36 @@ const issueInvoice = async (orderId, { issuedBy = null, storeId = null, now = ne
     if (NON_INVOICEABLE.includes(String(order.fulfillment_status || '').toUpperCase().replace(/\s+/g, '_')) || String(order.payment_status || '').toLowerCase() === 'failed') {
       throw fail('This order is cancelled, returned, refunded or its payment failed, so no tax invoice can be issued.', 409, 'ORDER_NOT_INVOICEABLE');
     }
-    if (order.tax_supply_type === undefined || order.tax_supply_type === null || !order.supplier_gstin) {
-      throw fail('This order was placed before GST supplier snapshots existed (or without one), so an invoice cannot be generated automatically.', 409, 'NO_TAX_SNAPSHOT');
-    }
     const sid = parseInt(order.store_id, 10) === 2 ? 2 : 1;
     const unit = sid === 2 ? 'paise' : 'rupees';
     const profile = await taxProfileService.getTaxProfile(sid, { db: conn });
+    if (order.tax_supply_type === undefined || order.tax_supply_type === null || (profile.gst_enabled && !order.supplier_gstin)) {
+      throw fail('This order was placed before GST supplier snapshots existed (or without one), so an invoice cannot be generated automatically.', 409, 'NO_TAX_SNAPSHOT');
+    }
 
     // Supplier identity: the purchase-time snapshot wins; only what the snapshot lacks (name, address) comes from configuration.
     const supplier = {
       legal_name: order.supplier_legal_name || profile.legal_supplier_name, trade_name: order.supplier_trade_name || profile.trade_name,
-      gstin: order.supplier_gstin, address: order.supplier_address || profile.seller_address,
+      gstin: order.supplier_gstin || profile.gstin, address: order.supplier_address || profile.seller_address,
       state: order.supplier_state || profile.seller_state, state_code: order.supplier_state_code || profile.seller_state_code
     };
     const missing = [];
     if (!supplier.legal_name) missing.push('legal supplier name');
     if (!supplier.address) missing.push('supplier address');
-    if (!supplier.gstin || !taxUtils.validateGstin(supplier.gstin).valid) missing.push('valid supplier GSTIN');
-    if (!supplier.state_code) missing.push('supplier state');
+    if (profile.gst_enabled) {
+      if (!supplier.gstin || !taxUtils.validateGstin(supplier.gstin).valid) missing.push('valid supplier GSTIN');
+      if (!supplier.state_code) missing.push('supplier state');
+    }
     if (missing.length) throw fail(`Cannot issue the invoice: ${missing.join(', ')} not configured. Set them under Admin -> Settings -> Business & Tax (legal supplier).`, 409, 'SUPPLIER_INCOMPLETE');
 
     const [items] = await conn.execute('SELECT * FROM order_items WHERE order_id = ? ORDER BY id', [order.id]);
     if (!items.length) throw fail('The order has no lines.', 409);
-    await fillMissingHsn(conn, items);
-    const noHsn = items.filter((it) => !it.hsn_code);
-    if (noHsn.length) {
-      throw fail(`Cannot issue the invoice: no HSN code is configured for ${noHsn.map((i) => `"${i.product_name}"`).join(', ')}. Set the HSN on the product or its category (Admin -> Products / Categories); it is never guessed.`, 409, 'HSN_MISSING');
+    if (profile.gst_enabled) {
+      await fillMissingHsn(conn, items);
+      const noHsn = items.filter((it) => !it.hsn_code);
+      if (noHsn.length) {
+        throw fail(`Cannot issue the invoice: no HSN code is configured for ${noHsn.map((i) => `"${i.product_name}"`).join(', ')}. Set the HSN on the product or its category (Admin -> Products / Categories); it is never guessed.`, 409, 'HSN_MISSING');
+      }
     }
 
     const addr = parseJson(order.shipping_address, {});

@@ -328,11 +328,15 @@ const getOrders = async ({
       subtotal_rupees: isStore2 ? Math.round(rawSubtotal / 100) : rawSubtotal,
       discount_total_rupees: isStore2 ? Math.round(rawDiscount / 100) : rawDiscount,
       shipping_charge_rupees: isStore2 ? Math.round(rawShipping / 100) : rawShipping,
-      tax_amount_rupees: taxRupees,
-      cgst_amount_rupees: isStore2 ? Math.round(rawCgst / 100) : rawCgst,
-      sgst_amount_rupees: isStore2 ? Math.round(rawSgst / 100) : rawSgst,
-      igst_amount_rupees: isStore2 ? Math.round(rawIgst / 100) : rawIgst,
-      taxable_amount_rupees: totalPriceRupees - taxRupees,
+      tax_amount: 0,
+      cgst_amount: 0,
+      sgst_amount: 0,
+      igst_amount: 0,
+      tax_amount_rupees: 0,
+      cgst_amount_rupees: 0,
+      sgst_amount_rupees: 0,
+      igst_amount_rupees: 0,
+      taxable_amount_rupees: totalPriceRupees,
       shipping_method: r.shipping_method || 'standard'
     };
   });
@@ -425,11 +429,15 @@ const getOrderById = async (orderIdOrNumber, storeId = null) => {
   order.subtotal_rupees = isStore2 ? Math.round(rawSubtotal / 100) : rawSubtotal;
   order.discount_total_rupees = isStore2 ? Math.round(rawDiscount / 100) : rawDiscount;
   order.shipping_charge_rupees = isStore2 ? Math.round(rawShipping / 100) : rawShipping;
-  order.tax_amount_rupees = isStore2 ? Math.round(rawTax / 100) : rawTax;
-  order.cgst_amount_rupees = isStore2 ? Math.round(rawCgst / 100) : rawCgst;
-  order.sgst_amount_rupees = isStore2 ? Math.round(rawSgst / 100) : rawSgst;
-  order.igst_amount_rupees = isStore2 ? Math.round(rawIgst / 100) : rawIgst;
-  order.taxable_amount_rupees = order.total_price_rupees - order.tax_amount_rupees;
+  order.tax_amount = 0;
+  order.cgst_amount = 0;
+  order.sgst_amount = 0;
+  order.igst_amount = 0;
+  order.tax_amount_rupees = 0;
+  order.cgst_amount_rupees = 0;
+  order.sgst_amount_rupees = 0;
+  order.igst_amount_rupees = 0;
+  order.taxable_amount_rupees = order.total_price_rupees;
   order.shipping_method = order.shipping_method || 'standard';
 
   // Fetch Order Items with product image
@@ -493,10 +501,14 @@ const getOrderById = async (orderIdOrNumber, storeId = null) => {
     variant_options: safeJsonParse(item.variant_options, null),
     unit_price_rupees: isStore2 ? Math.round((parseInt(item.unit_price, 10) || 0) / 100) : (parseInt(item.unit_price, 10) || 0),
     total_price_rupees: isStore2 ? Math.round((parseInt(item.total_price, 10) || 0) / 100) : (parseInt(item.total_price, 10) || 0),
-    // No invented defaults: an HSN that was never configured stays null, and a genuine 0% rate stays 0.
-    hsn_code: item.hsn_code || null,
-    tax_rate: item.tax_rate === null || item.tax_rate === undefined || !isFinite(parseFloat(item.tax_rate)) ? null : parseFloat(item.tax_rate),
-    tax_amount_rupees: isStore2 ? Math.round((parseInt(item.tax_amount, 10) || 0) / 100) : (parseInt(item.tax_amount, 10) || 0)
+    // GST is inactive: tax rates and amounts are suppressed
+    hsn_code: null,
+    tax_rate: null,
+    tax_amount: 0,
+    tax_amount_rupees: 0,
+    cgst_amount: 0,
+    sgst_amount: 0,
+    igst_amount: 0
   }));
 
   // Attach status history timeline
