@@ -922,6 +922,12 @@
                     <div class="admin-grid-2col">
                         <div>
                             <div class="retro-field">
+                                <label for="prod-title">Product Name <span style="color:red;">*</span></label>
+                                <input type="text" id="prod-title" class="retro-input"
+                                    placeholder="e.g. Cyberpunk Glitch Sticker" required>
+                                <small class="form-hint">The name customers will see on the storefront.</small>
+                            </div>
+                            <div class="retro-field">
                                 <label for="prod-admin-id">Admin Product ID <span style="color:red;">* (Mandatory &
                                         Unique)</span></label>
                                 <input type="text" id="prod-admin-id" class="retro-input"
@@ -936,13 +942,12 @@
                                 <small class="form-hint">Unique code used to identify and track this product or variant in inventory. Example: CK-ANI-001</small>
                             </div>
                             <div class="retro-field">
-                                <label for="prod-title">Product Name <span style="color:red;">*</span></label>
-                                <input type="text" id="prod-title" class="retro-input"
-                                    placeholder="e.g. Cyberpunk Glitch Sticker" required>
-                                <small class="form-hint">The name customers will see on the storefront.</small>
+                                <label for="prod-category">Category <span style="color:red;">*</span></label>
+                                <select id="prod-category" class="retro-input"></select>
+                                <small class="form-hint">Groups the product into a category on the storefront.</small>
                             </div>
                             <div class="retro-field">
-                                <label for="prod-desc">Full Description</label>
+                                <label for="prod-desc">Description</label>
                                 <textarea id="prod-desc" class="retro-input" rows="3"
                                     placeholder="Detailed product specifications, usage instructions, and background..."></textarea>
                                 <small class="form-hint">Product information shown to customers. Use this to describe features, materials, size, and usage.</small>
@@ -960,24 +965,26 @@
                                 <small class="form-hint">Optional original/reference price shown as strikethrough to indicate a discount. Example: ₹499 when selling price is ₹349.</small>
                             </div>
                             <div class="retro-field">
-                                <label for="prod-category">Category <span style="color:red;">*</span></label>
-                                <select id="prod-category" class="retro-input"></select>
-                                <small class="form-hint">Groups the product into a category on the storefront.</small>
-                            </div>
-                            <div class="retro-field">
-                                <label for="prod-tags">Search Tags</label>
+                                <label for="prod-tags">Tags</label>
                                 <input type="text" id="prod-tags" class="retro-input"
                                     placeholder="comma, separated, tags">
                                 <small class="form-hint">Comma-separated keywords to help customers find this product via storefront search.</small>
                             </div>
-                            <div class="retro-field" style="display: flex; flex-direction: column; gap: 4px; margin: 12px 0 6px 0; background: #fffbe6; border: 1.5px solid #ffe58f; padding: 8px 10px; border-radius: 4px;">
+                            <div class="retro-field" style="display: flex; flex-direction: column; gap: 4px; margin: 8px 0 6px 0; background: #eff6ff; border: 1.5px solid #bfdbfe; padding: 8px 10px; border-radius: 4px;">
+                                <div style="display: flex; align-items: center; gap: 8px;">
+                                    <input type="checkbox" id="prod-featured" style="width: 18px; height: 18px; cursor: pointer;">
+                                    <label for="prod-featured" style="margin: 0; cursor: pointer; font-weight: bold; font-size: 0.85rem; color: #1e40af;">✨ Featured (Showcase Highlight)</label>
+                                </div>
+                                <small class="form-hint" style="color: #1e3a8a; margin: 0 0 0 26px;">Highlights this product as a featured flagship item on the storefront.</small>
+                            </div>
+                            <div class="retro-field" style="display: flex; flex-direction: column; gap: 4px; margin: 6px 0 6px 0; background: #fffbe6; border: 1.5px solid #ffe58f; padding: 8px 10px; border-radius: 4px;">
                                 <div style="display: flex; align-items: center; gap: 8px;">
                                     <input type="checkbox" id="prod-is-best-seller" style="width: 18px; height: 18px; cursor: pointer;">
                                     <label for="prod-is-best-seller" style="margin: 0; cursor: pointer; font-weight: bold; font-size: 0.85rem; color: #ad6800;">🌟 Best Seller (Featured on Storefront Showcase)</label>
                                 </div>
                                 <small class="form-hint" style="color: #8c5300; margin: 0 0 0 26px;">Marks this product as a Best Seller. This is a product label/showcase filter, not a category.</small>
                             </div>
-                            <div class="retro-field" style="display: none; grid-template-columns: 1fr 1fr; gap: 10px; margin: 6px 0;">
+                            <div class="retro-field store-module-chipakk" style="display: none; grid-template-columns: 1fr 1fr; gap: 10px; margin: 6px 0;">
                                 <div>
                                     <label for="prod-hsn-code">HSN Code</label>
                                     <input type="text" id="prod-hsn-code" class="retro-input" inputmode="numeric" maxlength="8" placeholder="unset" autocomplete="off">
@@ -992,17 +999,25 @@
 
                         <div>
                             <div class="retro-field">
-                                <label for="prod-release-date">Scheduled Drop Release Date/Time</label>
+                                <label for="prod-active">Active <span style="color:red;">*</span></label>
+                                <select id="prod-active" class="retro-input">
+                                    <option value="true">Active (Available to Order)</option>
+                                    <option value="false">Inactive (Disabled / Off)</option>
+                                </select>
+                                <small class="form-hint">Controls whether this product is available and purchasable on the storefront.</small>
+                            </div>
+                            <div class="retro-field">
+                                <label for="prod-release-date">Scheduled Drop</label>
                                 <input type="datetime-local" id="prod-release-date" class="retro-input">
                                 <small style="font-size: 0.75rem; color: #555;">Leave blank to publish immediately as
                                     "Live Now". If set, stays "Upcoming" until release time.</small>
                             </div>
 
-                            <!-- Marshans Product Details (Short Description, Weight, 360 View, Dedicated LUMO Dark Image) -->
+                            <!-- Marshans Product Details (360 View, Dedicated LUMO Dark Image) -->
                             <div class="store-module-marshans" style="display: none; background: #fafafa; border: 1.5px solid #000; padding: 12px; margin-bottom: 15px;">
-                                <h4 style="font-size: 0.82rem; font-weight: 900; margin: 0 0 10px 0; text-transform: uppercase; color: #7c3aed;">🪐 Marshans Product Details</h4>
-                                <div class="retro-field" id="prod-generic-360-container">
-                                    <label for="prod-360-url">360° View Asset URL <small style="color: #666; font-weight: normal;">(Optional interactive 360 viewer link)</small></label>
+                                <h4 style="font-size: 0.82rem; font-weight: 900; margin: 0 0 10px 0; text-transform: uppercase; color: #7c3aed;">🪐 Marshans 3D &amp; Lighting Assets</h4>
+                                <div class="retro-field" id="prod-generic-360-container" style="margin-bottom: 0;">
+                                    <label for="prod-360-url">360° View URL <small style="color: #666; font-weight: normal;">(Optional interactive 360 viewer link)</small></label>
                                     <input type="text" id="prod-360-url" class="retro-input" placeholder="https://.../360-viewer or interactive iframe link">
                                     <small class="form-hint">Optional interactive 360° product view. Use only when a valid 360° asset or iframe link is available.</small>
                                 </div>
@@ -1016,11 +1031,11 @@
                                         <span style="font-size: 0.68rem; background: rgba(0, 229, 255, 0.15); color: #00e5ff; padding: 2px 8px; border-radius: 3px; font-weight: bold; border: 1px solid rgba(0, 229, 255, 0.4);">REQUIRED FOR LUMO</span>
                                     </div>
                                     <p style="font-size: 0.75rem; color: #cbd5e1; margin: 0 0 12px 0; line-height: 1.4;">
-                                        Upload the illuminated nighttime glow image. The common product images above represent the normal/light imagery.
+                                        Upload the illuminated nighttime glow image. The common product images below represent the primary and gallery imagery.
                                     </p>
 
                                     <div class="retro-field" style="margin-bottom: 0;">
-                                        <label for="prod-lumo-dark-image" style="color: #e2e8f0; font-size: 0.73rem; font-weight: bold;">LUMO Dark Mode Image <span style="color:#ff6b6b;">*</span></label>
+                                        <label for="prod-lumo-dark-image" style="color: #e2e8f0; font-size: 0.73rem; font-weight: bold;">LUMO Dark Image <span style="color:#ff6b6b;">*</span></label>
                                         <div style="display: flex; gap: 6px;">
                                             <input type="text" id="prod-lumo-dark-image" class="retro-input" placeholder="Image URL (Night Glow)" style="font-size: 0.75rem; background: #131b2e; color: #f8fafc; border-color: #334155;">
                                             <button type="button" class="retro-btn" id="prod-lumo-dark-upload-btn" style="padding: 4px 8px; font-size: 0.7rem; white-space: nowrap; background: #131b2e; color: #00e5ff; border-color: #00e5ff;">UPLOAD</button>
@@ -1032,15 +1047,6 @@
                                         </div>
                                     </div>
                                 </div>
-                            </div>
-
-                            <div class="retro-field">
-                                <label for="prod-active">Active Status <span style="color:red;">*</span></label>
-                                <select id="prod-active" class="retro-input">
-                                    <option value="true">Active (Available to Order)</option>
-                                    <option value="false">Inactive (Disabled / Off)</option>
-                                </select>
-                                <small class="form-hint">Controls whether this product is available and purchasable on the storefront.</small>
                             </div>
 
                             <!-- Dynamic Product Options & Variants Configuration (Store 1: CHIPAKK) -->
@@ -1072,7 +1078,7 @@
 
                             <!-- Image Management Component -->
                             <div class="retro-field">
-                                <label id="prod-images-label">Product Images <span style="color:red;">* (At least 1 image
+                                <label id="prod-images-label">Primary Image &amp; Gallery Images <span style="color:red;">* (At least 1 image
                                         required)</span></label>
                                 <small class="form-hint" style="margin-bottom: 6px;">Upload WebP, PNG, or JPEG product images. The image marked PRIMARY is the default image across the storefront; additional images appear in the customer gallery. Removing an image only deletes that image asset, not the product.</small>
                                 <div style="display: flex; gap: 8px;">

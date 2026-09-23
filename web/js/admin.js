@@ -270,6 +270,7 @@ function normalizeProduct(p) {
         scheduled_drop_time: p.scheduled_drop_time ? new Date(p.scheduled_drop_time).toISOString().slice(0, 16) : '',
         is_active: p.active === 1 || p.active === true || p.is_active === true,
         is_best_seller: p.is_best_seller === 1 || p.is_best_seller === true,
+        featured: p.featured === 1 || p.featured === true,
         view_360_url: p.view_360_url || null,
         lumo_light_image: p.lumo_light_image || null,
         lumo_dark_image: p.lumo_dark_image || null,
@@ -1720,6 +1721,7 @@ function renderProductsTable() {
                 <td><span class="admin-id-highlight">${escapeHtml(p.admin_id || p.sku)}</span></td>
                 <td>
                     <strong>${escapeHtml(p.title)}</strong>
+                    ${p.featured ? ' <span class="status-badge" style="background:#dbeafe; color:#1e40af; font-size:0.65rem; font-weight:900; border:1px solid #93c5fd; vertical-align:middle;">✨ FEATURED</span>' : ''}
                     ${p.is_best_seller ? ' <span class="status-badge" style="background:#fef08a; color:#854d0e; font-size:0.65rem; font-weight:900; border:1px solid #eab308; vertical-align:middle;">★ BEST SELLER</span>' : ''}
                     <br><small style="color:#666;">${escapeHtml(p.variant || 'Standard')}</small>
                 </td>
@@ -1791,7 +1793,7 @@ function updateLumoProductSectionVisibility() {
 
     const imgLabel = document.getElementById('prod-images-label');
     if (imgLabel) {
-        imgLabel.innerHTML = 'Product Images <span style="color:red;">* (At least 1 image required)</span>';
+        imgLabel.innerHTML = 'Primary Image &amp; Gallery Images <span style="color:red;">* (At least 1 image required)</span>';
     }
 }
 
@@ -1805,6 +1807,12 @@ function openProductForm(product = null) {
     editingProductId = product ? product.id : null;
     const adminIdVal = product ? (product.admin_id || product.admin_product_id || product.sku || '') : '';
     const titleVal = product ? (product.title || product.name || '') : '';
+    const prodFormBadge = document.getElementById('prod-form-header-badge');
+    if (prodFormBadge) {
+        prodFormBadge.textContent = activeStoreId === 2
+            ? '🪐 THE MARSHANS 3D PRODUCT CONFIGURATION'
+            : '🖨️ PRINT-ON-DEMAND PRODUCT CONFIGURATION';
+    }
     document.getElementById('prod-form-title').textContent = product ? `[EDIT ${activeStoreId === 2 ? '3D PRODUCT' : 'PRODUCT DROP'}: ${adminIdVal || product.id}]` : `[ADD NEW ${activeStoreId === 2 ? '3D PRODUCT' : 'PRODUCT DROP'}]`;
 
     document.getElementById('prod-admin-id').value = adminIdVal || `${defaultPrefix}-${String(products.length + 1).padStart(3, '0')}`;
@@ -1837,6 +1845,9 @@ function openProductForm(product = null) {
     }
     const tagsArr = Array.isArray(product?.tags) ? product.tags : (typeof product?.tags === 'string' ? (product.tags.startsWith('[') ? JSON.parse(product.tags || '[]') : product.tags.split(',').map(t => t.trim())) : []);
     document.getElementById('prod-tags').value = tagsArr.filter(Boolean).join(', ');
+    if (document.getElementById('prod-featured')) {
+        document.getElementById('prod-featured').checked = Boolean(product && (product.featured === 1 || product.featured === true));
+    }
     if (document.getElementById('prod-is-best-seller')) {
         document.getElementById('prod-is-best-seller').checked = Boolean(product && (product.is_best_seller === 1 || product.is_best_seller === true));
     }
@@ -1911,6 +1922,10 @@ function openProductForm(product = null) {
         tempProdVariants = [];
     }
     renderProductOptionsBuilder();
+    const optSec = document.getElementById('prod-dynamic-options-section');
+    if (optSec) {
+        optSec.style.display = activeStoreId === 2 ? 'none' : 'block';
+    }
 
     container.style.display = 'block';
     container.scrollIntoView({ behavior: 'smooth' });
@@ -2243,6 +2258,9 @@ async function saveProductForm() {
         document.getElementById('prod-is-best-seller')?.checked ||
         document.getElementById('prod-best-seller')?.checked
     );
+    const isFeatured = Boolean(
+        document.getElementById('prod-featured')?.checked
+    );
 
     const payload = {
         name: title,
@@ -2257,9 +2275,10 @@ async function saveProductForm() {
         scheduled_drop_time: document.getElementById('prod-release-date').value || null,
         active: document.getElementById('prod-active').value === 'true' ? 1 : 0,
         is_best_seller: isBestSeller,
+        featured: isFeatured ? 1 : 0,
         // empty string = clear (inherit from the category / store default); the API validates 4/6/8 digits and 0-100
-        hsn_code: document.getElementById('prod-hsn-code')?.value.trim() ?? '',
-        gst_rate: document.getElementById('prod-gst-rate')?.value.trim() ?? ''
+        hsn_code: activeStoreId === 1 ? (document.getElementById('prod-hsn-code')?.value.trim() ?? '') : '',
+        gst_rate: activeStoreId === 1 ? (document.getElementById('prod-gst-rate')?.value.trim() ?? '') : ''
     };
 
     if (activeStoreId === 2) {
