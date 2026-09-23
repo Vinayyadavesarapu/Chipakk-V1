@@ -16,29 +16,29 @@ const router = express.Router();
 router.use(verifyFirebaseToken);
 
 /**
- * Resolve Customer Identity & Enforce Admin Isolation
+ * Resolve Customer Identity
  * Auto-provisions customer in MySQL users table if not yet created.
  * GET /api/customer/me
+ *
+ * One Firebase identity can hold BOTH roles. is_admin only reports that the identity also appears in `admins`
+ * (so the UI can offer an "Open Admin Panel" link); it never replaces or blocks the customer account, and it grants
+ * nothing here -- every admin API is still gated separately by requireAdmin.
  */
 router.get('/me', async (req, res, next) => {
   try {
     const firebaseUid = req.user.uid;
     const email = req.user.email || '';
 
-    // Check if authenticated Firebase user is an Administrator
     const [adminRows] = await pool.execute(
       'SELECT id, role FROM admins WHERE (firebase_uid = ? OR (email IS NOT NULL AND LOWER(email) = LOWER(?))) AND active = 1 LIMIT 1',
       [firebaseUid, email]
     );
+    const isAdmin = !!(adminRows && adminRows.length > 0);
 
-    if (adminRows && adminRows.length > 0) {
-      return sendSuccess(res, { is_admin: true, is_customer: false }, 'Authenticated user is an administrator.');
-    }
-
-    // Resolve or auto-provision customer record in users table
+    // Resolve or auto-provision customer record in users table (admins included)
     const customer = await customerService.resolveOrCreateCustomer(req.user);
 
-    return sendSuccess(res, { is_admin: false, is_customer: true, customer }, 'Customer identity resolved successfully.');
+    return sendSuccess(res, { is_admin: isAdmin, is_customer: true, customer }, 'Customer identity resolved successfully.');
   } catch (error) {
     return next(error);
   }

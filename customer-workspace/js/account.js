@@ -1060,7 +1060,7 @@
   async function applyAuthState(user) {
     const authContainer = $("#authFormsContainer");
     const dashContainer = $("#accountDashboardContainer");
-    const adminContainer = $("#adminSessionContainer");
+    const adminLink = $("#accountAdminPanelLink");
 
     if (user) {
       // 1. Immediately hide and deactivate the unauthenticated login forms
@@ -1070,7 +1070,8 @@
       // 2. Pre-populate profile immediately from Firebase User object (zero lag)
       populateUserProfile(null, user);
 
-      // 3. Resolve customer identity or detect administrator privileges via /customer/me
+      // 3. Resolve the customer record via /customer/me. An administrator is also a customer (same Firebase
+      // identity, two roles): is_admin only decides whether to offer the Admin Panel link, never hides the account.
       let customerRecord = null;
       let isAdmin = false;
 
@@ -1089,22 +1090,8 @@
         console.warn("[CHIPAKK Account] Notice resolving customer session:", err?.message);
       }
 
-      if (isAdmin) {
-        // Authenticated user is an Administrator: show dedicated Admin Session Notice
-        if (dashContainer) dashContainer.style.display = "none";
-        if (adminContainer) {
-          adminContainer.style.display = "block";
-          const adminEmailEl = $("#adminSessionEmail");
-          if (adminEmailEl) {
-            adminEmailEl.textContent = user.email || "Administrator";
-          }
-        }
-        return;
-      }
-
-      // Authenticated user is a Customer: render Customer Dashboard
-      if (adminContainer) adminContainer.style.display = "none";
       if (dashContainer) dashContainer.style.display = "block";
+      if (adminLink) adminLink.style.display = isAdmin ? "inline-block" : "none";
 
       if (customerRecord) {
         populateUserProfile(customerRecord, user);
@@ -1114,7 +1101,7 @@
     } else {
       // User is logged out: restore clean unauthenticated login UI
       if (dashContainer) dashContainer.style.display = "none";
-      if (adminContainer) adminContainer.style.display = "none";
+      if (adminLink) adminLink.style.display = "none";
       if (authContainer) authContainer.style.display = "block";
       clearAuthErrors();
     }
@@ -1133,7 +1120,6 @@
     };
 
     $("#logoutBtn")?.addEventListener("click", handleSignOut);
-    $("#adminSignOutBtn")?.addEventListener("click", handleSignOut);
   }
 
   /* =========================================================
