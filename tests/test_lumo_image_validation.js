@@ -4,13 +4,13 @@
  *
  * Verifies:
  * 1. Dark image is required for LUMO products.
- * 2. Light image is required for LUMO products.
- * 3. Third/additional gallery image is optional for LUMO products.
- * 4. LUMO product can be saved with exactly 2 images (Dark + Light only).
+ * 2. Common image (Primary / Light) is required for all products including LUMO.
+ * 3. Additional gallery images are optional.
+ * 4. LUMO product can be saved with exactly 2 images (1 Common Light + 1 LUMO Dark only).
  * 5. Additional gallery images (3+ images) are preserved when present.
- * 6. Non-LUMO products (Store 1 & Store 2) still require at least 1 image.
+ * 6. Non-LUMO products (Store 1 & Store 2) require at least 1 common image and do not require dark image.
  * 7. Store 1 (CHIPAKK) is completely unaffected.
- * 8. Backend marshansProductService primary_image_url resolves correctly to lumo images.
+ * 8. Backend marshansProductService primary_image_url and lumo_light_image resolve correctly.
  */
 
 const assert = require('assert');
@@ -46,8 +46,7 @@ function simulateSaveValidation({
   category,
   cleanImagePayload = [],
   editingProductId = null,
-  lumoDarkImg = '',
-  lumoLightImg = ''
+  lumoDarkImg = ''
 }) {
   if (!adminId || !title || isNaN(price) || !category) {
     return { error: 'Please complete mandatory fields (Admin ID, Product Name, Price, Category)!' };
@@ -55,23 +54,26 @@ function simulateSaveValidation({
 
   const isLumo = activeStoreId === 2 && (category || '').trim().toUpperCase() === 'LUMO';
 
+  if (cleanImagePayload.length === 0 && !editingProductId) {
+    return { error: 'Please provide at least one product image.' };
+  }
+
   if (isLumo) {
     if (!lumoDarkImg) {
       return { error: 'LUMO Dark Mode Product Image is required for LUMO products!' };
     }
-    if (!lumoLightImg) {
-      return { error: 'LUMO Light Mode Product Image is required for LUMO products!' };
-    }
-  } else {
-    if (cleanImagePayload.length === 0 && !editingProductId) {
-      return { error: 'Please provide at least one product image.' };
-    }
   }
 
-  return { success: true, isLumo, cleanImagePayload, lumoDarkImg, lumoLightImg };
+  return {
+    success: true,
+    isLumo,
+    cleanImagePayload,
+    lumoDarkImg,
+    lumoLightImg: isLumo ? (cleanImagePayload[0] || null) : null
+  };
 }
 
-// Scenario 1: LUMO missing Dark image
+// Scenario 1: LUMO missing common primary image (cleanImagePayload empty)
 const res1 = simulateSaveValidation({
   activeStoreId: 2,
   adminId: 'LUMO-001',
@@ -79,49 +81,45 @@ const res1 = simulateSaveValidation({
   price: 2999,
   category: 'LUMO',
   cleanImagePayload: [],
-  lumoDarkImg: '',
-  lumoLightImg: 'https://example.com/light.webp'
+  lumoDarkImg: 'https://example.com/dark.webp'
 });
-check('Scenario 1: LUMO missing Dark image is blocked', res1.error === 'LUMO Dark Mode Product Image is required for LUMO products!');
+check('Scenario 1: LUMO missing common image is blocked', res1.error === 'Please provide at least one product image.');
 
-// Scenario 2: LUMO missing Light image
+// Scenario 2: LUMO missing Dark image
 const res2 = simulateSaveValidation({
   activeStoreId: 2,
   adminId: 'LUMO-001',
   title: 'Lumo Cyber Orb',
   price: 2999,
   category: 'LUMO',
-  cleanImagePayload: [],
-  lumoDarkImg: 'https://example.com/dark.webp',
-  lumoLightImg: ''
+  cleanImagePayload: ['https://example.com/light.webp'],
+  lumoDarkImg: ''
 });
-check('Scenario 2: LUMO missing Light image is blocked', res2.error === 'LUMO Light Mode Product Image is required for LUMO products!');
+check('Scenario 2: LUMO missing Dark image is blocked', res2.error === 'LUMO Dark Mode Product Image is required for LUMO products!');
 
-// Scenario 3: LUMO with Dark + Light only (0 gallery images, exactly 2 images)
+// Scenario 3: LUMO with 1 Common Image + 1 Dark Image (exactly 2 images total)
 const res3 = simulateSaveValidation({
   activeStoreId: 2,
   adminId: 'LUMO-001',
   title: 'Lumo Cyber Orb',
   price: 2999,
   category: 'LUMO',
-  cleanImagePayload: [],
-  lumoDarkImg: 'https://example.com/dark.webp',
-  lumoLightImg: 'https://example.com/light.webp'
+  cleanImagePayload: ['https://example.com/light.webp'],
+  lumoDarkImg: 'https://example.com/dark.webp'
 });
-check('Scenario 3: LUMO saves successfully with Dark + Light only (0 gallery images)', res3.success === true);
+check('Scenario 3: LUMO saves successfully with exactly 2 images (1 Common Light + 1 Dark)', res3.success === true && res3.lumoLightImg === 'https://example.com/light.webp' && res3.lumoDarkImg === 'https://example.com/dark.webp');
 
-// Scenario 4: LUMO with Dark + Light AND additional gallery images (3+ images)
+// Scenario 4: LUMO with Dark + Common Light AND additional gallery images (3+ images)
 const res4 = simulateSaveValidation({
   activeStoreId: 2,
   adminId: 'LUMO-001',
   title: 'Lumo Cyber Orb',
   price: 2999,
   category: 'LUMO',
-  cleanImagePayload: ['https://example.com/extra-angle.webp'],
-  lumoDarkImg: 'https://example.com/dark.webp',
-  lumoLightImg: 'https://example.com/light.webp'
+  cleanImagePayload: ['https://example.com/light.webp', 'https://example.com/extra-angle.webp'],
+  lumoDarkImg: 'https://example.com/dark.webp'
 });
-check('Scenario 4: LUMO preserves additional gallery images when provided', res4.success === true && res4.cleanImagePayload.length === 1);
+check('Scenario 4: LUMO preserves additional gallery images when provided', res4.success === true && res4.cleanImagePayload.length === 2);
 
 // Scenario 5: Non-LUMO product in Store 2 missing images is blocked
 const res5 = simulateSaveValidation({
@@ -131,13 +129,24 @@ const res5 = simulateSaveValidation({
   price: 1499,
   category: 'DESK PADS',
   cleanImagePayload: [],
-  lumoDarkImg: '',
-  lumoLightImg: ''
+  lumoDarkImg: ''
 });
-check('Scenario 5: Non-LUMO Store 2 product missing gallery image is blocked', res5.error === 'Please provide at least one product image.');
+check('Scenario 5: Non-LUMO Store 2 product missing image is blocked', res5.error === 'Please provide at least one product image.');
 
-// Scenario 6: Store 1 (CHIPAKK) missing images is blocked
+// Scenario 6: Non-LUMO product in Store 2 with image saves without requiring dark image
 const res6 = simulateSaveValidation({
+  activeStoreId: 2,
+  adminId: 'M-001',
+  title: 'Marshans Desk Mat',
+  price: 1499,
+  category: 'DESK PADS',
+  cleanImagePayload: ['https://example.com/desk-mat.webp'],
+  lumoDarkImg: ''
+});
+check('Scenario 6: Non-LUMO Store 2 product saves without requiring dark image', res6.success === true);
+
+// Scenario 7: Store 1 (CHIPAKK) missing images is blocked
+const res7 = simulateSaveValidation({
   activeStoreId: 1,
   adminId: 'CK-001',
   title: 'Cyber Cat Sticker',
@@ -145,10 +154,10 @@ const res6 = simulateSaveValidation({
   category: 'ANIME',
   cleanImagePayload: []
 });
-check('Scenario 6: Store 1 (CHIPAKK) product missing image is blocked', res6.error === 'Please provide at least one product image.');
+check('Scenario 7: Store 1 (CHIPAKK) product missing image is blocked', res7.error === 'Please provide at least one product image.');
 
-// Scenario 7: Store 1 (CHIPAKK) with valid image saves normally
-const res7 = simulateSaveValidation({
+// Scenario 8: Store 1 (CHIPAKK) with valid image saves normally
+const res8 = simulateSaveValidation({
   activeStoreId: 1,
   adminId: 'CK-001',
   title: 'Cyber Cat Sticker',
@@ -156,7 +165,7 @@ const res7 = simulateSaveValidation({
   category: 'ANIME',
   cleanImagePayload: ['https://example.com/cat.webp']
 });
-check('Scenario 7: Store 1 (CHIPAKK) product with image saves normally', res7.success === true);
+check('Scenario 8: Store 1 (CHIPAKK) product with image saves normally', res8.success === true);
 
 // -----------------------------------------------------------------------------
 // 2. UNIT TESTS: NORMALIZATION & FORM INITIALIZATION
@@ -169,10 +178,10 @@ function simulateNormalizeProduct(p) {
 
   let imagesList = [...explicitGalleryImages];
   if (imagesList.length === 0) {
-    if (p.lumo_light_image || p.lumo_dark_image) {
-      imagesList = [p.lumo_light_image, p.lumo_dark_image].filter(Boolean);
-    } else if (p.primary_image_url) {
+    if (p.primary_image_url) {
       imagesList = [p.primary_image_url];
+    } else if (p.lumo_light_image || p.lumo_dark_image) {
+      imagesList = [p.lumo_light_image, p.lumo_dark_image].filter(Boolean);
     }
   }
 
@@ -186,12 +195,9 @@ function simulateNormalizeProduct(p) {
 }
 
 function simulateOpenProductForm(product, activeStoreId = 2) {
-  const isLumoProduct = activeStoreId === 2 && ((product?.category || product?.category_name || '').trim().toUpperCase() === 'LUMO');
-  const sourceImages = isLumoProduct ? (product?.gallery_images || []) : (product?.images || []);
-
   let tempProdImages = [];
-  if (product && Array.isArray(sourceImages) && sourceImages.length > 0) {
-    tempProdImages = sourceImages.map(img => {
+  if (product && Array.isArray(product.images) && product.images.length > 0) {
+    tempProdImages = product.images.map(img => {
       if (typeof img === 'object' && img !== null) {
         return {
           id: img.id || null,
@@ -202,30 +208,31 @@ function simulateOpenProductForm(product, activeStoreId = 2) {
       }
       return { id: null, url: String(img || ''), is_primary: false };
     }).filter(item => Boolean(item.url));
-  } else if (product && product.primary_image_url && !isLumoProduct) {
-    tempProdImages = [{ id: null, url: product.primary_image_url, is_primary: true }];
+  } else if (product && (product.primary_image_url || product.lumo_light_image)) {
+    tempProdImages = [{ id: null, url: product.primary_image_url || product.lumo_light_image, is_primary: true }];
   } else {
     tempProdImages = [];
   }
-  return { tempProdImages, isLumoProduct };
+  const lumoDarkImg = activeStoreId === 2 ? (product?.lumo_dark_image || '') : '';
+  return { tempProdImages, lumoDarkImg };
 }
 
-// Test normalization with LUMO Dark+Light only (no gallery images)
+// Test normalization with LUMO Dark+Light
 const lumoRaw = {
   id: 101,
   category: 'LUMO',
   lumo_light_image: 'https://example.com/lumo-light.webp',
   lumo_dark_image: 'https://example.com/lumo-dark.webp',
-  images: []
+  images: ['https://example.com/lumo-light.webp']
 };
 
 const normalizedLumo = simulateNormalizeProduct(lumoRaw);
-check('Scenario 8: Normalized LUMO displays dual images in catalog display', normalizedLumo.images.length === 2);
-check('Scenario 9: Normalized LUMO preserves empty gallery_images array', normalizedLumo.gallery_images.length === 0);
+check('Scenario 9: Normalized LUMO displays primary image', normalizedLumo.images.length === 1);
 
-// Test opening form for LUMO product with no gallery images
+// Test opening form for LUMO product
 const formInitLumo = simulateOpenProductForm(normalizedLumo, 2);
-check('Scenario 10: LUMO form initializes tempProdImages as empty (no fake 3rd image)', formInitLumo.tempProdImages.length === 0);
+check('Scenario 10: LUMO form initializes common tempProdImages correctly', formInitLumo.tempProdImages.length === 1);
+check('Scenario 11: LUMO form initializes lumoDarkImg correctly', formInitLumo.lumoDarkImg === 'https://example.com/lumo-dark.webp');
 
 // Test opening form for Store 1 product
 const store1Prod = {
@@ -235,7 +242,8 @@ const store1Prod = {
   images: [{ image_url: 'https://example.com/sticker.webp', is_primary: true }]
 };
 const formInitStore1 = simulateOpenProductForm(simulateNormalizeProduct(store1Prod), 1);
-check('Scenario 11: Store 1 product initializes tempProdImages correctly', formInitStore1.tempProdImages.length === 1);
+check('Scenario 12: Store 1 product initializes tempProdImages correctly', formInitStore1.tempProdImages.length === 1);
+check('Scenario 13: Store 1 product has no lumoDarkImg', formInitStore1.lumoDarkImg === '');
 
 // -----------------------------------------------------------------------------
 // 3. INTEGRATION TEST: BACKEND SERVICE VERIFICATION
@@ -259,26 +267,15 @@ async function runBackendIntegrationTest() {
         };
       };
 
-      const simLumoNoGallery = formatProductOutput({
+      const simLumo = formatProductOutput({
         id: 99,
         lumo_light_image: 'https://example.com/lumo-light.webp',
         lumo_dark_image: 'https://example.com/lumo-dark.webp',
         primary_image_url: null
-      }, []);
+      }, [{ image_url: 'https://example.com/lumo-light.webp', is_primary: true }]);
 
-      check('Scenario 12: Backend formatProductOutput falls back to lumo_light_image when images is empty',
-        simLumoNoGallery.primary_image_url === 'https://example.com/lumo-light.webp'
-      );
-
-      const simLumoWithGallery = formatProductOutput({
-        id: 99,
-        lumo_light_image: 'https://example.com/lumo-light.webp',
-        lumo_dark_image: 'https://example.com/lumo-dark.webp',
-        primary_image_url: null
-      }, [{ image_url: 'https://example.com/gallery-1.webp', is_primary: true }]);
-
-      check('Scenario 13: Backend formatProductOutput uses explicit primary gallery image when provided',
-        simLumoWithGallery.primary_image_url === 'https://example.com/gallery-1.webp'
+      check('Scenario 14: Backend formatProductOutput uses explicit primary common image',
+        simLumo.primary_image_url === 'https://example.com/lumo-light.webp'
       );
       return;
     }
@@ -296,29 +293,29 @@ async function runBackendIntegrationTest() {
     }
     const lumoCatId = catRows[0].id;
 
-    // Test saving LUMO product with exactly 2 images: Dark + Light only, images: []
+    // Test saving LUMO product with exactly 2 images: 1 Common Light image + 1 Dark image
     const createdProduct = await marshansProductService.createProduct({
       admin_product_id: 'TEST-LUMO-002',
       name: 'Test LUMO Neon Hex',
       category_id: lumoCatId,
+      category_name: 'LUMO',
       price: 499900,
       lumo_dark_image: 'https://example.com/lumo-dark-test.webp',
-      lumo_light_image: 'https://example.com/lumo-light-test.webp',
-      images: [] // Exactly 0 extra gallery images
+      images: ['https://example.com/lumo-light-test.webp'] // Exactly 1 common image acting as Light
     });
 
-    check('Scenario 12: Backend creates LUMO product with Dark + Light only', createdProduct && createdProduct.id > 0);
+    check('Scenario 14: Backend creates LUMO product with Common Light + Dark only', createdProduct && createdProduct.id > 0);
 
     // Fetch the product back
     const fetchedProduct = await marshansProductService.getProductById(createdProduct.id);
-    check('Scenario 13: Backend preserves lumo_dark_image', fetchedProduct.lumo_dark_image === 'https://example.com/lumo-dark-test.webp');
-    check('Scenario 14: Backend preserves lumo_light_image', fetchedProduct.lumo_light_image === 'https://example.com/lumo-light-test.webp');
-    check('Scenario 15: Backend primary_image_url falls back to lumo_light_image', fetchedProduct.primary_image_url === 'https://example.com/lumo-light-test.webp');
-    check('Scenario 16: Backend images array is empty (no fake third image stored)', Array.isArray(fetchedProduct.images) && fetchedProduct.images.length === 0);
+    check('Scenario 15: Backend preserves lumo_dark_image', fetchedProduct.lumo_dark_image === 'https://example.com/lumo-dark-test.webp');
+    check('Scenario 16: Backend automatically populated lumo_light_image from primary common image', fetchedProduct.lumo_light_image === 'https://example.com/lumo-light-test.webp');
+    check('Scenario 17: Backend primary_image_url matches common light image', fetchedProduct.primary_image_url === 'https://example.com/lumo-light-test.webp');
+    check('Scenario 18: Backend images array has exactly 1 common image', Array.isArray(fetchedProduct.images) && fetchedProduct.images.length === 1);
 
     // Clean up test product
     await pool.execute('DELETE FROM marshans_products WHERE id = ?', [createdProduct.id]);
-    check('Scenario 17: Test product cleaned up successfully', true);
+    check('Scenario 19: Test product cleaned up successfully', true);
 
   } catch (err) {
     console.error('Backend integration error:', err);

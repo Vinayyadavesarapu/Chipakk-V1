@@ -89,13 +89,12 @@ function createAccountDomSimulator() {
 
 console.log('--- Domain 1: Customer Auth UI State Machine ---');
 
-runTest('1.1 Account HTML contains authFormsContainer, accountDashboardContainer, and adminSessionContainer', () => {
+runTest('1.1 Account HTML contains authFormsContainer, accountDashboardContainer, and the small admin-panel link (no blocking admin card)', () => {
   const accountHtml = fs.readFileSync(path.join(__dirname, '../customer-workspace/account.html'), 'utf8');
   assert.ok(accountHtml.includes('id="authFormsContainer"'), 'authFormsContainer must exist in account.html');
   assert.ok(accountHtml.includes('id="accountDashboardContainer"'), 'accountDashboardContainer must exist in account.html');
-  assert.ok(accountHtml.includes('id="adminSessionContainer"'), 'adminSessionContainer must exist in account.html');
-  assert.ok(accountHtml.includes('id="adminPortalLink"'), 'adminPortalLink must exist in adminSessionContainer');
-  assert.ok(accountHtml.includes('id="adminSignOutBtn"'), 'adminSignOutBtn must exist in adminSessionContainer');
+  assert.ok(accountHtml.includes('id="accountAdminPanelLink"'), 'accountAdminPanelLink must exist in account.html');
+  assert.ok(!accountHtml.includes('id="adminSessionContainer"'), 'the blocking "Admin Session Active" card must not exist -- an admin is also a customer');
 });
 
 runTest('1.2 Account JS handleGoogleAuth triggers immediate applyAuthState and checkRedirectAfterAuth', () => {
@@ -151,44 +150,31 @@ runTest('1.3 Customer Sign-In Flow: Login form hidden immediately, dashboard dis
   assert.strictEqual(sim.elements.accountUserDisplayName.textContent, 'Priya Sharma');
 });
 
-runTest('1.4 Admin Sign-In Flow: Login form is NOT visible; Admin notice is displayed cleanly', () => {
+runTest('1.4 Admin Sign-In Flow: an admin is ALSO a customer -- login form hidden, customer dashboard shown, admin link offered', () => {
   const sim = createAccountDomSimulator();
-  const adminUser = {
-    uid: 'admin_uid_789',
-    email: 'vinay@chipakk.shop',
-    displayName: 'Vinay Admin'
-  };
+  sim.elements.accountAdminPanelLink = { id: 'accountAdminPanelLink', style: { display: 'none' } };
+  const adminUser = { uid: 'admin_uid_789', email: 'vinay@chipakk.shop', displayName: 'Vinay Admin' };
 
+  // Mirrors account.js applyAuthState(); the REAL code path is exercised in tests/test_admin_customer_dual_role.js
   function applyState(user, meData) {
     const authC = sim.getElementById('authFormsContainer');
     const dashC = sim.getElementById('accountDashboardContainer');
-    const adminC = sim.getElementById('adminSessionContainer');
-
+    const linkC = sim.getElementById('accountAdminPanelLink');
     if (user) {
       authC.style.display = 'none';
-      if (meData && meData.is_admin) {
-        dashC.style.display = 'none';
-        adminC.style.display = 'block';
-        sim.getElementById('adminSessionEmail').textContent = user.email;
-        return;
-      }
-      adminC.style.display = 'none';
       dashC.style.display = 'block';
+      linkC.style.display = meData && meData.is_admin ? 'inline-block' : 'none';
     } else {
       dashC.style.display = 'none';
-      adminC.style.display = 'none';
+      linkC.style.display = 'none';
       authC.style.display = 'block';
     }
   }
 
-  // Admin signs in via Google on customer portal
-  applyState(adminUser, { is_admin: true, is_customer: false });
-
-  // Critical assertion: Login form must NEVER remain visible underneath!
+  applyState(adminUser, { is_admin: true, is_customer: true });
   assert.strictEqual(sim.elements.authFormsContainer.style.display, 'none', 'Auth container must NOT remain visible for admin');
-  assert.strictEqual(sim.elements.adminSessionContainer.style.display, 'block', 'Admin session container must be active');
-  assert.strictEqual(sim.elements.accountDashboardContainer.style.display, 'none', 'Customer dashboard must be hidden for admin');
-  assert.strictEqual(sim.elements.adminSessionEmail.textContent, 'vinay@chipakk.shop');
+  assert.strictEqual(sim.elements.accountDashboardContainer.style.display, 'block', 'Customer dashboard must be visible for an admin who is also a customer');
+  assert.strictEqual(sim.elements.accountAdminPanelLink.style.display, 'inline-block', 'Admin panel link offered');
 });
 
 runTest('1.5 Clean Sign-Out returns user to unauthenticated state with forms restored', () => {

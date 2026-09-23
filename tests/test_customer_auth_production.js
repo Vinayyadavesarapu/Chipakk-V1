@@ -5,7 +5,7 @@
  * Verifies Scenarios A through O:
  *   [A] Unauthenticated requests to /api/customer/me rejected with HTTP 401
  *   [B] Malformed Bearer header rejected with HTTP 401
- *   [C] Admin isolation: Admin user calling /api/customer/me returns { is_admin: true, is_customer: false }
+ *   [C] Dual role: an admin calling /api/customer/me returns { is_admin: true, is_customer: true, customer }
  *   [D] First-time customer auto-provisioning: /api/customer/me inserts row in users table with id
  *   [E] Idempotency: subsequent calls to /api/customer/me return existing user without duplicates
  *   [F] Email linking: existing guest email in users table is bound to new Firebase UID
@@ -187,9 +187,9 @@ async function runAllTests() {
     assert.strictEqual(adminRows.length, 1, 'Admin must be recognized');
     assert.strictEqual(adminRows[0].role, 'super_admin');
     // Admin must NOT be resolved as customer
-    const responsePayload = { is_admin: true, is_customer: false };
+    const responsePayload = { is_admin: true, is_customer: true };
     assert.strictEqual(responsePayload.is_admin, true);
-    assert.strictEqual(responsePayload.is_customer, false);
+    assert.strictEqual(responsePayload.is_customer, true);
   });
 
   // [D] First-time customer auto-provisioning

@@ -991,111 +991,44 @@
                         </div>
 
                         <div>
-                            <div class="retro-field store-module-chipakk">
+                            <div class="retro-field">
                                 <label for="prod-release-date">Scheduled Drop Release Date/Time</label>
                                 <input type="datetime-local" id="prod-release-date" class="retro-input">
                                 <small style="font-size: 0.75rem; color: #555;">Leave blank to publish immediately as
                                     "Live Now". If set, stays "Upcoming" until release time.</small>
                             </div>
 
-                            <!-- 3D Print Product Specification & Multi-Material Fields (Marshans Only) -->
+                            <!-- Marshans Product Details (Short Description, Weight, 360 View, Dedicated LUMO Dark Image) -->
                             <div class="store-module-marshans" style="display: none; background: #fafafa; border: 1.5px solid #000; padding: 12px; margin-bottom: 15px;">
-                                <h4 style="font-size: 0.82rem; font-weight: 900; margin: 0 0 10px 0; text-transform: uppercase; color: #7c3aed;">⚙️ 3D Print Specifications & Mappings</h4>
-                                <div class="retro-field">
-                                    <label for="prod-short-desc">Short Summary / Tagline</label>
-                                    <input type="text" id="prod-short-desc" class="retro-input" placeholder="e.g. Ultra high-detail resin miniature or functional bracket">
-                                </div>
-                                <div class="admin-grid-2col" style="gap: 10px;">
-                                    <div class="retro-field">
-                                        <label for="prod-weight-grams">Weight (grams)</label>
-                                        <input type="number" id="prod-weight-grams" class="retro-input" placeholder="e.g. 150" min="0" step="any">
-                                    </div>
-                                    <div class="retro-field">
-                                        <label for="prod-dimensions-mm">Dimensions (L×W×H mm)</label>
-                                        <input type="text" id="prod-dimensions-mm" class="retro-input" placeholder="e.g. 120 x 80 x 45 mm">
-                                    </div>
-                                </div>
-                                <div class="retro-field">
-                                    <label for="prod-production-notes">Print Notes & Machine Specs</label>
-                                    <input type="text" id="prod-production-notes" class="retro-input" placeholder="e.g. 0.20mm layer height, 3 walls, 20% gyroid infill">
-                                </div>
-                                <div class="retro-field">
-                                    <label>Supported Materials (Multi-Select)</label>
-                                    <div id="prod-materials-checkboxes" style="max-height: 120px; overflow-y: auto; background: #fff; border: 1.5px solid #ccc; padding: 6px; display: flex; flex-direction: column; gap: 4px;">
-                                        <!-- Injected dynamically -->
-                                    </div>
-                                </div>
-                                <div class="retro-field">
-                                    <label>Supported Finishing Options (Multi-Select)</label>
-                                    <div id="prod-finishing-checkboxes" style="max-height: 120px; overflow-y: auto; background: #fff; border: 1.5px solid #ccc; padding: 6px; display: flex; flex-direction: column; gap: 4px;">
-                                        <!-- Injected dynamically -->
-                                    </div>
-                                </div>
+                                <h4 style="font-size: 0.82rem; font-weight: 900; margin: 0 0 10px 0; text-transform: uppercase; color: #7c3aed;">🪐 Marshans Product Details</h4>
                                 <div class="retro-field" id="prod-generic-360-container">
                                     <label for="prod-360-url">360° View Asset URL <small style="color: #666; font-weight: normal;">(Optional interactive 360 viewer link)</small></label>
                                     <input type="text" id="prod-360-url" class="retro-input" placeholder="https://.../360-viewer or interactive iframe link">
                                     <small class="form-hint">Optional interactive 360° product view. Use only when a valid 360° asset or iframe link is available.</small>
                                 </div>
 
-                                <!-- LUMO Experience Assets (Light + Dark Mode) -->
+                                <!-- LUMO Dark Mode Asset (Dedicated Dark Image Only) -->
                                 <div id="lumo-product-assets-section" style="display: none; margin-top: 14px; border: 2px solid #00e5ff; background: #0a0f1d; padding: 14px; border-radius: 4px; box-shadow: 0 0 15px rgba(0, 229, 255, 0.15);">
                                     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; border-bottom: 1px solid rgba(0, 229, 255, 0.3); padding-bottom: 8px;">
                                         <h4 style="margin: 0; color: #00e5ff; font-family: monospace; font-size: 0.9rem; letter-spacing: 1px; display: flex; align-items: center; gap: 8px;">
-                                            <span>💡</span> LUMO EXPERIENCE ASSETS (LIGHT + DARK MODE)
+                                            <span>🌙</span> LUMO DARK IMAGE (GLOW)
                                         </h4>
                                         <span style="font-size: 0.68rem; background: rgba(0, 229, 255, 0.15); color: #00e5ff; padding: 2px 8px; border-radius: 3px; font-weight: bold; border: 1px solid rgba(0, 229, 255, 0.4);">REQUIRED FOR LUMO</span>
                                     </div>
                                     <p style="font-size: 0.75rem; color: #cbd5e1; margin: 0 0 12px 0; line-height: 1.4;">
-                                        LUMO ambient lamps require dual day/night aesthetics. Configure daytime off and nighttime illuminated glow assets.
+                                        Upload the illuminated nighttime glow image. The common product images above represent the normal/light imagery.
                                     </p>
 
-                                    <div class="admin-grid-2col" style="gap: 12px;">
-                                        <!-- LIGHT MODE PANEL -->
-                                        <div style="background: #ffffff; color: #1e293b; padding: 12px; border: 1.5px solid #cbd5e1; border-radius: 4px;">
-                                            <div style="font-weight: 800; font-size: 0.78rem; margin-bottom: 8px; color: #0f172a; display: flex; align-items: center; gap: 6px;">
-                                                <span>☀️</span> LIGHT MODE ASSETS
-                                            </div>
-                                            <div class="retro-field" style="margin-bottom: 8px;">
-                                                <label for="prod-lumo-light-image" style="color: #1e293b; font-size: 0.73rem; font-weight: bold;">LUMO Light Mode Image <span style="color:red;">*</span></label>
-                                                <div style="display: flex; gap: 6px;">
-                                                    <input type="text" id="prod-lumo-light-image" class="retro-input" placeholder="Image URL (Daytime)" style="font-size: 0.75rem; background: #f8fafc; color: #0f172a; border-color: #94a3b8;">
-                                                    <button type="button" class="retro-btn" id="prod-lumo-light-upload-btn" style="padding: 4px 8px; font-size: 0.7rem; white-space: nowrap; background: #e2e8f0; color: #0f172a; border-color: #94a3b8;">UPLOAD</button>
-                                                </div>
-                                                <input type="file" id="prod-lumo-light-file" accept="image/*" style="display: none;">
-                                                <small class="form-hint" style="color: #64748b;">Product image used for the Light (daytime / unlit) appearance.</small>
-                                                <div id="prod-lumo-light-preview-wrap" style="margin-top: 6px; display: none; text-align: center; background: #f1f5f9; padding: 4px; border: 1px dashed #cbd5e1; border-radius: 3px;">
-                                                    <img id="prod-lumo-light-preview" src="" alt="Light Mode Preview" style="max-height: 80px; max-width: 100%; object-fit: contain;">
-                                                </div>
-                                            </div>
-                                            <div class="retro-field" style="margin-bottom: 0;">
-                                                <label for="prod-lumo-light-360" style="color: #1e293b; font-size: 0.73rem; font-weight: bold;">Light Mode 360° View URL <small style="color: #64748b; font-weight: normal;">(Optional)</small></label>
-                                                <input type="text" id="prod-lumo-light-360" class="retro-input" placeholder="https://.../light-360" style="font-size: 0.75rem; background: #f8fafc; color: #0f172a; border-color: #94a3b8;">
-                                                <small class="form-hint" style="color: #64748b;">Optional 360° view for the Light appearance.</small>
-                                            </div>
+                                    <div class="retro-field" style="margin-bottom: 0;">
+                                        <label for="prod-lumo-dark-image" style="color: #e2e8f0; font-size: 0.73rem; font-weight: bold;">LUMO Dark Mode Image <span style="color:#ff6b6b;">*</span></label>
+                                        <div style="display: flex; gap: 6px;">
+                                            <input type="text" id="prod-lumo-dark-image" class="retro-input" placeholder="Image URL (Night Glow)" style="font-size: 0.75rem; background: #131b2e; color: #f8fafc; border-color: #334155;">
+                                            <button type="button" class="retro-btn" id="prod-lumo-dark-upload-btn" style="padding: 4px 8px; font-size: 0.7rem; white-space: nowrap; background: #131b2e; color: #00e5ff; border-color: #00e5ff;">UPLOAD</button>
                                         </div>
-
-                                        <!-- DARK MODE PANEL -->
-                                        <div style="background: #090d16; color: #f8fafc; padding: 12px; border: 1.5px solid #1e293b; border-radius: 4px; box-shadow: inset 0 0 10px rgba(0, 229, 255, 0.1);">
-                                            <div style="font-weight: 800; font-size: 0.78rem; margin-bottom: 8px; color: #00e5ff; display: flex; align-items: center; gap: 6px;">
-                                                <span>🌙</span> DARK MODE ASSETS (GLOW)
-                                            </div>
-                                            <div class="retro-field" style="margin-bottom: 8px;">
-                                                <label for="prod-lumo-dark-image" style="color: #e2e8f0; font-size: 0.73rem; font-weight: bold;">LUMO Dark Mode Image <span style="color:#ff6b6b;">*</span></label>
-                                                <div style="display: flex; gap: 6px;">
-                                                    <input type="text" id="prod-lumo-dark-image" class="retro-input" placeholder="Image URL (Night Glow)" style="font-size: 0.75rem; background: #131b2e; color: #f8fafc; border-color: #334155;">
-                                                    <button type="button" class="retro-btn" id="prod-lumo-dark-upload-btn" style="padding: 4px 8px; font-size: 0.7rem; white-space: nowrap; background: #131b2e; color: #00e5ff; border-color: #00e5ff;">UPLOAD</button>
-                                                </div>
-                                                <input type="file" id="prod-lumo-dark-file" accept="image/*" style="display: none;">
-                                                <small class="form-hint" style="color: #94a3b8;">Product image used for the Dark (nighttime / illuminated glow) appearance.</small>
-                                                <div id="prod-lumo-dark-preview-wrap" style="margin-top: 6px; display: none; text-align: center; background: #040810; padding: 4px; border: 1px dashed #00e5ff; border-radius: 3px;">
-                                                    <img id="prod-lumo-dark-preview" src="" alt="Dark Mode Preview" style="max-height: 80px; max-width: 100%; object-fit: contain; filter: drop-shadow(0 0 6px rgba(0, 229, 255, 0.6));">
-                                                </div>
-                                            </div>
-                                            <div class="retro-field" style="margin-bottom: 0;">
-                                                <label for="prod-lumo-dark-360" style="color: #e2e8f0; font-size: 0.73rem; font-weight: bold;">Dark Mode 360° View URL <small style="color: #94a3b8; font-weight: normal;">(Optional)</small></label>
-                                                <input type="text" id="prod-lumo-dark-360" class="retro-input" placeholder="https://.../dark-360" style="font-size: 0.75rem; background: #131b2e; color: #f8fafc; border-color: #334155;">
-                                                <small class="form-hint" style="color: #94a3b8;">Optional 360° view for the Dark appearance.</small>
-                                            </div>
+                                        <input type="file" id="prod-lumo-dark-file" accept="image/*" style="display: none;">
+                                        <small class="form-hint" style="color: #94a3b8;">Product image used for the Dark (nighttime / illuminated glow) appearance.</small>
+                                        <div id="prod-lumo-dark-preview-wrap" style="margin-top: 6px; display: none; text-align: center; background: #040810; padding: 4px; border: 1px dashed #00e5ff; border-radius: 3px;">
+                                            <img id="prod-lumo-dark-preview" src="" alt="Dark Mode Preview" style="max-height: 80px; max-width: 100%; object-fit: contain; filter: drop-shadow(0 0 6px rgba(0, 229, 255, 0.6));">
                                         </div>
                                     </div>
                                 </div>

@@ -468,6 +468,14 @@ const createProduct = async (productData) => {
     // Automatic 360 compatibility fallback
     const effective360 = view_360_url || lumo_light_360_url || lumo_dark_360_url || null;
 
+    // Automatic LUMO Light image compatibility fallback from common primary image
+    let effectiveLumoLight = lumo_light_image ? String(lumo_light_image).trim() : null;
+    const isLumoCat = String(category_name || '').trim().toUpperCase() === 'LUMO';
+    if (!effectiveLumoLight && isLumoCat && Array.isArray(images) && images.length > 0) {
+      const firstImg = typeof images[0] === 'string' ? images[0] : (images[0]?.image_url || images[0]?.url || null);
+      if (firstImg) effectiveLumoLight = String(firstImg).trim();
+    }
+
     const insertFields = [
       'store_id',
       'admin_product_id',
@@ -512,7 +520,7 @@ const createProduct = async (productData) => {
       experience_override ? String(experience_override).trim() : null,
       is_best_seller ? 1 : 0,
       effective360 ? String(effective360).trim() : null,
-      lumo_light_image ? String(lumo_light_image).trim() : null,
+      effectiveLumoLight ? String(effectiveLumoLight).trim() : null,
       lumo_dark_image ? String(lumo_dark_image).trim() : null,
       lumo_light_360_url ? String(lumo_light_360_url).trim() : null,
       lumo_dark_360_url ? String(lumo_dark_360_url).trim() : null,
@@ -721,8 +729,13 @@ const updateProduct = async (id, updateData) => {
       params.push(effective360 ? String(effective360).trim() : null);
     }
     if (lumo_light_image !== undefined) {
+      let finalLight = lumo_light_image ? String(lumo_light_image).trim() : null;
+      if (!finalLight && Array.isArray(images) && images.length > 0) {
+        const firstImg = typeof images[0] === 'string' ? images[0] : (images[0]?.image_url || images[0]?.url || null);
+        if (firstImg) finalLight = String(firstImg).trim();
+      }
       updates.push('lumo_light_image = ?');
-      params.push(lumo_light_image ? String(lumo_light_image).trim() : null);
+      params.push(finalLight);
     }
     if (lumo_dark_image !== undefined) {
       updates.push('lumo_dark_image = ?');

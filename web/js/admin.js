@@ -1786,16 +1786,12 @@ function updateLumoProductSectionVisibility() {
         lumoSection.style.display = isLumo ? 'block' : 'none';
     }
     if (generic360) {
-        generic360.style.display = isLumo ? 'none' : 'block';
+        generic360.style.display = activeStoreId === 2 ? 'block' : 'none';
     }
 
     const imgLabel = document.getElementById('prod-images-label');
     if (imgLabel) {
-        if (isLumo) {
-            imgLabel.innerHTML = 'Additional Gallery Images <small style="color: #64748b; font-weight: normal;">(Optional for LUMO — Dark &amp; Light images provide primary visuals)</small>';
-        } else {
-            imgLabel.innerHTML = 'Product Images <span style="color:red;">* (At least 1 image required)</span>';
-        }
+        imgLabel.innerHTML = 'Product Images <span style="color:red;">* (At least 1 image required)</span>';
     }
 }
 
@@ -1856,64 +1852,23 @@ function openProductForm(product = null) {
     const isActive = product ? (product.is_active !== undefined ? product.is_active : (product.active === 1 || product.active === true)) : true;
     document.getElementById('prod-active').value = String(Boolean(isActive));
 
-    // 3D Print Product Specifications & Mapping (THE MARSHANS)
+    // Product Details & Mapping (THE MARSHANS)
     if (activeStoreId === 2) {
-        if (document.getElementById('prod-short-desc')) document.getElementById('prod-short-desc').value = product?.short_description || '';
-        if (document.getElementById('prod-weight-grams')) document.getElementById('prod-weight-grams').value = product?.weight_grams || '';
-        if (document.getElementById('prod-dimensions-mm')) document.getElementById('prod-dimensions-mm').value = product?.dimensions_mm || '';
-        if (document.getElementById('prod-production-notes')) document.getElementById('prod-production-notes').value = product?.production_notes || '';
         if (document.getElementById('prod-360-url')) document.getElementById('prod-360-url').value = product?.view_360_url || '';
 
-        // LUMO Experience Assets (Light + Dark Mode)
-        const lightImg = product?.lumo_light_image || '';
+        // LUMO Experience Assets (Dedicated Dark Mode Image)
         const darkImg = product?.lumo_dark_image || '';
-        const light360 = product?.lumo_light_360_url || '';
-        const dark360 = product?.lumo_dark_360_url || '';
-
-        if (document.getElementById('prod-lumo-light-image')) document.getElementById('prod-lumo-light-image').value = lightImg;
         if (document.getElementById('prod-lumo-dark-image')) document.getElementById('prod-lumo-dark-image').value = darkImg;
-        if (document.getElementById('prod-lumo-light-360')) document.getElementById('prod-lumo-light-360').value = light360;
-        if (document.getElementById('prod-lumo-dark-360')) document.getElementById('prod-lumo-dark-360').value = dark360;
-
-        updateLumoProductPreview('light', lightImg);
         updateLumoProductPreview('dark', darkImg);
-
-        // Populate materials checkboxes
-        const matBox = document.getElementById('prod-materials-checkboxes');
-        if (matBox) {
-            const mappedMatIds = (product?.material_ids || (product?.materials && product.materials.map(m => m.id)) || []).map(Number);
-            matBox.innerHTML = materials.length > 0 ? materials.map(m => `
-                <label style="display:flex; align-items:center; gap:6px; font-size:0.8rem; cursor:pointer;">
-                    <input type="checkbox" value="${m.id}" ${mappedMatIds.includes(Number(m.id)) ? 'checked' : ''}>
-                    <span>${m.name} (${m.material_type} - ${m.color_name || 'Standard'})</span>
-                </label>
-            `).join('') : '<span style="color:#888; font-size:0.75rem;">No materials defined yet. Add materials in Materials tab.</span>';
-        }
-
-        // Populate finishing checkboxes
-        const finishBox = document.getElementById('prod-finishing-checkboxes');
-        if (finishBox) {
-            const mappedFinishIds = (product?.finishing_option_ids || (product?.finishing_options && product.finishing_options.map(f => f.id)) || []).map(Number);
-            finishBox.innerHTML = finishingOptions.length > 0 ? finishingOptions.map(f => `
-                <label style="display:flex; align-items:center; gap:6px; font-size:0.8rem; cursor:pointer;">
-                    <input type="checkbox" value="${f.id}" ${mappedFinishIds.includes(Number(f.id)) ? 'checked' : ''}>
-                    <span>${f.name} (+₹${f.extra_price || 0})</span>
-                </label>
-            `).join('') : '<span style="color:#888; font-size:0.75rem;">No finishing options defined yet. Add options in Finishing tab.</span>';
-        }
     } else {
-        updateLumoProductPreview('light', '');
         updateLumoProductPreview('dark', '');
     }
 
     updateLumoProductSectionVisibility();
 
-    const activeStoreId = apiClient.getActiveStoreId ? apiClient.getActiveStoreId() : 1;
-    const isLumoProduct = activeStoreId === 2 && ((product?.category || product?.category_name || '').trim().toUpperCase() === 'LUMO');
-
-    const sourceImages = isLumoProduct ? (product?.gallery_images || []) : (product?.images || []);
-    if (product && Array.isArray(sourceImages) && sourceImages.length > 0) {
-        tempProdImages = sourceImages.map(img => {
+    // Common/primary and gallery images across both stores
+    if (product && Array.isArray(product.images) && product.images.length > 0) {
+        tempProdImages = product.images.map(img => {
             if (typeof img === 'object' && img !== null) {
                 return {
                     id: img.id || null,
@@ -1924,8 +1879,8 @@ function openProductForm(product = null) {
             }
             return { id: null, url: String(img || ''), is_primary: false };
         }).filter(item => Boolean(item.url));
-    } else if (product && product.primary_image_url && !isLumoProduct) {
-        tempProdImages = [{ id: null, url: product.primary_image_url, is_primary: true }];
+    } else if (product && (product.primary_image_url || product.lumo_light_image)) {
+        tempProdImages = [{ id: null, url: product.primary_image_url || product.lumo_light_image, is_primary: true }];
     } else {
         tempProdImages = [];
     }
@@ -2259,21 +2214,15 @@ async function saveProductForm() {
     const priceVal = activeStoreId === 1 ? Math.round(price) : Math.round(price * 100);
     const isLumo = activeStoreId === 2 && (category || '').trim().toUpperCase() === 'LUMO';
 
+    if (cleanImagePayload.length === 0 && !editingProductId) {
+        showToast("Please provide at least one product image.", "error");
+        return;
+    }
+
     if (isLumo) {
         const lumoDarkImg = document.getElementById('prod-lumo-dark-image')?.value.trim();
-        const lumoLightImg = document.getElementById('prod-lumo-light-image')?.value.trim();
-
         if (!lumoDarkImg) {
             showToast("LUMO Dark Mode Product Image is required for LUMO products!", "error");
-            return;
-        }
-        if (!lumoLightImg) {
-            showToast("LUMO Light Mode Product Image is required for LUMO products!", "error");
-            return;
-        }
-    } else {
-        if (cleanImagePayload.length === 0 && !editingProductId) {
-            showToast("Please provide at least one product image.", "error");
             return;
         }
     }
@@ -2314,41 +2263,21 @@ async function saveProductForm() {
     };
 
     if (activeStoreId === 2) {
-        payload.short_description = document.getElementById('prod-short-desc')?.value.trim() || null;
-        payload.weight_grams = Number(document.getElementById('prod-weight-grams')?.value) || 0;
-        payload.dimensions_mm = document.getElementById('prod-dimensions-mm')?.value.trim() || null;
-        payload.production_notes = document.getElementById('prod-production-notes')?.value.trim() || null;
+        payload.view_360_url = document.getElementById('prod-360-url')?.value.trim() || null;
 
-        const lumoLightImg = document.getElementById('prod-lumo-light-image')?.value.trim() || null;
         const lumoDarkImg = document.getElementById('prod-lumo-dark-image')?.value.trim() || null;
-        const lumoLight360 = document.getElementById('prod-lumo-light-360')?.value.trim() || null;
-        const lumoDark360 = document.getElementById('prod-lumo-dark-360')?.value.trim() || null;
 
         if (isLumo) {
-            payload.lumo_light_image = lumoLightImg;
+            payload.lumo_light_image = cleanImagePayload[0] || null;
             payload.lumo_dark_image = lumoDarkImg;
-            payload.lumo_light_360_url = lumoLight360;
-            payload.lumo_dark_360_url = lumoDark360;
-            payload.view_360_url = lumoLight360 || lumoDark360 || null;
+            payload.lumo_light_360_url = null;
+            payload.lumo_dark_360_url = null;
         } else {
-            payload.view_360_url = document.getElementById('prod-360-url')?.value.trim() || null;
             payload.lumo_light_image = null;
             payload.lumo_dark_image = null;
             payload.lumo_light_360_url = null;
             payload.lumo_dark_360_url = null;
         }
-
-        const selMatIds = [];
-        document.querySelectorAll('#prod-materials-checkboxes input[type="checkbox"]:checked').forEach(cb => {
-            selMatIds.push(Number(cb.value));
-        });
-        payload.material_ids = selMatIds;
-
-        const selFinishIds = [];
-        document.querySelectorAll('#prod-finishing-checkboxes input[type="checkbox"]:checked').forEach(cb => {
-            selFinishIds.push(Number(cb.value));
-        });
-        payload.finishing_option_ids = selFinishIds;
     } else {
         // Store 1 (CHIPAKK): serialize options and variants
         syncVariantsFromUI();
@@ -6143,41 +6072,8 @@ function setupEventListeners() {
     // LUMO Product Form Dynamic Listeners
     document.getElementById('prod-category')?.addEventListener('change', updateLumoProductSectionVisibility);
 
-    document.getElementById('prod-lumo-light-image')?.addEventListener('input', (e) => {
-        updateLumoProductPreview('light', e.target.value);
-    });
-
     document.getElementById('prod-lumo-dark-image')?.addEventListener('input', (e) => {
         updateLumoProductPreview('dark', e.target.value);
-    });
-
-    document.getElementById('prod-lumo-light-upload-btn')?.addEventListener('click', () => {
-        document.getElementById('prod-lumo-light-file')?.click();
-    });
-
-    document.getElementById('prod-lumo-light-file')?.addEventListener('change', async (e) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
-        const uploadBtn = document.getElementById('prod-lumo-light-upload-btn');
-        const origText = uploadBtn ? uploadBtn.textContent : '';
-        if (uploadBtn) { uploadBtn.disabled = true; uploadBtn.textContent = '...'; }
-        try {
-            const formData = new FormData();
-            formData.append('image', file);
-            const res = await apiClient.upload('/admin/upload', formData);
-            const uploadedUrl = res?.data?.url || res?.url;
-            if (uploadedUrl) {
-                const input = document.getElementById('prod-lumo-light-image');
-                if (input) input.value = uploadedUrl;
-                updateLumoProductPreview('light', uploadedUrl);
-                showToast('LUMO light mode image uploaded successfully');
-            }
-        } catch (err) {
-            showToast(`Upload failed: ${err.message}`, 'error');
-        } finally {
-            if (uploadBtn) { uploadBtn.disabled = false; uploadBtn.textContent = origText || 'UPLOAD'; }
-            e.target.value = '';
-        }
     });
 
     document.getElementById('prod-lumo-dark-upload-btn')?.addEventListener('click', () => {
