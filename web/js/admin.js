@@ -231,9 +231,18 @@ function normalizeProduct(p) {
     const resolvedCategoryName = p.category_name || (matchedCat?.name) || (typeof p.category === 'string' && p.category !== 'Uncategorized' ? p.category : null) || (categories.find(c => c.id === p.category_id)?.name) || 'Uncategorized';
     const resolvedCategorySlug = p.category_slug || (matchedCat?.slug) || (categories.find(c => c.id === p.category_id)?.slug) || '';
 
-    const imagesList = Array.isArray(p.images)
-        ? p.images.map(img => typeof img === 'string' ? img : (img.image_url || img.external_url || img.url || ''))
-        : (p.primary_image_url ? [p.primary_image_url] : []);
+    const explicitGalleryImages = Array.isArray(p.images)
+        ? p.images.map(img => typeof img === 'string' ? img : (img.image_url || img.external_url || img.url || '')).filter(Boolean)
+        : [];
+
+    let imagesList = [...explicitGalleryImages];
+    if (imagesList.length === 0) {
+        if (p.lumo_light_image || p.lumo_dark_image) {
+            imagesList = [p.lumo_light_image, p.lumo_dark_image].filter(Boolean);
+        } else if (p.primary_image_url) {
+            imagesList = [p.primary_image_url];
+        }
+    }
 
     return {
         ...p,
@@ -256,6 +265,7 @@ function normalizeProduct(p) {
         review_count: p.review_count || 0,
         rating_tier: p.rating_tier || 'RARE',
         images: imagesList.length > 0 ? imagesList : ["https://img.icons8.com/color/150/000000/sticker.png"],
+        gallery_images: explicitGalleryImages,
         tags: Array.isArray(p.tags) ? p.tags : [],
         scheduled_drop_time: p.scheduled_drop_time ? new Date(p.scheduled_drop_time).toISOString().slice(0, 16) : '',
         is_active: p.active === 1 || p.active === true || p.is_active === true,
@@ -1693,7 +1703,7 @@ function renderProductsTable() {
 
     tbody.innerHTML = filtered.map(p => {
         const dropInfo = getProductDropStatus(p);
-        const firstImg = (p.images && p.images[0]) || p.primary_image_url || '';
+        const firstImg = (p.images && p.images[0]) || p.primary_image_url || p.lumo_light_image || p.lumo_dark_image || '';
         const resolvedImg = resolveAdminImageUrl(firstImg);
         const formattedPrice = Number(p.price || 0).toFixed(2);
         const stockDisplay = p.stock !== undefined ? p.stock : 0;
@@ -1777,6 +1787,15 @@ function updateLumoProductSectionVisibility() {
     }
     if (generic360) {
         generic360.style.display = isLumo ? 'none' : 'block';
+    }
+
+    const imgLabel = document.getElementById('prod-images-label');
+    if (imgLabel) {
+        if (isLumo) {
+            imgLabel.innerHTML = 'Additional Gallery Images <small style="color: #64748b; font-weight: normal;">(Optional for LUMO — Dark &amp; Light images provide primary visuals)</small>';
+        } else {
+            imgLabel.innerHTML = 'Product Images <span style="color:red;">* (At least 1 image required)</span>';
+        }
     }
 }
 
@@ -1889,8 +1908,12 @@ function openProductForm(product = null) {
 
     updateLumoProductSectionVisibility();
 
-    if (product && Array.isArray(product.images) && product.images.length > 0) {
-        tempProdImages = product.images.map(img => {
+    const activeStoreId = apiClient.getActiveStoreId ? apiClient.getActiveStoreId() : 1;
+    const isLumoProduct = activeStoreId === 2 && ((product?.category || product?.category_name || '').trim().toUpperCase() === 'LUMO');
+
+    const sourceImages = isLumoProduct ? (product?.gallery_images || []) : (product?.images || []);
+    if (product && Array.isArray(sourceImages) && sourceImages.length > 0) {
+        tempProdImages = sourceImages.map(img => {
             if (typeof img === 'object' && img !== null) {
                 return {
                     id: img.id || null,
@@ -1901,7 +1924,7 @@ function openProductForm(product = null) {
             }
             return { id: null, url: String(img || ''), is_primary: false };
         }).filter(item => Boolean(item.url));
-    } else if (product && product.primary_image_url) {
+    } else if (product && product.primary_image_url && !isLumoProduct) {
         tempProdImages = [{ id: null, url: product.primary_image_url, is_primary: true }];
     } else {
         tempProdImages = [];
@@ -2231,35 +2254,33 @@ async function saveProductForm() {
         return String(item || '');
     }).filter(Boolean);
 
-    if (cleanImagePayload.length === 0 && !editingProductId) {
-        showToast("Please provide at least one product image.", "error");
-        return;
-    }
-
-    const saveBtn = document.getElementById('save-prod-btn');
-    const originalText = saveBtn ? saveBtn.textContent : '';
-    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = "SAVING..."; }
-
     const activeStoreId = apiClient.getActiveStoreId ? apiClient.getActiveStoreId() : 1;
     // For Store 1 (CHIPAKK), whole rupees: ₹15 = DB 15. Store 2 (THE MARSHANS) uses paise.
     const priceVal = activeStoreId === 1 ? Math.round(price) : Math.round(price * 100);
     const isLumo = activeStoreId === 2 && (category || '').trim().toUpperCase() === 'LUMO';
 
     if (isLumo) {
-        const lumoLightImg = document.getElementById('prod-lumo-light-image')?.value.trim();
         const lumoDarkImg = document.getElementById('prod-lumo-dark-image')?.value.trim();
+        const lumoLightImg = document.getElementById('prod-lumo-light-image')?.value.trim();
 
-        if (!lumoLightImg) {
-            showToast("LUMO Light Mode Product Image is required for LUMO products!", "error");
-            if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = originalText || (activeStoreId === 2 ? "SAVE 3D PRODUCT" : "SAVE PRODUCT DROP"); }
-            return;
-        }
         if (!lumoDarkImg) {
             showToast("LUMO Dark Mode Product Image is required for LUMO products!", "error");
-            if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = originalText || (activeStoreId === 2 ? "SAVE 3D PRODUCT" : "SAVE PRODUCT DROP"); }
+            return;
+        }
+        if (!lumoLightImg) {
+            showToast("LUMO Light Mode Product Image is required for LUMO products!", "error");
+            return;
+        }
+    } else {
+        if (cleanImagePayload.length === 0 && !editingProductId) {
+            showToast("Please provide at least one product image.", "error");
             return;
         }
     }
+
+    const saveBtn = document.getElementById('save-prod-btn');
+    const originalText = saveBtn ? saveBtn.textContent : '';
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = "SAVING..."; }
 
     const compareAtVal = document.getElementById('prod-compare-at-price')?.value;
     const compareAtPriceNum = (compareAtVal !== undefined && compareAtVal !== null && compareAtVal.trim() !== '') ? Number(compareAtVal) : null;

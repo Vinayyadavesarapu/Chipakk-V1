@@ -231,7 +231,7 @@ const getProducts = async ({
       compare_at_price_paise: compareAtPaise,
       compare_at_price_rupees: compareAtPaise !== null ? Math.round(compareAtPaise / 100) : null,
       images: prodImgs,
-      primary_image_url: primaryImg ? primaryImg.image_url : r.primary_image_url,
+      primary_image_url: primaryImg ? primaryImg.image_url : (r.primary_image_url || r.lumo_light_image || r.lumo_dark_image || null),
       primary_storage_path: primaryImg ? primaryImg.storage_path : r.primary_storage_path,
       tags: typeof r.tags === 'string' ? JSON.parse(r.tags) : (r.tags || []),
       dimensions_mm: typeof r.dimensions_mm === 'string' ? JSON.parse(r.dimensions_mm) : (r.dimensions_mm || null),
@@ -344,7 +344,7 @@ const getProductById = async (productIdOrAdminId) => {
   product.images = imageRows || [];
 
   const primaryImg = product.images.find(i => i.is_primary) || product.images[0];
-  product.primary_image_url = primaryImg ? primaryImg.image_url : null;
+  product.primary_image_url = primaryImg ? primaryImg.image_url : (product.lumo_light_image || product.lumo_dark_image || null);
   product.primary_storage_path = primaryImg ? primaryImg.storage_path : null;
 
   // 2. Fetch mapped 3D materials from marshans_product_materials JOIN materials

@@ -236,7 +236,7 @@ const getProducts = async ({
       compare_at_price: compareAtRupees,
       compare_at_price_rupees: compareAtRupees,
       images: prodImgs,
-      primary_image_url: primaryImg ? primaryImg.image_url : r.primary_image_url,
+      primary_image_url: primaryImg ? primaryImg.image_url : (r.primary_image_url || r.lumo_light_image || r.lumo_dark_image || null),
       primary_storage_path: primaryImg ? primaryImg.storage_path : r.primary_storage_path,
       tags: typeof r.tags === 'string' ? JSON.parse(r.tags) : (r.tags || []),
       dimensions_mm: typeof r.dimensions_mm === 'string' ? JSON.parse(r.dimensions_mm) : (r.dimensions_mm || null),
@@ -364,7 +364,7 @@ const getProductById = async (productIdOrAdminId, storeId = null) => {
   product.images = imageRows;
 
   const primaryImg = imageRows.find(img => img.is_primary) || imageRows[0];
-  product.primary_image_url = primaryImg ? primaryImg.image_url : null;
+  product.primary_image_url = primaryImg ? primaryImg.image_url : (product.primary_image_url || product.lumo_light_image || product.lumo_dark_image || null);
   product.primary_storage_path = primaryImg ? primaryImg.storage_path : null;
 
   // 2. Fetch options & option values
