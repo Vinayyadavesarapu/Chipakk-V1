@@ -202,7 +202,11 @@ const getCustomerOrdersHandler = async (req, res, next) => {
     }
 
     const { limit, offset } = req.query;
-    const result = await orderService.getCustomerOrders(req.user.uid, { limit, offset });
+    const result = await orderService.getCustomerOrders(req.user.uid, {
+      limit,
+      offset,
+      store_id: req.storeId || 1
+    });
     return sendSuccess(res, result, 'Customer orders retrieved successfully');
   } catch (error) {
     return next(error);
@@ -220,7 +224,7 @@ const getCustomerOrderByIdHandler = async (req, res, next) => {
     }
 
     const { id } = req.params;
-    const order = await orderService.getCustomerOrderById(id, req.user.uid);
+    const order = await orderService.getCustomerOrderById(id, req.user.uid, req.storeId || 1);
 
     if (!order) {
       return sendError(res, 'Order not found or access denied.', 404);

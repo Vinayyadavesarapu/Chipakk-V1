@@ -28,10 +28,13 @@ const getProductsHandler = async (req, res, next) => {
     const store_id = req.storeId || null;
     const effectiveService = getEffectiveProductService(req);
 
+    const isAdmin = Boolean(req.admin || (req.baseUrl && req.baseUrl.includes('/admin')));
+    const resolvedActive = active !== undefined ? active : (isAdmin ? undefined : 1);
+
     const result = await effectiveService.getProducts({
       search,
       category_id,
-      active,
+      active: resolvedActive,
       featured,
       is_best_seller,
       drop_status,
@@ -63,6 +66,11 @@ const getProductByIdHandler = async (req, res, next) => {
     let product = await effectiveService.getProductById(String(id).trim(), req.storeId || 1);
 
     if (!product) {
+      return sendError(res, `Product '${id}' not found`, 404);
+    }
+
+    const isAdmin = Boolean(req.admin || (req.baseUrl && req.baseUrl.includes('/admin')));
+    if (!isAdmin && product.active === 0) {
       return sendError(res, `Product '${id}' not found`, 404);
     }
 
@@ -244,6 +252,47 @@ const deleteProductImageHandler = async (req, res, next) => {
   }
 };
 
+/**
+ * Reactivate Product Handler
+ * POST /api/admin/products/:id/reactivate
+ * PUT /api/admin/products/:id/reactivate
+ */
+const reactivateProductHandler = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const numId = parseInt(id, 10);
+    if (isNaN(numId)) {
+      return sendError(res, 'Invalid product ID format. Expected numeric BIGINT ID.', 400);
+    }
+
+    const effectiveService = getEffectiveProductService(req);
+    const product = await effectiveService.reactivateProduct(numId, req.storeId || 1);
+
+    if (!product) {
+      return sendError(res, `Product with ID ${id} not found`, 404);
+    }
+
+    if (req.user && req.user.uid) {
+      await writeAuditLog(
+        req.user.uid,
+        req.user.email || null,
+        'product.reactivated',
+        'product',
+        numId,
+        { action: 'reactivated', active: 1 }
+      ).catch(err => console.error('[Audit Log Error]', err.message));
+    }
+
+    return sendSuccess(res, product, 'Product reactivated successfully');
+  } catch (error) {
+    if (error.statusCode) {
+      return sendError(res, error.message, error.statusCode);
+    }
+    return next(error);
+  }
+};
+
 module.exports = {
   getEffectiveProductService,
   getProductsHandler,
@@ -251,5 +300,6 @@ module.exports = {
   createProductHandler,
   updateProductHandler,
   deleteProductHandler,
-  deleteProductImageHandler
+  deleteProductImageHandler,
+  reactivateProductHandler
 };

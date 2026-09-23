@@ -29,7 +29,8 @@ const {
   createProductHandler,
   updateProductHandler,
   deleteProductHandler,
-  deleteProductImageHandler
+  deleteProductImageHandler,
+  reactivateProductHandler
 } = require('../controllers/productController');
 const { getAdminSettingsHandler, updateSettingsHandler } = require('../controllers/settingsController');
 const { getTaxProfileHandler, getLegalSupplierHandler, saveLegalSupplierHandler, issueInvoiceHandler, getInvoiceHandler } = require('../controllers/taxController');
@@ -117,6 +118,11 @@ const {
   getReviewByIdHandler,
   updateReviewHandler
 } = require('../controllers/reviewController');
+const {
+  getStoreBuilderAdminHandler,
+  updateStoreBuilderAdminHandler
+} = require('../controllers/storeBuilderController');
+const chipakkMaterialController = require('../controllers/chipakkMaterialController');
 
 const router = express.Router();
 
@@ -302,6 +308,8 @@ router.get('/products/:id', getProductByIdHandler);
 router.post('/products', uploadProductImage.single('image'), createProductHandler);
 router.put('/products/:id', uploadProductImage.single('image'), updateProductHandler);
 router.delete('/products/:id', deleteProductHandler);
+router.post('/products/:id/reactivate', reactivateProductHandler);
+router.put('/products/:id/reactivate', reactivateProductHandler);
 router.delete('/products/:productId/images/:imageId', deleteProductImageHandler);
 
 // GST: shared legal supplier, resolved tax profile, invoices
@@ -314,5 +322,21 @@ router.get('/orders/:id/invoice', getInvoiceHandler);
 // Site Settings Management
 router.get('/settings', getAdminSettingsHandler);
 router.put('/settings', updateSettingsHandler);
+
+// Store Builder Management (Multi-Store Scoped)
+router.get('/store-builder', getStoreBuilderAdminHandler);
+router.put('/store-builder', updateStoreBuilderAdminHandler);
+
+// CHIPAKK Production-Material Inventory System & Stock Movements (Store 1 Only)
+router.get('/production-inventory/materials', chipakkMaterialController.getMaterialsHandler);
+router.get('/production-inventory/materials/:id', chipakkMaterialController.getMaterialByIdHandler);
+router.post('/production-inventory/materials', chipakkMaterialController.createMaterialHandler);
+router.put('/production-inventory/materials/:id', chipakkMaterialController.updateMaterialHandler);
+router.delete('/production-inventory/materials/:id', chipakkMaterialController.deleteMaterialHandler);
+
+router.post('/production-inventory/movements', chipakkMaterialController.recordStockMovementHandler);
+router.get('/production-inventory/movements', chipakkMaterialController.getStockMovementsHandler);
+router.get('/production-inventory/low-stock', chipakkMaterialController.getLowStockAlertsHandler);
+router.get('/production-inventory/types', chipakkMaterialController.getMaterialTypesHandler);
 
 module.exports = router;

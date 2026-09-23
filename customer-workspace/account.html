@@ -277,6 +277,26 @@
         </div>
       </div>
 
+      <!-- Admin Session Notice: Displayed when an authenticated Administrator views Customer Portal -->
+      <div id="adminSessionContainer" class="auth-container" style="display: none;">
+        <div class="auth-card" style="text-align: center; border-color: var(--blue, #2563eb);">
+          <div style="font-size: 40px; margin-bottom: 12px;">🛡️</div>
+          <span class="eyebrow" style="background: #dbeafe; color: #1e40af; border-color: #93c5fd; margin-bottom: 8px;">Administrator Active</span>
+          <h2 style="font-family: var(--font-display); font-size: 22px; text-transform: uppercase; margin: 0 0 8px;">Admin Session Active</h2>
+          <p style="font-size: 13px; color: #555; line-height: 1.5; margin: 0 0 20px;">
+            You are signed in with administrative privileges as <strong id="adminSessionEmail">admin@chipakk.shop</strong>.
+          </p>
+          <div style="display: flex; flex-direction: column; gap: 10px;">
+            <a href="/admin/" id="adminPortalLink" class="btn btn-primary btn-block" style="padding: 12px; text-decoration: none; font-weight: 700;">
+              Open Admin Control Panel →
+            </a>
+            <button type="button" id="adminSignOutBtn" class="btn btn-secondary btn-block" style="padding: 12px; font-weight: 700;">
+              Sign Out of Administrator Session
+            </button>
+          </div>
+        </div>
+      </div>
+
       <!-- Logged In View: Customer Dashboard -->
       <div id="accountDashboardContainer" style="display: none;">
         <div style="margin-bottom: 32px;">

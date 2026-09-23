@@ -1372,7 +1372,7 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
 /**
  * Fetch orders for a specific authenticated customer
  */
-const getCustomerOrders = async (firebaseUid, { limit = 20, offset = 0 } = {}) => {
+const getCustomerOrders = async (firebaseUid, { limit = 20, offset = 0, store_id = 1 } = {}) => {
   if (!firebaseUid) return { total: 0, limit, offset, orders: [] };
 
   const [userRows] = await pool.execute(
@@ -1387,10 +1387,17 @@ const getCustomerOrders = async (firebaseUid, { limit = 20, offset = 0 } = {}) =
   const customerId = userRows[0].id;
   const parsedLimit = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
   const parsedOffset = Math.max(parseInt(offset, 10) || 0, 0);
+  const targetStoreId = parseInt(store_id, 10) === 2 ? 2 : 1;
 
-  const countQuery = 'SELECT COUNT(*) AS total FROM orders WHERE customer_id = ?';
-  const [countRows] = await pool.execute(countQuery, [customerId]);
+  const storeCondition = targetStoreId === 1 ? '(store_id = 1 OR store_id IS NULL)' : 'store_id = ?';
+  const countParams = targetStoreId === 1 ? [customerId] : [customerId, targetStoreId];
+
+  const countQuery = `SELECT COUNT(*) AS total FROM orders WHERE customer_id = ? AND ${storeCondition}`;
+  const [countRows] = await pool.execute(countQuery, countParams);
   const total = countRows[0]?.total || 0;
+
+  const oStoreCondition = targetStoreId === 1 ? '(o.store_id = 1 OR o.store_id IS NULL)' : 'o.store_id = ?';
+  const queryParams = targetStoreId === 1 ? [customerId, parsedLimit, parsedOffset] : [customerId, targetStoreId, parsedLimit, parsedOffset];
 
   const query = `
     SELECT
@@ -1416,12 +1423,12 @@ const getCustomerOrders = async (firebaseUid, { limit = 20, offset = 0 } = {}) =
       COALESCE(o.store_id, 1) AS store_id,
       (SELECT COUNT(*) FROM order_items WHERE order_id = o.id) AS item_count
     FROM orders o
-    WHERE o.customer_id = ?
+    WHERE o.customer_id = ? AND ${oStoreCondition}
     ORDER BY o.created_at DESC, o.id DESC
     LIMIT ? OFFSET ?
   `;
 
-  const [rows] = await pool.execute(query, [customerId, parsedLimit, parsedOffset]);
+  const [rows] = await pool.execute(query, queryParams);
 
   let itemsByOrderId = {};
   if (rows.length > 0) {
@@ -1501,10 +1508,10 @@ const getCustomerOrders = async (firebaseUid, { limit = 20, offset = 0 } = {}) =
 /**
  * Fetch a single order by ID or order_number for an authenticated customer
  */
-const getCustomerOrderById = async (orderIdOrNumber, firebaseUid) => {
+const getCustomerOrderById = async (orderIdOrNumber, firebaseUid, storeId = 1) => {
   if (!orderIdOrNumber || !firebaseUid) return null;
 
-  const order = await getOrderById(orderIdOrNumber);
+  const order = await getOrderById(orderIdOrNumber, storeId);
   if (!order) return null;
 
   const [userRows] = await pool.execute(

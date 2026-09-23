@@ -88,13 +88,38 @@
       });
     });
 
+    // --- Redirect Helper ---
+    function checkRedirectAfterAuth() {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const redirect = params.get("redirect") || params.get("continue") || params.get("returnUrl");
+        if (redirect) {
+          const clean = redirect.trim();
+          // Browsers normalize backslashes to forward slashes when resolving a URL, so "/\evil.com" or
+          // "\\evil.com/x.html" pass the startsWith("/")/endsWith(".html") + !startsWith("//") + !includes("://")
+          // checks below as plain text yet still resolve to a protocol-relative "//evil.com" navigation off-site
+          // right after a real login -- a textbook open-redirect / phishing handoff. Reject backslashes outright.
+          if ((clean.startsWith("/") || clean.endsWith(".html") || clean.startsWith("./")) &&
+              !clean.startsWith("//") && !clean.includes("://") && !clean.includes("\\")) {
+            window.location.href = clean;
+            return true;
+          }
+        }
+      } catch (_) {}
+      return false;
+    }
+
     // --- Google Auth Handlers ---
     const handleGoogleAuth = async (btn) => {
       clearAuthErrors();
       if (btn) setButtonLoading(btn, true, "Connecting Google…");
       try {
-        await window.CHIPAKK.auth.signInWithGoogle();
+        const user = await window.CHIPAKK.auth.signInWithGoogle();
+        if (user) {
+          await applyAuthState(user);
+        }
         showToast("Signed in with Google! Welcome to CHIPAKK.");
+        checkRedirectAfterAuth();
       } catch (err) {
         showToast(err.message || "Google sign in was cancelled or unavailable.", "error");
       } finally {
@@ -172,8 +197,12 @@
       setButtonLoading(submitBtn, true, "Signing In…");
 
       try {
-        await window.CHIPAKK.auth.signIn(email, password);
+        const user = await window.CHIPAKK.auth.signIn(email, password);
+        if (user) {
+          await applyAuthState(user);
+        }
         showToast("Welcome back to CHIPAKK!");
+        checkRedirectAfterAuth();
       } catch (err) {
         if (errorBox) {
           errorBox.textContent = err.message || "Failed to sign in. Please try again.";
@@ -221,7 +250,7 @@
       setButtonLoading(submitBtn, true, "Creating Account…");
 
       try {
-        await window.CHIPAKK.auth.signUp(name, email, password);
+        const user = await window.CHIPAKK.auth.signUp(name, email, password);
         // Proactively synchronize customer profile with MySQL database
         try {
           const updateProfileFn = window.CHIPAKK?.updateCustomerProfileApi || window.CHIPAKK?.api?.updateProfile;
@@ -229,7 +258,11 @@
             await updateProfileFn({ full_name: name });
           }
         } catch (_) {}
+        if (user) {
+          await applyAuthState(user);
+        }
         showToast("Account created! Welcome to CHIPAKK.");
+        checkRedirectAfterAuth();
       } catch (err) {
         if (errorBox) {
           errorBox.textContent = err.message || "Failed to create account. Please try again.";
@@ -1027,44 +1060,68 @@
   async function applyAuthState(user) {
     const authContainer = $("#authFormsContainer");
     const dashContainer = $("#accountDashboardContainer");
+    const adminContainer = $("#adminSessionContainer");
 
     if (user) {
+      // 1. Immediately hide and deactivate the unauthenticated login forms
+      if (authContainer) authContainer.style.display = "none";
+      clearAuthErrors();
+
+      // 2. Pre-populate profile immediately from Firebase User object (zero lag)
+      populateUserProfile(null, user);
+
+      // 3. Resolve customer identity or detect administrator privileges via /customer/me
       let customerRecord = null;
-      // Check Admin vs Customer isolation via /customer/me
+      let isAdmin = false;
+
       try {
         const fetchAuthFn = window.CHIPAKK?.fetchAuthenticated || window.CHIPAKK?.api?.fetchAuthenticated;
         if (fetchAuthFn) {
           const meData = await fetchAuthFn("/customer/me");
           if (meData && meData.is_admin) {
-            // User is an Administrator — do NOT render admin identity in customer account dashboard
-            if (dashContainer) dashContainer.style.display = "none";
-            if (authContainer) authContainer.style.display = "block";
-            clearAuthErrors();
-            return;
+            isAdmin = true;
           }
           if (meData && meData.customer) {
             customerRecord = meData.customer;
           }
         }
-      } catch (_) {}
+      } catch (err) {
+        console.warn("[CHIPAKK Account] Notice resolving customer session:", err?.message);
+      }
 
-      // User is a valid logged-in customer
-      if (authContainer) authContainer.style.display = "none";
+      if (isAdmin) {
+        // Authenticated user is an Administrator: show dedicated Admin Session Notice
+        if (dashContainer) dashContainer.style.display = "none";
+        if (adminContainer) {
+          adminContainer.style.display = "block";
+          const adminEmailEl = $("#adminSessionEmail");
+          if (adminEmailEl) {
+            adminEmailEl.textContent = user.email || "Administrator";
+          }
+        }
+        return;
+      }
+
+      // Authenticated user is a Customer: render Customer Dashboard
+      if (adminContainer) adminContainer.style.display = "none";
       if (dashContainer) dashContainer.style.display = "block";
-      populateUserProfile(customerRecord, user);
+
+      if (customerRecord) {
+        populateUserProfile(customerRecord, user);
+      }
       renderOrdersTab();
       renderAddressesTab();
     } else {
-      // User is logged out
+      // User is logged out: restore clean unauthenticated login UI
       if (dashContainer) dashContainer.style.display = "none";
+      if (adminContainer) adminContainer.style.display = "none";
       if (authContainer) authContainer.style.display = "block";
       clearAuthErrors();
     }
   }
 
   function initSignOut() {
-    const logoutBtn = $("#logoutBtn");
-    logoutBtn?.addEventListener("click", async () => {
+    const handleSignOut = async () => {
       try {
         if (window.CHIPAKK?.auth?.signOutUser) {
           await window.CHIPAKK.auth.signOutUser();
@@ -1073,7 +1130,10 @@
       } catch (err) {
         showToast(err.message || "Signed out.");
       }
-    });
+    };
+
+    $("#logoutBtn")?.addEventListener("click", handleSignOut);
+    $("#adminSignOutBtn")?.addEventListener("click", handleSignOut);
   }
 
   /* =========================================================

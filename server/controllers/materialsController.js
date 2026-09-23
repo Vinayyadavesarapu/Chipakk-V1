@@ -20,7 +20,7 @@ const getMaterialsHandler = async (req, res, next) => {
 const getMaterialByIdHandler = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const material = await materialsService.getMaterialById(id);
+    const material = await materialsService.getMaterialById(id, req.storeId || 2);
     if (!material) {
       return sendError(res, `Material #${id} not found`, 404);
     }
@@ -56,7 +56,7 @@ const createMaterialHandler = async (req, res, next) => {
 const updateMaterialHandler = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const updated = await materialsService.updateMaterial(id, req.body);
+    const updated = await materialsService.updateMaterial(id, req.body, req.storeId || 2);
 
     writeAuditLog({
       actorId: req.user?.uid || 'admin',
@@ -80,7 +80,10 @@ const adjustStockHandler = async (req, res, next) => {
     if (delta === undefined || isNaN(Number(delta))) {
       return sendError(res, 'Numeric stock delta is required', 400);
     }
-    const updated = await materialsService.adjustStock(id, delta);
+    const updated = await materialsService.adjustStock(id, delta, req.storeId || 2);
+    if (!updated) {
+      return sendError(res, `Material #${id} not found`, 404);
+    }
     return sendSuccess(res, updated, 'Material stock adjusted successfully');
   } catch (error) {
     return next(error);
@@ -90,18 +93,21 @@ const adjustStockHandler = async (req, res, next) => {
 const deleteMaterialHandler = async (req, res, next) => {
   try {
     const { id } = req.params;
-    await materialsService.deleteMaterial(id);
+    const success = await materialsService.deleteMaterial(id, req.storeId || 2);
+    if (!success) {
+      return sendError(res, `Material #${id} not found`, 404);
+    }
 
     writeAuditLog({
       actorId: req.user?.uid || 'admin',
-      action: 'DELETE_MATERIAL',
+      action: 'DEACTIVATE_MATERIAL',
       entity: 'materials',
       entityId: String(id),
-      details: {},
+      details: { active: 0 },
       ipAddress: req.ip
     }).catch(() => {});
 
-    return sendSuccess(res, { id }, 'Material deleted successfully');
+    return sendSuccess(res, { id, deactivated: true }, 'Material deactivated successfully');
   } catch (error) {
     return next(error);
   }

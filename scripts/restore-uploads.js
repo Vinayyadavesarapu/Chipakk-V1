@@ -20,14 +20,25 @@
  */
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const arg = (n, d) => { const i = process.argv.indexOf('--' + n); return i > -1 && process.argv[i + 1] && !process.argv[i + 1].startsWith('--') ? process.argv[i + 1] : d; };
 const has = (n) => process.argv.includes('--' + n);
 const FROM = arg('from', null); const TO = arg('to', process.env.UPLOADS_DIR || null); const MANIFEST = arg('manifest', null);
+const MANIFEST_JSON = arg('manifest-json', null);
+const VERIFY_SHA = has('verify-sha256');
 const APPLY = has('apply'); const OVERWRITE = has('overwrite');
 const appRoot = path.resolve(__dirname, '..');
 const ALLOWED = new Set(['.webp', '.png', '.jpg', '.jpeg', '.gif', '.svg']);
 const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+const calculateSha256 = (p) => {
+  try {
+    return crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+  } catch (_) {
+    return null;
+  }
+};
 
 const die = (msg, code = 2) => { console.error(msg); process.exit(code); };
 /** realpath that also works for a path that does not exist yet: resolve the nearest existing ancestor, append the rest.
@@ -100,5 +111,42 @@ if (MANIFEST) {
   stillMissing.slice(0, 15).forEach((n) => console.log(`    ${n}`));
   if (stillMissing.length > 15) console.log(`    … and ${stillMissing.length - 15} more`);
   if (stillMissing.length) process.exitCode = 1;
+}
+
+if (MANIFEST_JSON) {
+  if (!fs.existsSync(MANIFEST_JSON)) die(`JSON manifest not found: ${MANIFEST_JSON}`);
+  let jsonManifest;
+  try {
+    const raw = JSON.parse(fs.readFileSync(MANIFEST_JSON, 'utf8'));
+    jsonManifest = Array.isArray(raw) ? raw : (raw.recovery_manifest || []);
+  } catch (e) {
+    die(`Invalid JSON manifest: ${e.message}`);
+  }
+  let verifiedCount = 0;
+  let hashMismatches = 0;
+  for (const entry of jsonManifest) {
+    const filename = entry.stored_filename || entry.original_filename || path.basename(entry.database_reference || '');
+    if (!filename) continue;
+    const destFile = path.join(to, filename);
+    if (fs.existsSync(destFile)) {
+      if (entry.sha256 && VERIFY_SHA) {
+        const destHash = calculateSha256(destFile);
+        if (destHash !== entry.sha256) {
+          hashMismatches++;
+          console.error(`  [SHA-256 MISMATCH] ${filename}: expected ${entry.sha256}, got ${destHash}`);
+        } else {
+          verifiedCount++;
+        }
+      } else {
+        verifiedCount++;
+      }
+    }
+  }
+  console.log(`\nRecovery JSON Manifest: ${jsonManifest.length} entries`);
+  console.log(`  verified in destination: ${verifiedCount}`);
+  if (hashMismatches) {
+    console.error(`  SHA-256 MISMATCHES: ${hashMismatches}`);
+    process.exitCode = 1;
+  }
 }
 if (failed) process.exitCode = 1;

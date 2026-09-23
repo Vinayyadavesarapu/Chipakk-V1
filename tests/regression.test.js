@@ -137,14 +137,24 @@ async function runCategoryIsolationTests() {
     77: { id: 77, store_id: 2, name: 'Legacy Marshans Category' }
   };
 
+  // categoryService.deleteCategory has since grown a product-reassignment/active-product guard and now selects
+  // `id, name, image_url` (not `store_id`) for its ownership check -- this mock previously matched only the OLD
+  // query shape, so every real call fell through to the catch-all `[[]]` and deleteCategory always returned
+  // false, regardless of store. Match the CURRENT real query text/shape instead of the SQL string verbatim.
   const execute = async (sql, params = []) => {
     if (sql.includes("SHOW COLUMNS FROM categories LIKE 'store_id'")) return [[{ Field: 'store_id' }]];
     if (sql.includes("SHOW COLUMNS FROM categories LIKE 'image_url'")) return [[]];
     if (sql.includes("SHOW COLUMNS FROM categories LIKE 'experience_id'")) return [[]];
-    if (sql === 'SELECT store_id FROM categories WHERE id = ? LIMIT 1') {
+    if (/^SELECT id, name, image_url FROM categories WHERE id = \?/.test(sql)) {
       const row = categories[params[0]];
-      return row ? [[{ store_id: row.store_id }]] : [[]];
+      if (!row) return [[]];
+      if (sql.includes('(store_id = 1 OR store_id IS NULL)') && !(row.store_id === 1 || row.store_id === null)) return [[]];
+      if (/store_id = \?\s*$/.test(sql) && row.store_id !== params[1]) return [[]];
+      return [[{ id: row.id, name: row.name, image_url: null }]];
     }
+    if (sql.startsWith('SELECT COUNT(*) AS active_count FROM products')) return [[{ active_count: 0 }]];
+    if (sql.startsWith('UPDATE products SET category_id = NULL')) return [{ affectedRows: 0 }];
+    if (sql.startsWith('DELETE FROM category_media')) return [{ affectedRows: 0 }];
     if (sql.startsWith('DELETE FROM categories WHERE id = ?')) {
       const id = params[0];
       const row = categories[id];

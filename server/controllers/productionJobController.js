@@ -20,7 +20,7 @@ const getProductionJobsHandler = async (req, res, next) => {
 const getProductionJobByIdHandler = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const job = await productionJobService.getProductionJobById(id);
+    const job = await productionJobService.getProductionJobById(id, req.storeId || 2);
     if (!job) {
       return sendError(res, `Production job #${id} not found`, 404);
     }
@@ -61,7 +61,7 @@ const updateProductionJobStageHandler = async (req, res, next) => {
       return sendError(res, 'Target stage is required', 400);
     }
 
-    const updated = await productionJobService.updateProductionJobStage(id, stage, stage_notes);
+    const updated = await productionJobService.updateProductionJobStage(id, stage, stage_notes, req.storeId || 2);
 
     writeAuditLog({
       actorId: req.user?.uid || 'admin',
@@ -81,7 +81,7 @@ const updateProductionJobStageHandler = async (req, res, next) => {
 const advanceProductionJobStageHandler = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const updated = await productionJobService.advanceProductionJobStage(id);
+    const updated = await productionJobService.advanceProductionJobStage(id, req.storeId || 2);
 
     writeAuditLog({
       actorId: req.user?.uid || 'admin',

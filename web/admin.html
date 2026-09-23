@@ -652,6 +652,7 @@
             <div class="nav-category-header">OPERATIONS</div>
             <ul class="admin-sidebar-nav">
                 <li class="store-module-chipakk"><a href="#" class="admin-nav-item" data-tab="tab-production">🖨️ POD Production Queue</a></li>
+                <li class="store-module-chipakk"><a href="#" class="admin-nav-item" data-tab="tab-chipakk-inventory">📦 Production Inventory</a></li>
                 <li class="store-module-marshans-future" style="display: none;"><a href="#" class="admin-nav-item" data-tab="tab-custom-requests">📋 Custom Requests</a></li>
                 <li class="store-module-marshans-future" style="display: none;"><a href="#" class="admin-nav-item" data-tab="tab-production-jobs">⚙️ Production Jobs</a></li>
                 <li><a href="#" class="admin-nav-item" data-tab="tab-shipping"><span id="nav-shipping-label">🚚 Shipping Management</span></a></li>
@@ -1608,6 +1609,101 @@
                             </tr>
                         </thead>
                         <tbody id="production-tbody"></tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- TAB: CHIPAKK PRODUCTION-MATERIAL INVENTORY (STORE 1 ONLY) -->
+            <section id="tab-chipakk-inventory" class="tab-content store-module-chipakk" style="display: none;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 10px;">
+                    <div>
+                        <h2 style="font-weight: 900; text-transform: uppercase; margin: 0;">📦 CHIPAKK Production Material Inventory</h2>
+                        <p style="font-size: 0.85rem; color: #555; font-weight: bold; margin: 4px 0 0 0;">
+                            Track raw physical materials (vinyl rolls, papers, lamination, packaging) used in sticker manufacturing
+                        </p>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                        <button class="retro-btn" id="btn-chipakk-history" style="background: #f3f4f6;">📜 MOVEMENT LOGS</button>
+                        <button class="retro-btn" id="btn-chipakk-record-movement" style="background: #f59e0b; color: #000; font-weight: bold;">⚡ RECORD MOVEMENT</button>
+                        <button class="retro-btn retro-btn-primary" id="btn-chipakk-add-material">+ ADD MATERIAL</button>
+                    </div>
+                </div>
+
+                <!-- KPI / Summary Cards -->
+                <div class="admin-stat-grid" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-bottom: 20px;">
+                    <div class="admin-stat-card">
+                        <div class="admin-stat-label">Total Material Types</div>
+                        <div id="stat-chipakk-mat-count" class="admin-stat-val">0</div>
+                        <div class="admin-stat-sub">Active raw materials</div>
+                    </div>
+                    <div class="admin-stat-card">
+                        <div class="admin-stat-label">Low Stock Alerts</div>
+                        <div id="stat-chipakk-mat-low" class="admin-stat-val" style="color: #dc2626;">0</div>
+                        <div class="admin-stat-sub">Below safety threshold</div>
+                    </div>
+                    <div class="admin-stat-card">
+                        <div class="admin-stat-label">Total Est. Inventory Value</div>
+                        <div id="stat-chipakk-mat-value" class="admin-stat-val" style="color: #059669;">₹0</div>
+                        <div class="admin-stat-sub">Current raw stock value</div>
+                    </div>
+                    <div class="admin-stat-card">
+                        <div class="admin-stat-label">Movement Audit Log</div>
+                        <div id="stat-chipakk-movements-count" class="admin-stat-val" style="color: #2563eb;">0</div>
+                        <div class="admin-stat-sub">Recorded stock events</div>
+                    </div>
+                </div>
+
+                <!-- Low Stock Alert Banner -->
+                <div id="chipakk-mat-alert-banner" class="retro-panel" style="display: none; background: #fef2f2; border: 2px solid #ef4444; padding: 12px 16px; margin-bottom: 20px;">
+                    <div style="display: flex; align-items: center; justify-content: space-between;">
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <span style="font-size: 1.4rem;">⚠️</span>
+                            <div>
+                                <strong style="color: #991b1b; font-size: 0.95rem;">CRITICAL LOW STOCK DETECTED:</strong>
+                                <span id="chipakk-mat-alert-text" style="color: #7f1d1d; font-size: 0.85rem; margin-left: 6px;"></span>
+                            </div>
+                        </div>
+                        <button class="retro-btn" id="btn-reorder-filter" style="padding: 3px 8px; font-size: 0.75rem; background: #fee2e2; border-color: #ef4444;">FILTER LOW STOCK</button>
+                    </div>
+                </div>
+
+                <!-- Filter & Search Toolbar -->
+                <div class="retro-panel" style="background: #fff; padding: 12px 16px; margin-bottom: 20px; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between;">
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
+                        <input type="text" id="chipakk-mat-search" class="retro-input" placeholder="🔍 Search name, SKU, vendor..." style="width: 260px;">
+                        <select id="chipakk-mat-type-filter" class="retro-input" style="width: 170px;">
+                            <option value="">All Material Types</option>
+                        </select>
+                        <label style="display: flex; align-items: center; gap: 6px; font-size: 0.85rem; font-weight: bold; cursor: pointer; user-select: none;">
+                            <input type="checkbox" id="chipakk-mat-low-filter"> Show Low Stock Only
+                        </label>
+                    </div>
+                    <div>
+                        <button class="retro-btn" id="btn-refresh-chipakk-mat" style="padding: 6px 12px; font-size: 0.8rem;">🔄 REFRESH</button>
+                    </div>
+                </div>
+
+                <!-- Materials Table -->
+                <div class="admin-table-container">
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>SKU</th>
+                                <th>Material Name</th>
+                                <th>Type</th>
+                                <th>Color</th>
+                                <th>Current Stock</th>
+                                <th>Safety Stock</th>
+                                <th>Reorder Qty</th>
+                                <th>Cost (₹)</th>
+                                <th>Supplier</th>
+                                <th>Status</th>
+                                <th style="text-align: right;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="chipakk-materials-tbody">
+                            <tr><td colspan="11" style="text-align: center; padding: 25px; color: #666;">Loading production materials...</td></tr>
+                        </tbody>
                     </table>
                 </div>
             </section>
@@ -2808,6 +2904,201 @@
             <div style="display: flex; gap: 15px; justify-content: center;">
                 <button id="confirm-modal-yes-btn" class="retro-btn retro-btn-primary">CONFIRM</button>
                 <button id="confirm-modal-no-btn" class="retro-btn">CANCEL</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- CHIPAKK ADD/EDIT MATERIAL MODAL -->
+    <div id="modal-chipakk-material" class="modal-overlay" style="display: none;">
+        <div class="retro-panel modal-body-scroll" style="background: #fff; max-width: 650px; width: 95%;">
+            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 15px;">
+                <h3 id="chipakk-mat-modal-title" style="font-weight: 900; margin: 0;">[ADD PRODUCTION MATERIAL]</h3>
+                <button class="icon-btn" id="close-chipakk-mat-modal-btn" style="font-size: 1.2rem;">×</button>
+            </div>
+            <form id="form-chipakk-material">
+                <input type="hidden" id="chipakk-mat-id" value="">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+                    <div>
+                        <label for="chipakk-mat-name" style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Material Name <span style="color:red;">*</span></label>
+                        <input type="text" id="chipakk-mat-name" class="retro-input" placeholder="e.g. Premium Glossy Vinyl Roll" required style="width: 100%;">
+                    </div>
+                    <div>
+                        <label for="chipakk-mat-sku" style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">SKU / Code</label>
+                        <input type="text" id="chipakk-mat-sku" class="retro-input" placeholder="e.g. CHP-MAT-VINYL-GLOSS" style="width: 100%;">
+                    </div>
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+                    <div>
+                        <label for="chipakk-mat-type" style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Material Type <span style="color:red;">*</span></label>
+                        <input type="text" id="chipakk-mat-type" class="retro-input" placeholder="Vinyl, Paper, Lamination, Packaging..." required list="chipakk-type-datalist" style="width: 100%;">
+                        <datalist id="chipakk-type-datalist">
+                            <option value="Vinyl">
+                            <option value="Paper">
+                            <option value="Lamination">
+                            <option value="Packaging">
+                            <option value="Transfer Tape">
+                            <option value="Ink">
+                        </datalist>
+                    </div>
+                    <div>
+                        <label for="chipakk-mat-color" style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Color / Finish (Optional)</label>
+                        <input type="text" id="chipakk-mat-color" class="retro-input" placeholder="e.g. White, Clear, Holographic" style="width: 100%;">
+                    </div>
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+                    <div>
+                        <label for="chipakk-mat-unit" style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Measurement Unit <span style="color:red;">*</span></label>
+                        <select id="chipakk-mat-unit" class="retro-input" style="width: 100%;">
+                            <option value="meters">Meters (m)</option>
+                            <option value="sheets">Sheets</option>
+                            <option value="rolls">Rolls</option>
+                            <option value="units">Units / Pcs</option>
+                            <option value="kg">Kilograms (kg)</option>
+                        </select>
+                    </div>
+                    <div id="chipakk-mat-initial-stock-wrap">
+                        <label for="chipakk-mat-stock" style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Initial Stock</label>
+                        <input type="number" id="chipakk-mat-stock" class="retro-input" placeholder="0.00" min="0" step="any" style="width: 100%;">
+                    </div>
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+                    <div>
+                        <label for="chipakk-mat-cost" style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Unit Cost (₹)</label>
+                        <input type="number" id="chipakk-mat-cost" class="retro-input" placeholder="0.00" min="0" step="any" style="width: 100%;">
+                    </div>
+                    <div>
+                        <label for="chipakk-mat-safety-stock" style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Safety Stock</label>
+                        <input type="number" id="chipakk-mat-safety-stock" class="retro-input" placeholder="e.g. 50" min="0" step="any" style="width: 100%;">
+                    </div>
+                    <div>
+                        <label for="chipakk-mat-reorder-qty" style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Reorder Qty</label>
+                        <input type="number" id="chipakk-mat-reorder-qty" class="retro-input" placeholder="e.g. 100" min="0" step="any" style="width: 100%;">
+                    </div>
+                </div>
+                <div style="margin-bottom: 16px;">
+                    <label for="chipakk-mat-supplier" style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Vendor / Supplier</label>
+                    <input type="text" id="chipakk-mat-supplier" class="retro-input" placeholder="e.g. Avery Dennison, 3M Commercial Graphics" style="width: 100%;">
+                </div>
+                <div style="margin-bottom: 16px;">
+                    <label style="display: flex; align-items: center; gap: 8px; font-size: 0.85rem; font-weight: bold; cursor: pointer;">
+                        <input type="checkbox" id="chipakk-mat-active" checked> Active in Production
+                    </label>
+                </div>
+                <div style="display: flex; justify-content: flex-end; gap: 10px; border-top: 1.5px solid #eee; padding-top: 12px;">
+                    <button type="button" class="retro-btn" id="btn-cancel-chipakk-mat">CANCEL</button>
+                    <button type="submit" class="retro-btn retro-btn-primary" id="btn-save-chipakk-mat">SAVE MATERIAL</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- CHIPAKK RECORD STOCK MOVEMENT MODAL -->
+    <div id="modal-chipakk-movement" class="modal-overlay" style="display: none;">
+        <div class="retro-panel modal-body-scroll" style="background: #fff; max-width: 580px; width: 95%;">
+            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 15px;">
+                <h3 style="font-weight: 900; margin: 0;">⚡ [RECORD STOCK MOVEMENT]</h3>
+                <button class="icon-btn" id="close-chipakk-mov-modal-btn" style="font-size: 1.2rem;">×</button>
+            </div>
+            <form id="form-chipakk-movement">
+                <div style="margin-bottom: 12px;">
+                    <label for="chipakk-mov-material" style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Select Material <span style="color:red;">*</span></label>
+                    <select id="chipakk-mov-material" class="retro-input" required style="width: 100%;">
+                        <option value="">-- Choose Material --</option>
+                    </select>
+                </div>
+                <div id="chipakk-mov-current-info" style="display: none; background: #fdfaf0; border: 1px solid #e2d9c2; padding: 8px 12px; margin-bottom: 12px; font-size: 0.85rem;">
+                    Current Stock: <strong id="chipakk-mov-cur-stock">0</strong> | Safety Stock: <strong id="chipakk-mov-cur-safety">0</strong>
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+                    <div>
+                        <label for="chipakk-mov-type" style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Movement Type <span style="color:red;">*</span></label>
+                        <select id="chipakk-mov-type" class="retro-input" required style="width: 100%;">
+                            <option value="PURCHASE">🛒 PURCHASE (Inward Stock)</option>
+                            <option value="CONSUMPTION">✂️ CONSUMPTION (Used in Print/Cut)</option>
+                            <option value="WASTE">🗑️ WASTE (Scrap / Damage)</option>
+                            <option value="ADJUSTMENT">⚖️ ADJUSTMENT (Audit / Correction)</option>
+                            <option value="RETURN">↩️ RETURN (Supplier / Stock Return)</option>
+                        </select>
+                    </div>
+                    <div id="chipakk-mov-direction-wrap" style="display: none;">
+                        <label for="chipakk-mov-direction" style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Adjustment Mode</label>
+                        <select id="chipakk-mov-direction" class="retro-input" style="width: 100%;">
+                            <option value="add">Add to Stock (+)</option>
+                            <option value="subtract">Deduct from Stock (-)</option>
+                            <option value="set">Set Exact Count (=)</option>
+                        </select>
+                    </div>
+                    <div id="chipakk-mov-qty-wrap">
+                        <label for="chipakk-mov-qty" style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Quantity <span id="chipakk-mov-unit-label"></span> <span style="color:red;">*</span></label>
+                        <input type="number" id="chipakk-mov-qty" class="retro-input" placeholder="0.00" min="0.01" step="any" required style="width: 100%;">
+                    </div>
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+                    <div id="chipakk-mov-cost-wrap">
+                        <label for="chipakk-mov-cost" style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Unit Cost (₹) (Optional)</label>
+                        <input type="number" id="chipakk-mov-cost" class="retro-input" placeholder="e.g. 120.00" min="0" step="any" style="width: 100%;">
+                    </div>
+                    <div>
+                        <label for="chipakk-mov-ref" style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Reference ID</label>
+                        <input type="text" id="chipakk-mov-ref" class="retro-input" placeholder="e.g. PO-8921, JOB-1042" style="width: 100%;">
+                    </div>
+                </div>
+                <div style="margin-bottom: 16px;">
+                    <label for="chipakk-mov-notes" style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Operational Notes / Reason</label>
+                    <textarea id="chipakk-mov-notes" class="retro-input" rows="2" placeholder="e.g. Weekly stock audit correction or roll end trim..." style="width: 100%;"></textarea>
+                </div>
+                <div style="display: flex; justify-content: flex-end; gap: 10px; border-top: 1.5px solid #eee; padding-top: 12px;">
+                    <button type="button" class="retro-btn" id="btn-cancel-chipakk-mov">CANCEL</button>
+                    <button type="submit" class="retro-btn retro-btn-primary" id="btn-save-chipakk-mov">RECORD MOVEMENT</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- CHIPAKK MOVEMENT HISTORY DRAWER / MODAL -->
+    <div id="modal-chipakk-movement-history" class="modal-overlay" style="display: none;">
+        <div class="retro-panel modal-body-scroll" style="background: #fff; max-width: 900px; width: 96%;">
+            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 15px;">
+                <div>
+                    <h3 style="font-weight: 900; margin: 0;">📜 [MATERIAL STOCK MOVEMENT AUDIT TRAIL]</h3>
+                    <p style="font-size: 0.8rem; color: #666; margin: 2px 0 0 0;">Immutable ledger of raw material purchases, consumption, scrap, and adjustments</p>
+                </div>
+                <button class="icon-btn" id="close-chipakk-hist-modal-btn" style="font-size: 1.2rem;">×</button>
+            </div>
+            <!-- History Filter Controls -->
+            <div style="display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap;">
+                <select id="chipakk-hist-mat-filter" class="retro-input" style="width: 220px;">
+                    <option value="">All Materials</option>
+                </select>
+                <select id="chipakk-hist-type-filter" class="retro-input" style="width: 180px;">
+                    <option value="">All Movement Types</option>
+                    <option value="PURCHASE">PURCHASE</option>
+                    <option value="CONSUMPTION">CONSUMPTION</option>
+                    <option value="WASTE">WASTE</option>
+                    <option value="ADJUSTMENT">ADJUSTMENT</option>
+                    <option value="RETURN">RETURN</option>
+                </select>
+                <button class="retro-btn" id="btn-refresh-chipakk-hist" style="padding: 4px 10px; font-size: 0.75rem;">🔄 REFRESH</button>
+            </div>
+            <!-- History Table -->
+            <div class="admin-table-container" style="max-height: 480px; overflow-y: auto;">
+                <table class="admin-table">
+                    <thead>
+                        <tr>
+                            <th>Date & Time</th>
+                            <th>Material</th>
+                            <th>Type</th>
+                            <th>Qty</th>
+                            <th>Balance Change</th>
+                            <th>Reference</th>
+                            <th>Operator</th>
+                            <th>Notes</th>
+                        </tr>
+                    </thead>
+                    <tbody id="chipakk-history-tbody">
+                        <tr><td colspan="8" style="text-align: center; padding: 20px; color: #666;">Loading movement history...</td></tr>
+                    </tbody>
+                </table>
             </div>
         </div>
     </div>

@@ -131,4 +131,13 @@ const getUploadDiagnostic = (targetFilename) => {
   return baseReport;
 };
 
-module.exports = { uploadDir, describeUploads, getUploadDiagnostic };
+const CANONICAL_PRODUCTION_UPLOADS = '/home/u781826529/chipakk-uploads';
+
+module.exports = {
+  uploadDir,
+  describeUploads,
+  getUploadDiagnostic,
+  CANONICAL_PRODUCTION_UPLOADS,
+  isInside,
+  appRoot
+};

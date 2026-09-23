@@ -147,6 +147,9 @@ let storeSections = [];
 let auditLogs = [];
 let materials = [];
 let editingMaterialId = null;
+let chipakkMaterials = [];
+let chipakkMovements = [];
+let editingChipakkMaterialId = null;
 let finishingOptions = [];
 let editingFinishingId = null;
 let productionJobs = [];
@@ -618,7 +621,8 @@ async function loadAllAdminData() {
                 refreshMaterialsFromAPI(),
                 refreshFinishingFromAPI(),
                 refreshProductionJobsFromAPI(),
-                refreshCustomRequestsFromAPI()
+                refreshCustomRequestsFromAPI(),
+                refreshChipakkMaterialsFromAPI()
             ]);
         } catch (_) {}
 
@@ -909,6 +913,7 @@ function updateState() {
     renderTeamMembersTable();
     renderActiveSessionsTable();
     renderAuditLogs();
+    renderChipakkMaterialsTable();
     populateCategoryDropdowns();
 
     if (activeOrderViewing) {
@@ -1177,7 +1182,7 @@ function populateCategoryDropdowns() {
     if (prodCatSelect) {
         prodCatSelect.innerHTML = catOptions;
         if (currentProdVal) {
-            const matchedOpt = Array.from(prodCatSelect.options).find(o => 
+            const matchedOpt = Array.from(prodCatSelect.options).find(o =>
                 o.value.toLowerCase() === currentProdVal.toLowerCase() ||
                 o.getAttribute('data-slug')?.toLowerCase() === currentProdVal.toLowerCase() ||
                 o.getAttribute('data-id') === String(currentProdVal)
@@ -1188,7 +1193,7 @@ function populateCategoryDropdowns() {
     if (filterCatSelect) {
         filterCatSelect.innerHTML = `<option value="">All Categories</option>${catOptions}`;
         if (currentFilterVal) {
-            const matchedOpt = Array.from(filterCatSelect.options).find(o => 
+            const matchedOpt = Array.from(filterCatSelect.options).find(o =>
                 o.value.toLowerCase() === currentFilterVal.toLowerCase() ||
                 o.getAttribute('data-slug')?.toLowerCase() === currentFilterVal.toLowerCase() ||
                 o.getAttribute('data-id') === String(currentFilterVal)
@@ -1199,7 +1204,7 @@ function populateCategoryDropdowns() {
     if (evtCatSelect) {
         evtCatSelect.innerHTML = `<option value="">All Categories</option>${catOptions}`;
         if (currentEvtVal) {
-            const matchedOpt = Array.from(evtCatSelect.options).find(o => 
+            const matchedOpt = Array.from(evtCatSelect.options).find(o =>
                 o.value.toLowerCase() === currentEvtVal.toLowerCase() ||
                 o.getAttribute('data-slug')?.toLowerCase() === currentEvtVal.toLowerCase() ||
                 o.getAttribute('data-id') === String(currentEvtVal)
@@ -1247,6 +1252,8 @@ function setupNavigation() {
                 renderStoreBuilder();
             } else if (targetSecId === 'tab-settings') {
                 refreshAuditLogsFromAPI();
+            } else if (targetSecId === 'tab-chipakk-inventory') {
+                refreshChipakkMaterialsFromAPI();
             }
 
             window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -1652,7 +1659,7 @@ function renderProductsTable() {
         let matchesCat = true;
         if (categoryFilter) {
             const filterLower = categoryFilter.toLowerCase().trim();
-            const matchedFilterCat = categories.find(c => 
+            const matchedFilterCat = categories.find(c =>
                 c && (
                     (c.name && c.name.toLowerCase().trim() === filterLower) ||
                     (c.slug && c.slug.toLowerCase().trim() === filterLower) ||
@@ -1695,9 +1702,9 @@ function renderProductsTable() {
         return `
             <tr>
                 <td>
-                    <img src="${resolvedImg || fallbackImg}" 
-                         onerror="this.onerror=null; this.src='${fallbackImg}';" 
-                         alt="${escapeHtml(p.title)}" 
+                    <img src="${resolvedImg || fallbackImg}"
+                         onerror="this.onerror=null; this.src='${fallbackImg}';"
+                         alt="${escapeHtml(p.title)}"
                          style="width:45px; height:45px; object-fit:cover; border:1px solid #000; border-radius:2px; display:block;">
                 </td>
                 <td><span class="admin-id-highlight">${escapeHtml(p.admin_id || p.sku)}</span></td>
@@ -1718,7 +1725,10 @@ function renderProductsTable() {
                 <td>
                     <div style="display:flex; gap:4px;">
                         <button class="retro-btn edit-prod-btn" data-id="${p.id}" style="padding:2px 6px; font-size:0.75rem;">EDIT</button>
-                        <button class="retro-btn del-prod-btn" data-id="${p.id}" style="padding:2px 6px; font-size:0.75rem; background:#ef4444; color:#fff;">DEL</button>
+                        ${p.is_active
+                            ? `<button class="retro-btn del-prod-btn" data-id="${p.id}" style="padding:2px 6px; font-size:0.75rem; background:#ef4444; color:#fff;">DEL</button>`
+                            : `<button class="retro-btn reactivate-prod-btn" data-id="${p.id}" style="padding:2px 6px; font-size:0.75rem; background:#10b981; color:#fff;">RESTORE</button>`
+                        }
                     </div>
                 </td>
             </tr>
@@ -1731,6 +1741,10 @@ function renderProductsTable() {
 
     tbody.querySelectorAll('.del-prod-btn').forEach(btn => {
         btn.addEventListener('click', () => confirmDeleteProduct(btn.getAttribute('data-id')));
+    });
+
+    tbody.querySelectorAll('.reactivate-prod-btn').forEach(btn => {
+        btn.addEventListener('click', () => reactivateProduct(btn.getAttribute('data-id')));
     });
 }
 
@@ -1795,8 +1809,8 @@ function openProductForm(product = null) {
         const targetCat = (product ? (product.category || product.category_name || '') : (categories[0]?.name || '')).trim().toLowerCase();
         const targetCatId = product && product.category_id ? String(product.category_id).trim() : null;
         const targetSlug = product && product.category_slug ? String(product.category_slug).trim().toLowerCase() : null;
-        const matchedOption = Array.from(prodCatSelect.options).find(o => 
-            (targetCat && o.value.toLowerCase().trim() === targetCat) || 
+        const matchedOption = Array.from(prodCatSelect.options).find(o =>
+            (targetCat && o.value.toLowerCase().trim() === targetCat) ||
             (targetCatId && o.getAttribute('data-id') === targetCatId) ||
             (targetSlug && o.getAttribute('data-slug')?.toLowerCase().trim() === targetSlug)
         );
@@ -2186,6 +2200,17 @@ function confirmDeleteProduct(productId) {
             showToast(`Error deleting product: ${err.message}`, 'error');
         }
     });
+}
+
+async function reactivateProduct(productId) {
+    const p = products.find(prod => String(prod.id) === String(productId));
+    try {
+        await apiClient.post(`/admin/products/${productId}/reactivate`);
+        showToast(`Product ${p ? p.admin_id : productId} reactivated.`);
+        await refreshProductsFromAPI();
+    } catch (err) {
+        showToast(`Error reactivating product: ${err.message}`, 'error');
+    }
 }
 
 async function saveProductForm() {
@@ -2613,7 +2638,30 @@ async function deleteCategory(categoryId) {
             showToast(`Category '${cat.name}' deleted.`);
             await refreshCategoriesFromAPI();
         } catch (err) {
-            showToast(`Error deleting category: ${err.message}`, 'error');
+            const isConflict = err.status === 409 || err.statusCode === 409 || (err.message && (err.message.includes('active product') || err.message.includes('reassign')));
+            if (isConflict) {
+                const otherCats = categories.filter(c => String(c.id) !== String(categoryId));
+                if (otherCats.length === 0) {
+                    showToast(`Cannot delete category: ${err.message}`, 'error');
+                    return;
+                }
+                const catList = otherCats.map(c => `[ID ${c.id}] ${c.name}`).join('\n');
+                const targetId = prompt(
+                    `Category '${cat.name}' contains active products.\n\nTo proceed, enter the ID of a category to reassign them to:\n\n${catList}`
+                );
+                if (targetId && targetId.trim()) {
+                    try {
+                        await apiClient.delete(`/admin/categories/${categoryId}?reassign_to_category_id=${encodeURIComponent(targetId.trim())}`);
+                        showToast(`Products reassigned and category '${cat.name}' deleted.`);
+                        await refreshCategoriesFromAPI();
+                        await refreshProductsFromAPI();
+                    } catch (reassignErr) {
+                        showToast(`Error during reassignment: ${reassignErr.message}`, 'error');
+                    }
+                }
+            } else {
+                showToast(`Error deleting category: ${err.message}`, 'error');
+            }
         }
     });
 }
@@ -4341,6 +4389,497 @@ async function rejectCustomRequest() {
 }
 
 // =============================================================================
+// 10B. CHIPAKK: PRODUCTION-MATERIAL INVENTORY & STOCK MOVEMENTS (STORE 1 ONLY)
+// =============================================================================
+
+async function refreshChipakkMaterialsFromAPI() {
+    try {
+        const res = await apiClient.get('/admin/production-inventory/materials');
+        const raw = res?.data || (Array.isArray(res) ? res : []);
+        chipakkMaterials = Array.isArray(raw) ? raw : [];
+        renderChipakkMaterialsTable();
+        updateChipakkInventoryKPIs();
+        populateChipakkMaterialSelects();
+    } catch (err) {
+        console.warn('[refreshChipakkMaterialsFromAPI]', err.message);
+    }
+}
+
+function updateChipakkInventoryKPIs() {
+    const totalCountEl = document.getElementById('stat-chipakk-mat-count');
+    const lowCountEl = document.getElementById('stat-chipakk-mat-low');
+    const valueEl = document.getElementById('stat-chipakk-mat-value');
+    const banner = document.getElementById('chipakk-mat-alert-banner');
+    const bannerText = document.getElementById('chipakk-mat-alert-text');
+
+    if (!totalCountEl) return;
+
+    const totalCount = chipakkMaterials.length;
+    const lowStockItems = chipakkMaterials.filter(m => m.is_low_stock && m.is_active);
+    const lowCount = lowStockItems.length;
+
+    let totalValuePaise = 0;
+    chipakkMaterials.forEach(m => {
+        if (m.is_active) {
+            totalValuePaise += (Number(m.stock) || 0) * (Number(m.cost) || 0);
+        }
+    });
+
+    totalCountEl.textContent = totalCount;
+    lowCountEl.textContent = lowCount;
+    if (valueEl) valueEl.textContent = '₹' + Math.round(totalValuePaise / 100).toLocaleString('en-IN');
+
+    if (lowCount > 0 && banner && bannerText) {
+        banner.style.display = 'block';
+        bannerText.textContent = `${lowCount} material(s) at or below safety reorder threshold: ${lowStockItems.map(m => `${m.name} (${m.stock} ${m.unit})`).join(', ')}`;
+    } else if (banner) {
+        banner.style.display = 'none';
+    }
+}
+
+function populateChipakkMaterialSelects() {
+    // 1. Types filter
+    const typeSelect = document.getElementById('chipakk-mat-type-filter');
+    if (typeSelect) {
+        const currentVal = typeSelect.value;
+        const types = [...new Set(chipakkMaterials.map(m => m.type).filter(Boolean))];
+        typeSelect.innerHTML = '<option value="">All Material Types</option>' + types.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
+        typeSelect.value = currentVal;
+    }
+
+    // 2. Movement material dropdown
+    const movSelect = document.getElementById('chipakk-mov-material');
+    if (movSelect) {
+        const cur = movSelect.value;
+        movSelect.innerHTML = '<option value="">-- Choose Material --</option>' + chipakkMaterials.filter(m => m.is_active).map(m => {
+            return `<option value="${m.id}" data-unit="${escapeHtml(m.unit)}" data-stock="${m.stock}" data-safety="${m.safety_stock}" data-cost="${(m.cost / 100).toFixed(2)}">${escapeHtml(m.name)} (${escapeHtml(m.sku || 'No SKU')}) - ${m.stock} ${escapeHtml(m.unit)}</option>`;
+        }).join('');
+        if (cur) movSelect.value = cur;
+    }
+
+    // 3. History filter dropdown
+    const histSelect = document.getElementById('chipakk-hist-mat-filter');
+    if (histSelect) {
+        const cur = histSelect.value;
+        histSelect.innerHTML = '<option value="">All Materials</option>' + chipakkMaterials.map(m => {
+            return `<option value="${m.id}">${escapeHtml(m.name)} (${escapeHtml(m.sku || 'No SKU')})</option>`;
+        }).join('');
+        if (cur) histSelect.value = cur;
+    }
+}
+
+function renderChipakkMaterialsTable() {
+    const tbody = document.getElementById('chipakk-materials-tbody');
+    if (!tbody) return;
+
+    const query = (document.getElementById('chipakk-mat-search')?.value || '').toLowerCase().trim();
+    const filterType = document.getElementById('chipakk-mat-type-filter')?.value || '';
+    const lowOnly = document.getElementById('chipakk-mat-low-filter')?.checked || false;
+
+    const filtered = chipakkMaterials.filter(m => {
+        const matchQ = !query ||
+            (m.name || '').toLowerCase().includes(query) ||
+            (m.sku || '').toLowerCase().includes(query) ||
+            (m.type || '').toLowerCase().includes(query) ||
+            (m.supplier || '').toLowerCase().includes(query);
+        const matchT = !filterType || m.type === filterType;
+        const matchL = !lowOnly || m.is_low_stock;
+        return matchQ && matchT && matchL;
+    });
+
+    if (filtered.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="11" style="text-align: center; padding: 25px; color: #666;">No production materials match your filters. Click "+ ADD MATERIAL" to create one.</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = filtered.map(m => {
+        const isLow = m.is_low_stock;
+        const isAct = m.is_active;
+        const costDisp = m.cost_rupees || (m.cost ? (m.cost / 100).toFixed(2) : '0.00');
+
+        return `
+            <tr style="${!isAct ? 'opacity: 0.6; background: #fafafa;' : ''}">
+                <td><code style="font-weight: 700; background: #f3f4f6; padding: 2px 6px; border: 1px solid #ddd;">${escapeHtml(m.sku || '—')}</code></td>
+                <td>
+                    <strong>${escapeHtml(m.name)}</strong>
+                </td>
+                <td><span class="status-badge" style="background: #3b82f6; color: #fff;">${escapeHtml(m.type)}</span></td>
+                <td>${escapeHtml(m.color || '—')}</td>
+                <td>
+                    <span style="font-weight: 900; font-size: 1rem; color: ${isLow ? '#dc2626' : '#059669'};">
+                        ${Number(m.stock).toLocaleString()} ${escapeHtml(m.unit)}
+                    </span>
+                    ${isLow ? '<span class="status-badge status-inactive" style="margin-left: 4px; font-size: 0.68rem;">LOW</span>' : ''}
+                </td>
+                <td>${Number(m.safety_stock).toLocaleString()} ${escapeHtml(m.unit)}</td>
+                <td>${Number(m.reorder_quantity).toLocaleString()} ${escapeHtml(m.unit)}</td>
+                <td>₹${costDisp}</td>
+                <td>${escapeHtml(m.supplier || '—')}</td>
+                <td>
+                    <span class="status-badge ${isAct ? 'status-live' : 'status-inactive'}">
+                        ${isAct ? 'ACTIVE' : 'INACTIVE'}
+                    </span>
+                </td>
+                <td style="text-align: right;">
+                    <div style="display: flex; gap: 4px; justify-content: flex-end; flex-wrap: wrap;">
+                        <button class="retro-btn chipakk-record-mov-btn" data-id="${m.id}" title="Record Stock Movement" style="padding: 2px 8px; font-size: 0.72rem; background: #f59e0b; color: #000; font-weight: bold;">⚡ MOVE</button>
+                        <button class="retro-btn chipakk-edit-mat-btn" data-id="${m.id}" title="Edit Material" style="padding: 2px 8px; font-size: 0.72rem;">✏️ EDIT</button>
+                        <button class="retro-btn chipakk-toggle-mat-btn" data-id="${m.id}" data-active="${isAct ? '1' : '0'}" title="${isAct ? 'Deactivate' : 'Activate'}" style="padding: 2px 6px; font-size: 0.72rem; background: ${isAct ? '#fee2e2' : '#dcfce7'}; color: ${isAct ? '#991b1b' : '#166534'};">
+                            ${isAct ? 'DEACT' : 'ACT'}
+                        </button>
+                        <button class="retro-btn chipakk-view-hist-btn" data-id="${m.id}" title="View Movement History" style="padding: 2px 6px; font-size: 0.72rem;">📜</button>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }).join('');
+
+    // Wire up row buttons
+    tbody.querySelectorAll('.chipakk-record-mov-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const m = chipakkMaterials.find(x => String(x.id) === btn.getAttribute('data-id'));
+            openChipakkMovementModal(m);
+        });
+    });
+
+    tbody.querySelectorAll('.chipakk-edit-mat-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const m = chipakkMaterials.find(x => String(x.id) === btn.getAttribute('data-id'));
+            openChipakkMaterialModal(m);
+        });
+    });
+
+    tbody.querySelectorAll('.chipakk-toggle-mat-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const id = btn.getAttribute('data-id');
+            const currentActive = btn.getAttribute('data-active') === '1';
+            const m = chipakkMaterials.find(x => String(x.id) === String(id));
+            const confirmMsg = currentActive
+                ? `Deactivate material "${m?.name || id}"? It will not appear in production stock forms.`
+                : `Reactivate material "${m?.name || id}"?`;
+            if (!confirm(confirmMsg)) return;
+
+            try {
+                if (currentActive) {
+                    await apiClient.delete(`/admin/production-inventory/materials/${id}`);
+                } else {
+                    await apiClient.put(`/admin/production-inventory/materials/${id}`, { active: true });
+                }
+                showToast(`Material status updated successfully`);
+                await refreshChipakkMaterialsFromAPI();
+            } catch (err) {
+                showToast(`Failed to update material: ${err.message}`, 'error');
+            }
+        });
+    });
+
+    tbody.querySelectorAll('.chipakk-view-hist-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const id = btn.getAttribute('data-id');
+            openChipakkHistoryModal(id);
+        });
+    });
+}
+
+function openChipakkMaterialModal(material = null) {
+    const modal = document.getElementById('modal-chipakk-material');
+    const title = document.getElementById('chipakk-mat-modal-title');
+    const idInput = document.getElementById('chipakk-mat-id');
+    const nameInput = document.getElementById('chipakk-mat-name');
+    const skuInput = document.getElementById('chipakk-mat-sku');
+    const typeInput = document.getElementById('chipakk-mat-type');
+    const colorInput = document.getElementById('chipakk-mat-color');
+    const unitSelect = document.getElementById('chipakk-mat-unit');
+    const stockInput = document.getElementById('chipakk-mat-stock');
+    const stockWrap = document.getElementById('chipakk-mat-initial-stock-wrap');
+    const costInput = document.getElementById('chipakk-mat-cost');
+    const safetyInput = document.getElementById('chipakk-mat-safety-stock');
+    const reorderInput = document.getElementById('chipakk-mat-reorder-qty');
+    const supplierInput = document.getElementById('chipakk-mat-supplier');
+    const activeCheck = document.getElementById('chipakk-mat-active');
+
+    if (!modal) return;
+
+    if (material) {
+        title.textContent = `[EDIT PRODUCTION MATERIAL: ${material.sku || material.name}]`;
+        idInput.value = material.id;
+        nameInput.value = material.name || '';
+        skuInput.value = material.sku || '';
+        typeInput.value = material.type || 'Vinyl';
+        colorInput.value = material.color || '';
+        unitSelect.value = material.unit || 'meters';
+        if (stockWrap) stockWrap.style.display = 'none';
+        costInput.value = material.cost ? (Number(material.cost) / 100).toFixed(2) : '0.00';
+        safetyInput.value = material.safety_stock || 0;
+        reorderInput.value = material.reorder_quantity || 0;
+        supplierInput.value = material.supplier || '';
+        activeCheck.checked = material.is_active;
+    } else {
+        title.textContent = '[ADD NEW PRODUCTION MATERIAL]';
+        idInput.value = '';
+        nameInput.value = '';
+        skuInput.value = '';
+        typeInput.value = 'Vinyl';
+        colorInput.value = '';
+        unitSelect.value = 'meters';
+        if (stockWrap) stockWrap.style.display = 'block';
+        if (stockInput) stockInput.value = '0.00';
+        costInput.value = '0.00';
+        safetyInput.value = '50';
+        reorderInput.value = '100';
+        supplierInput.value = '';
+        activeCheck.checked = true;
+    }
+
+    modal.style.display = 'flex';
+}
+
+function closeChipakkMaterialModal() {
+    const modal = document.getElementById('modal-chipakk-material');
+    if (modal) modal.style.display = 'none';
+}
+
+async function saveChipakkMaterial(e) {
+    if (e && e.preventDefault) e.preventDefault();
+    const id = document.getElementById('chipakk-mat-id')?.value;
+    const name = document.getElementById('chipakk-mat-name')?.value.trim();
+    const sku = document.getElementById('chipakk-mat-sku')?.value.trim();
+    const type = document.getElementById('chipakk-mat-type')?.value.trim();
+    const color = document.getElementById('chipakk-mat-color')?.value.trim();
+    const unit = document.getElementById('chipakk-mat-unit')?.value;
+    const costRupees = parseFloat(document.getElementById('chipakk-mat-cost')?.value || '0');
+    const safetyStock = parseFloat(document.getElementById('chipakk-mat-safety-stock')?.value || '0');
+    const reorderQuantity = parseFloat(document.getElementById('chipakk-mat-reorder-qty')?.value || '0');
+    const supplier = document.getElementById('chipakk-mat-supplier')?.value.trim();
+    const active = document.getElementById('chipakk-mat-active')?.checked;
+
+    if (!name || !type || !unit) {
+        showToast('Name, type, and unit are required fields', 'error');
+        return;
+    }
+
+    const payload = {
+        name,
+        sku: sku || undefined,
+        type,
+        color: color || null,
+        unit,
+        cost: Math.round(costRupees * 100),
+        safety_stock: safetyStock,
+        reorder_quantity: reorderQuantity,
+        supplier: supplier || null,
+        active: active ? 1 : 0
+    };
+
+    const saveBtn = document.getElementById('btn-save-chipakk-mat');
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'SAVING...'; }
+
+    try {
+        if (id) {
+            await apiClient.put(`/admin/production-inventory/materials/${id}`, payload);
+            showToast(`Material "${name}" updated successfully`);
+        } else {
+            const initialStock = parseFloat(document.getElementById('chipakk-mat-stock')?.value || '0');
+            payload.stock = initialStock;
+            await apiClient.post('/admin/production-inventory/materials', payload);
+            showToast(`Material "${name}" created successfully`);
+        }
+        closeChipakkMaterialModal();
+        await refreshChipakkMaterialsFromAPI();
+    } catch (err) {
+        showToast(`Failed to save material: ${err.message}`, 'error');
+    } finally {
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'SAVE MATERIAL'; }
+    }
+}
+
+function openChipakkMovementModal(material = null) {
+    const modal = document.getElementById('modal-chipakk-movement');
+    const matSelect = document.getElementById('chipakk-mov-material');
+    const typeSelect = document.getElementById('chipakk-mov-type');
+    const dirWrap = document.getElementById('chipakk-mov-direction-wrap');
+    const qtyInput = document.getElementById('chipakk-mov-qty');
+    const costInput = document.getElementById('chipakk-mov-cost');
+    const refInput = document.getElementById('chipakk-mov-ref');
+    const notesInput = document.getElementById('chipakk-mov-notes');
+    const infoBox = document.getElementById('chipakk-mov-current-info');
+    const curStockEl = document.getElementById('chipakk-mov-cur-stock');
+    const curSafetyEl = document.getElementById('chipakk-mov-cur-safety');
+    const unitLabel = document.getElementById('chipakk-mov-unit-label');
+
+    if (!modal) return;
+
+    populateChipakkMaterialSelects();
+
+    if (material) {
+        matSelect.value = material.id;
+        if (infoBox) {
+            infoBox.style.display = 'block';
+            if (curStockEl) curStockEl.textContent = `${material.stock} ${material.unit}`;
+            if (curSafetyEl) curSafetyEl.textContent = `${material.safety_stock} ${material.unit}`;
+        }
+        if (unitLabel) unitLabel.textContent = `(${material.unit})`;
+        if (costInput && material.cost) costInput.value = (material.cost / 100).toFixed(2);
+    } else {
+        matSelect.value = '';
+        if (infoBox) infoBox.style.display = 'none';
+        if (unitLabel) unitLabel.textContent = '';
+        if (costInput) costInput.value = '';
+    }
+
+    typeSelect.value = 'PURCHASE';
+    if (dirWrap) dirWrap.style.display = 'none';
+    qtyInput.value = '';
+    refInput.value = '';
+    notesInput.value = '';
+
+    modal.style.display = 'flex';
+}
+
+function closeChipakkMovementModal() {
+    const modal = document.getElementById('modal-chipakk-movement');
+    if (modal) modal.style.display = 'none';
+}
+
+async function saveChipakkMovement(e) {
+    if (e && e.preventDefault) e.preventDefault();
+    const materialId = document.getElementById('chipakk-mov-material')?.value;
+    const type = document.getElementById('chipakk-mov-type')?.value;
+    const direction = document.getElementById('chipakk-mov-direction')?.value || 'add';
+    const quantity = parseFloat(document.getElementById('chipakk-mov-qty')?.value || '0');
+    const costRupees = parseFloat(document.getElementById('chipakk-mov-cost')?.value || '0');
+    const referenceId = document.getElementById('chipakk-mov-ref')?.value.trim();
+    const notes = document.getElementById('chipakk-mov-notes')?.value.trim();
+
+    if (!materialId) {
+        showToast('Please select a material', 'error');
+        return;
+    }
+    if (!quantity || isNaN(quantity) || quantity <= 0) {
+        showToast('Quantity must be greater than 0', 'error');
+        return;
+    }
+
+    const payload = {
+        materialId: parseInt(materialId, 10),
+        type,
+        quantity,
+        direction: type === 'ADJUSTMENT' ? direction : undefined,
+        costPerUnit: costRupees > 0 ? Math.round(costRupees * 100) : undefined,
+        referenceId: referenceId || undefined,
+        notes: notes || undefined
+    };
+
+    const saveBtn = document.getElementById('btn-save-chipakk-mov');
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'RECORDING...'; }
+
+    try {
+        const res = await apiClient.post('/admin/production-inventory/movements', payload);
+        const resultingStock = res?.data?.movement?.resulting_stock ?? res?.data?.material?.stock;
+        showToast(`Stock updated! New balance: ${resultingStock}`);
+        closeChipakkMovementModal();
+        await refreshChipakkMaterialsFromAPI();
+    } catch (err) {
+        showToast(`Stock movement failed: ${err.message}`, 'error');
+    } finally {
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'RECORD MOVEMENT'; }
+    }
+}
+
+async function openChipakkHistoryModal(materialId = null) {
+    const modal = document.getElementById('modal-chipakk-movement-history');
+    if (!modal) return;
+
+    populateChipakkMaterialSelects();
+
+    const matFilter = document.getElementById('chipakk-hist-mat-filter');
+    if (matFilter) {
+        matFilter.value = materialId ? String(materialId) : '';
+    }
+
+    modal.style.display = 'flex';
+    await refreshChipakkMovements();
+}
+
+function closeChipakkHistoryModal() {
+    const modal = document.getElementById('modal-chipakk-movement-history');
+    if (modal) modal.style.display = 'none';
+}
+
+async function refreshChipakkMovements() {
+    const tbody = document.getElementById('chipakk-history-tbody');
+    if (!tbody) return;
+
+    const materialId = document.getElementById('chipakk-hist-mat-filter')?.value || '';
+    const type = document.getElementById('chipakk-hist-type-filter')?.value || '';
+
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; padding: 20px; color: #666;">Loading movement history...</td></tr>';
+
+    try {
+        const queryParams = { limit: 100 };
+        if (materialId) queryParams.materialId = materialId;
+        if (type) queryParams.type = type;
+
+        const res = await apiClient.get('/admin/production-inventory/movements', queryParams);
+        const data = res?.data || res;
+        const movements = data?.movements || [];
+
+        const countEl = document.getElementById('stat-chipakk-movements-count');
+        if (countEl && data?.total !== undefined) {
+            countEl.textContent = data.total;
+        }
+
+        if (movements.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; padding: 25px; color: #666;">No stock movements recorded yet.</td></tr>';
+            return;
+        }
+
+        const typeColors = {
+            PURCHASE: '#059669',
+            CONSUMPTION: '#2563eb',
+            WASTE: '#dc2626',
+            ADJUSTMENT: '#d97706',
+            RETURN: '#7c3aed'
+        };
+
+        tbody.innerHTML = movements.map(mv => {
+            const isAddition = mv.type === 'PURCHASE' || mv.type === 'RETURN' || (mv.resulting_stock > mv.previous_stock);
+            const deltaSign = isAddition ? '+' : '-';
+            const deltaColor = isAddition ? '#059669' : '#dc2626';
+            const dt = mv.created_at ? new Date(mv.created_at).toLocaleString() : '—';
+
+            return `
+                <tr>
+                    <td style="font-size: 0.8rem; white-space: nowrap;">${dt}</td>
+                    <td>
+                        <strong>${escapeHtml(mv.material_name || 'Material #' + mv.material_id)}</strong>
+                        ${mv.material_sku ? `<br><small style="color: #666;">${escapeHtml(mv.material_sku)}</small>` : ''}
+                    </td>
+                    <td>
+                        <span class="status-badge" style="background: ${typeColors[mv.type] || '#666'}; color: #fff;">
+                            ${escapeHtml(mv.type)}
+                        </span>
+                    </td>
+                    <td>
+                        <span style="font-weight: 700; color: ${deltaColor};">
+                            ${deltaSign}${Number(mv.quantity).toLocaleString()} ${escapeHtml(mv.material_unit || '')}
+                        </span>
+                    </td>
+                    <td style="font-size: 0.82rem;">
+                        ${Number(mv.previous_stock).toLocaleString()} ➔ <strong>${Number(mv.resulting_stock).toLocaleString()}</strong>
+                    </td>
+                    <td><code style="font-size: 0.78rem;">${escapeHtml(mv.reference_id || '—')}</code></td>
+                    <td style="font-size: 0.8rem; color: #555;">${escapeHtml(mv.created_by || 'admin')}</td>
+                    <td style="font-size: 0.8rem; max-width: 200px; word-break: break-word;">${escapeHtml(mv.notes || '—')}</td>
+                </tr>
+            `;
+        }).join('');
+    } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; padding: 20px; color: #dc2626;">Failed to load history: ${escapeHtml(err.message)}</td></tr>`;
+    }
+}
+
+// =============================================================================
 // 11. VISUAL STORE BUILDER MANAGEMENT (LEGACY)
 // =============================================================================
 
@@ -6047,6 +6586,33 @@ function setupEventListeners() {
         apiClient.setActiveStoreId(numericId);
         updateStoreSwitcherUI(numericId);
 
+        // Close every open edit form / detail modal and clear its editing-id BEFORE loading the new store's data.
+        // Without this, a form opened against the OLD store (e.g. editing product #42 on CHIPAKK) stayed open and
+        // populated with the old store's values across the switch; clicking Save then sent a PUT for the old
+        // store's id under the newly-active store's X-Store-ID header -- a cross-store write. Same risk for the
+        // order-detail modal's Update Status / Save Courier Details actions. This resets ALL of them defensively,
+        // not just the two confirmed during audit, since any open form + a store switch is the same risk class.
+        ['product-form-container', 'category-form-container', 'coupon-form-container', 'shipping-form-container',
+         'event-form-container', 'material-form-container', 'finishing-form-container', 'inventory-form-container',
+         'hero-slide-form-container', 'banner-form-container', 'team-form-container'].forEach((id) => {
+            const el = document.getElementById(id);
+            if (el) el.style.display = 'none';
+        });
+        editingProductId = null;
+        editingCategoryId = null;
+        editingEventId = null;
+        editingCouponId = null;
+        editingShippingId = null;
+        editingMaterialId = null;
+        editingFinishingId = null;
+        editingHeroSlideId = null;
+        editingBannerId = null;
+        const orderDetailModal = document.getElementById('order-detail-modal');
+        if (orderDetailModal) orderDetailModal.style.display = 'none';
+        activeOrderViewing = null;
+        const custDetailModal = document.getElementById('customer-detail-modal');
+        if (custDetailModal) custDetailModal.style.display = 'none';
+
         showToast(`Switched active store context to ${numericId === 2 ? 'THE MARSHANS (3D Printing)' : 'CHIPAKK (Stickers & Merch)'}`);
 
         // Reset product search and filters to prevent cross-store filter carryover
@@ -6074,10 +6640,13 @@ function setupEventListeners() {
                 refreshDashboardFromAPI(),
                 refreshOrdersFromAPI(),
                 refreshProductsFromAPI(),
-                refreshMaterialsFromAPI(),
-                refreshFinishingFromAPI(),
+                numericId === 1 ? refreshChipakkMaterialsFromAPI() : refreshMaterialsFromAPI(),
+                numericId === 2 ? refreshFinishingFromAPI() : Promise.resolve(),
                 refreshReviewsFromAPI(),
-                refreshShippingRulesFromAPI()
+                refreshShippingRulesFromAPI(),
+                refreshStoreBuilderFromAPI(),
+                refreshEventsFromAPI(),
+                refreshCouponsFromAPI()
             ]);
         } catch (_) {}
     }
@@ -6424,6 +6993,60 @@ function setupEventListeners() {
         const m = document.getElementById('custom-request-modal');
         if (m) m.style.display = 'none';
     });
+
+    // --- CHIPAKK PRODUCTION INVENTORY EVENT LISTENERS ---
+    document.getElementById('btn-chipakk-add-material')?.addEventListener('click', () => openChipakkMaterialModal());
+    document.getElementById('btn-chipakk-record-movement')?.addEventListener('click', () => openChipakkMovementModal());
+    document.getElementById('btn-chipakk-history')?.addEventListener('click', () => openChipakkHistoryModal());
+    document.getElementById('btn-refresh-chipakk-mat')?.addEventListener('click', refreshChipakkMaterialsFromAPI);
+    document.getElementById('chipakk-mat-search')?.addEventListener('input', renderChipakkMaterialsTable);
+    document.getElementById('chipakk-mat-type-filter')?.addEventListener('change', renderChipakkMaterialsTable);
+    document.getElementById('chipakk-mat-low-filter')?.addEventListener('change', renderChipakkMaterialsTable);
+    document.getElementById('btn-reorder-filter')?.addEventListener('click', () => {
+        const chk = document.getElementById('chipakk-mat-low-filter');
+        if (chk) { chk.checked = true; renderChipakkMaterialsTable(); }
+    });
+
+    document.getElementById('close-chipakk-mat-modal-btn')?.addEventListener('click', closeChipakkMaterialModal);
+    document.getElementById('btn-cancel-chipakk-mat')?.addEventListener('click', closeChipakkMaterialModal);
+    document.getElementById('form-chipakk-material')?.addEventListener('submit', saveChipakkMaterial);
+
+    document.getElementById('close-chipakk-mov-modal-btn')?.addEventListener('click', closeChipakkMovementModal);
+    document.getElementById('btn-cancel-chipakk-mov')?.addEventListener('click', closeChipakkMovementModal);
+    document.getElementById('form-chipakk-movement')?.addEventListener('submit', saveChipakkMovement);
+
+    document.getElementById('chipakk-mov-material')?.addEventListener('change', (e) => {
+        const selectedId = e.target.value;
+        const mat = chipakkMaterials.find(x => String(x.id) === String(selectedId));
+        const infoBox = document.getElementById('chipakk-mov-current-info');
+        const curStockEl = document.getElementById('chipakk-mov-cur-stock');
+        const curSafetyEl = document.getElementById('chipakk-mov-cur-safety');
+        const unitLabel = document.getElementById('chipakk-mov-unit-label');
+        const costInput = document.getElementById('chipakk-mov-cost');
+
+        if (mat) {
+            if (infoBox) infoBox.style.display = 'block';
+            if (curStockEl) curStockEl.textContent = `${mat.stock} ${mat.unit}`;
+            if (curSafetyEl) curSafetyEl.textContent = `${mat.safety_stock} ${mat.unit}`;
+            if (unitLabel) unitLabel.textContent = `(${mat.unit})`;
+            if (costInput && mat.cost) costInput.value = (mat.cost / 100).toFixed(2);
+        } else {
+            if (infoBox) infoBox.style.display = 'none';
+            if (unitLabel) unitLabel.textContent = '';
+        }
+    });
+
+    document.getElementById('chipakk-mov-type')?.addEventListener('change', (e) => {
+        const dirWrap = document.getElementById('chipakk-mov-direction-wrap');
+        const costWrap = document.getElementById('chipakk-mov-cost-wrap');
+        if (dirWrap) dirWrap.style.display = e.target.value === 'ADJUSTMENT' ? 'block' : 'none';
+        if (costWrap) costWrap.style.display = e.target.value === 'PURCHASE' ? 'block' : 'none';
+    });
+
+    document.getElementById('close-chipakk-hist-modal-btn')?.addEventListener('click', closeChipakkHistoryModal);
+    document.getElementById('btn-refresh-chipakk-hist')?.addEventListener('click', refreshChipakkMovements);
+    document.getElementById('chipakk-hist-mat-filter')?.addEventListener('change', refreshChipakkMovements);
+    document.getElementById('chipakk-hist-type-filter')?.addEventListener('change', refreshChipakkMovements);
 
     // Single Guarded Periodic Polling (every 30s) for live sessions, team members, and audit logs
     if (!window.__adminPollingInterval) {

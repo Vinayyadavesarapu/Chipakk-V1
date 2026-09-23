@@ -1754,14 +1754,30 @@
 
       if (user) {
         // Enforce Admin vs Customer Isolation: verify via /customer/me
+        let isAdmin = false;
         try {
           const meData = await fetchAuthenticated("/customer/me");
           if (meData && meData.is_admin) {
-            // Logged in user is an Administrator — do NOT display admin identity on customer storefront
-            renderSignedOutHeader();
-            return;
+            isAdmin = true;
           }
         } catch (_) {}
+
+        if (isAdmin) {
+          const adminName = window.CHIPAKK?.auth?.getFirstName ? window.CHIPAKK.auth.getFirstName(user) : (user.displayName ? user.displayName.split(" ")[0] : "Admin");
+          if (accountBtn) {
+            accountBtn.setAttribute("aria-label", `Admin Session - Signed in as ${adminName}`);
+            accountBtn.innerHTML = `
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 2L3 7v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-9-5z"/></svg>
+              <span class="header-account-text">ADMIN / ${escapeHtml(adminName)}</span>
+              <span class="auth-status-dot" style="background: #8b5cf6;" title="Admin Session Active"></span>
+            `;
+            accountBtn.classList.add("is-authenticated");
+          }
+          if (drawerAccountLink) {
+            drawerAccountLink.textContent = `Admin Session (${adminName})`;
+          }
+          return;
+        }
 
         const firstName = window.CHIPAKK?.auth?.getFirstName ? window.CHIPAKK.auth.getFirstName(user) : (user.displayName ? user.displayName.split(" ")[0] : "Member");
         if (accountBtn) {

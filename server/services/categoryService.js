@@ -1,4 +1,5 @@
 const { pool } = require('../config/database');
+const { safelyDeleteUploadedFileIfUnreferenced } = require('../utils/imageUtils');
 
 // Cache column check results
 const taxProfileService = require('./taxProfileService');
@@ -965,29 +966,158 @@ const updateCategory = async (id, {
 };
 
 /**
- * Delete a category
+ * Delete a category safely.
+ * Strictly prevents accidental or silent orphaning of active products.
+ * If active products exist, requires explicit reassignment via options.reassignToCategoryId.
+ *
+ * @param {number|string} id Category ID
+ * @param {number|string} [storeId=1] Store ID scope
+ * @param {object|number} [options={}] Optional options or target reassignment category ID
+ * @returns {Promise<boolean>}
  */
-const deleteCategory = async (id, storeId = null) => {
+const deleteCategory = async (id, storeId = null, options = {}) => {
   const numId = parseInt(id, 10);
   if (isNaN(numId)) {
     throw new Error('Invalid category ID');
   }
 
   const hasStoreId = await checkHasStoreId();
+  const effectiveStoreId = storeId !== null && storeId !== undefined ? parseInt(storeId, 10) : 1;
   const params = [numId];
   let storeCondition = '';
   if (hasStoreId && storeId !== null && storeId !== undefined) {
-    const sId = parseInt(storeId, 10);
-    if (sId === 1) {
+    if (effectiveStoreId === 1) {
       storeCondition = ' AND (store_id = 1 OR store_id IS NULL)';
     } else {
       storeCondition = ' AND store_id = ?';
-      params.push(sId);
+      params.push(effectiveStoreId);
     }
   }
 
-  const [result] = await pool.execute(`DELETE FROM categories WHERE id = ?${storeCondition}`, params);
-  return result.affectedRows > 0;
+  // 1. Verify category exists and matches store scope
+  const [catRows] = await pool.execute(
+    `SELECT id, name, image_url FROM categories WHERE id = ?${storeCondition} LIMIT 1`,
+    params
+  );
+  if (!catRows || catRows.length === 0) {
+    return false;
+  }
+  const category = catRows[0];
+
+  // 2. Check for active products assigned to this category
+  let prodCountQuery = 'SELECT COUNT(*) AS active_count FROM products WHERE category_id = ? AND (active = 1 OR active IS NULL)';
+  const prodCountParams = [numId];
+  if (hasStoreId && effectiveStoreId === 1) {
+    prodCountQuery += ' AND (store_id = 1 OR store_id IS NULL)';
+  } else if (hasStoreId && effectiveStoreId) {
+    prodCountQuery += ' AND store_id = ?';
+    prodCountParams.push(effectiveStoreId);
+  }
+
+  const [prodCountRows] = await pool.execute(prodCountQuery, prodCountParams);
+  const activeCount = prodCountRows && prodCountRows[0] ? prodCountRows[0].active_count : 0;
+
+  // Resolve target reassignment ID if provided
+  let targetReassignId = null;
+  if (typeof options === 'number' || (typeof options === 'string' && /^\d+$/.test(options))) {
+    targetReassignId = parseInt(options, 10);
+  } else if (options && typeof options === 'object') {
+    const rawTarget = options.reassignToCategoryId || options.reassign_to_category_id;
+    if (rawTarget !== undefined && rawTarget !== null && /^\d+$/.test(String(rawTarget).trim())) {
+      targetReassignId = parseInt(rawTarget, 10);
+    }
+  }
+
+  // 3. If category has active products and no reassignment target is provided, reject with 409 Conflict
+  if (activeCount > 0 && !targetReassignId) {
+    const err = new Error(`Cannot delete category "${category.name}" because it contains ${activeCount} active product(s). Please reassign them to another category first.`);
+    err.statusCode = 409;
+    err.active_products = activeCount;
+    throw err;
+  }
+
+  // 4. If reassignment target is specified, validate target category
+  if (targetReassignId) {
+    if (targetReassignId === numId) {
+      const err = new Error('Cannot reassign products to the category being deleted.');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const targetParams = [targetReassignId];
+    let targetStoreCondition = '';
+    if (hasStoreId) {
+      if (effectiveStoreId === 1) {
+        targetStoreCondition = ' AND (store_id = 1 OR store_id IS NULL)';
+      } else {
+        targetStoreCondition = ' AND store_id = ?';
+        targetParams.push(effectiveStoreId);
+      }
+    }
+
+    const [targetRows] = await pool.execute(
+      `SELECT id, name FROM categories WHERE id = ?${targetStoreCondition} LIMIT 1`,
+      targetParams
+    );
+    if (!targetRows || targetRows.length === 0) {
+      const err = new Error(`Target category ${targetReassignId} for reassignment not found.`);
+      err.statusCode = 404;
+      throw err;
+    }
+  }
+
+  // 5. Execute reassignment & deletion within a transaction
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    if (targetReassignId) {
+      let reassignQuery = 'UPDATE products SET category_id = ? WHERE category_id = ?';
+      const reassignParams = [targetReassignId, numId];
+      if (hasStoreId && effectiveStoreId === 1) {
+        reassignQuery += ' AND (store_id = 1 OR store_id IS NULL)';
+      } else if (hasStoreId && effectiveStoreId) {
+        reassignQuery += ' AND store_id = ?';
+        reassignParams.push(effectiveStoreId);
+      }
+      await connection.execute(reassignQuery, reassignParams);
+    } else {
+      // For any inactive products, set category_id to NULL explicitly
+      await connection.execute('UPDATE products SET category_id = NULL WHERE category_id = ?', [numId]);
+    }
+
+    // Clean up category media entries
+    try {
+      await connection.execute('DELETE FROM category_media WHERE category_id = ?', [numId]);
+    } catch (_) {}
+
+    // Delete category row
+    const deleteParams = [numId];
+    let deleteCondition = '';
+    if (hasStoreId && storeId !== null && storeId !== undefined) {
+      if (effectiveStoreId === 1) {
+        deleteCondition = ' AND (store_id = 1 OR store_id IS NULL)';
+      } else {
+        deleteCondition = ' AND store_id = ?';
+        deleteParams.push(effectiveStoreId);
+      }
+    }
+
+    const [delResult] = await connection.execute(`DELETE FROM categories WHERE id = ?${deleteCondition}`, deleteParams);
+    await connection.commit();
+
+    // 6. Safely clean up category image if not referenced elsewhere
+    if (category.image_url) {
+      await safelyDeleteUploadedFileIfUnreferenced(category.image_url, null, pool, { category_id: numId });
+    }
+
+    return delResult.affectedRows > 0;
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
 };
 
 module.exports = {

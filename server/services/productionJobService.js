@@ -61,9 +61,14 @@ const getProductionJobs = async ({ storeId = 2, stage = null, search = null } = 
   return rows;
 };
 
-const getProductionJobById = async (id) => {
-  const query = `SELECT * FROM production_jobs WHERE id = ?`;
-  const [rows] = await pool.execute(query, [id]);
+/** Scoped to a store: production_jobs is multi-tenant (getProductionJobs filters by store_id), so an unscoped
+ * by-id lookup let any admin viewing one store read/advance the other store's job by guessing a sequential id.
+ * storeId is optional (kept for the create-then-return-what-I-just-inserted case). */
+const getProductionJobById = async (id, storeId = null) => {
+  const params = [id];
+  let query = `SELECT * FROM production_jobs WHERE id = ?`;
+  if (storeId) { query += ' AND (store_id = ? OR store_id IS NULL)'; params.push(storeId); }
+  const [rows] = await pool.execute(query, params);
   return rows[0] || null;
 };
 
@@ -103,7 +108,7 @@ const createProductionJob = async ({
   return getProductionJobById(result.insertId);
 };
 
-const updateProductionJobStage = async (id, stage, stage_notes = null) => {
+const updateProductionJobStage = async (id, stage, stage_notes = null, storeId = null) => {
   if (!STAGES.includes(stage)) {
     throw new Error(`Invalid stage: '${stage}'. Must be one of: ${STAGES.join(', ')}`);
   }
@@ -123,14 +128,15 @@ const updateProductionJobStage = async (id, stage, stage_notes = null) => {
   }
 
   params.push(id);
-  const query = `UPDATE production_jobs SET stage = ? ${updateExtra} WHERE id = ?`;
+  let query = `UPDATE production_jobs SET stage = ? ${updateExtra} WHERE id = ?`;
+  if (storeId) { query += ' AND (store_id = ? OR store_id IS NULL)'; params.push(storeId); }
   await pool.execute(query, params);
 
-  return getProductionJobById(id);
+  return getProductionJobById(id, storeId);
 };
 
-const advanceProductionJobStage = async (id) => {
-  const job = await getProductionJobById(id);
+const advanceProductionJobStage = async (id, storeId = null) => {
+  const job = await getProductionJobById(id, storeId);
   if (!job) throw new Error(`Job #${id} not found`);
 
   const currentIndex = STAGES.indexOf(job.stage);
@@ -139,7 +145,7 @@ const advanceProductionJobStage = async (id) => {
   }
 
   const nextStage = STAGES[currentIndex + 1];
-  return updateProductionJobStage(id, nextStage, `Advanced to ${nextStage}`);
+  return updateProductionJobStage(id, nextStage, `Advanced to ${nextStage}`, storeId);
 };
 
 module.exports = {

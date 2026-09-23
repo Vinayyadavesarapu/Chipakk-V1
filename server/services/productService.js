@@ -1,5 +1,5 @@
 const { pool } = require('../config/database');
-const { sanitizeProductImageUrl, safelyDeleteUploadedFile } = require('../utils/imageUtils');
+const { sanitizeProductImageUrl, safelyDeleteUploadedFile, safelyDeleteUploadedFileIfUnreferenced } = require('../utils/imageUtils');
 const taxProfileService = require('./taxProfileService');
 
 /**
@@ -1204,8 +1204,8 @@ const deleteProductImage = async (productId, imageId, storeId = 1) => {
   // 3. Remove DB record safely
   await pool.execute('DELETE FROM product_images WHERE id = ? AND product_id = ?', [numImageId, numProductId]);
 
-  // 4. Safely delete physical file if local upload
-  safelyDeleteUploadedFile(imageToDelete.image_url, imageToDelete.storage_path);
+  // 4. Safely delete physical file only if not referenced elsewhere in the database
+  await safelyDeleteUploadedFileIfUnreferenced(imageToDelete.image_url, imageToDelete.storage_path, pool, { product_image_id: numImageId });
 
   // 5. Handle primary image deletion safely: promote next image to primary if deleted was primary
   if (imageToDelete.is_primary === 1) {
@@ -1233,6 +1233,34 @@ const deleteProductImage = async (productId, imageId, storeId = 1) => {
   };
 };
 
+/**
+ * Reactivate a deactivated product by BIGINT ID
+ */
+const reactivateProduct = async (id, storeId = 1) => {
+  const numId = parseInt(id, 10);
+  if (isNaN(numId)) throw new Error('Invalid product ID');
+
+  const cols = await checkProductColumns();
+  const params = [numId];
+  let storeCondition = '';
+  if (cols.store_id && storeId !== null && storeId !== undefined) {
+    storeCondition = ' AND (store_id = ? OR store_id IS NULL)';
+    params.push(storeId);
+  }
+
+  const [existing] = await pool.execute(`SELECT id FROM products WHERE id = ?${storeCondition}`, params);
+  if (!existing || existing.length === 0) {
+    const err = new Error(`Product ${numId} not found`);
+    err.statusCode = 404;
+    throw err;
+  }
+
+  await pool.execute(`UPDATE products SET active = 1 WHERE id = ?${storeCondition}`, params);
+  await pool.execute('UPDATE product_variants SET active = 1 WHERE product_id = ?', [numId]);
+
+  return getProductById(numId, storeId);
+};
+
 module.exports = {
   checkProductColumns,
   resetColumnCheckCache,
@@ -1242,5 +1270,6 @@ module.exports = {
   createProduct,
   updateProduct,
   deleteProduct,
-  deleteProductImage
+  deleteProductImage,
+  reactivateProduct
 };

@@ -1,4 +1,5 @@
 const { pool } = require('../config/database');
+const { safelyDeleteUploadedFileIfUnreferenced } = require('../utils/imageUtils');
 
 /**
  * Default fallback experiences for Store 2
@@ -546,14 +547,117 @@ const updateCategory = async (id, updateData) => {
 };
 
 /**
- * Delete / deactivate a Marshans category
+ * Delete / deactivate a Marshans category safely.
+ * Strictly prevents accidental or silent orphaning of active Marshans products.
+ * If active products exist, requires explicit reassignment via options.reassignToCategoryId.
+ *
+ * @param {number|string} id Category ID
+ * @param {number|string} [storeId=2] Store ID scope (defaults to 2)
+ * @param {object|number} [options={}] Optional options or target reassignment category ID
+ * @returns {Promise<boolean>}
  */
-const deleteCategory = async (id) => {
+const deleteCategory = async (id, storeId = 2, options = {}) => {
   const numId = parseInt(id, 10);
   if (isNaN(numId)) throw new Error('Invalid category ID');
 
-  const [result] = await pool.execute('DELETE FROM marshans_categories WHERE id = ? AND store_id = 2', [numId]);
-  return result.affectedRows > 0;
+  // 1. Verify category exists and belongs to Store 2
+  const [catRows] = await pool.execute(
+    'SELECT id, name, image_url FROM marshans_categories WHERE id = ? AND store_id = 2 LIMIT 1',
+    [numId]
+  );
+  if (!catRows || catRows.length === 0) {
+    return false;
+  }
+  const category = catRows[0];
+
+  // 2. Check for active Marshans products assigned to this category
+  const [prodCountRows] = await pool.execute(
+    'SELECT COUNT(*) AS active_count FROM marshans_products WHERE category_id = ? AND store_id = 2 AND active = 1',
+    [numId]
+  );
+  const activeCount = prodCountRows && prodCountRows[0] ? prodCountRows[0].active_count : 0;
+
+  // Resolve target reassignment ID if provided
+  let targetReassignId = null;
+  if (typeof options === 'number' || (typeof options === 'string' && /^\d+$/.test(options))) {
+    targetReassignId = parseInt(options, 10);
+  } else if (options && typeof options === 'object') {
+    const rawTarget = options.reassignToCategoryId || options.reassign_to_category_id;
+    if (rawTarget !== undefined && rawTarget !== null && /^\d+$/.test(String(rawTarget).trim())) {
+      targetReassignId = parseInt(rawTarget, 10);
+    }
+  }
+
+  // 3. If category has active products and no reassignment target is provided, reject with 409 Conflict
+  if (activeCount > 0 && !targetReassignId) {
+    const err = new Error(`Cannot delete Marshans category "${category.name}" because it contains ${activeCount} active product(s). Please reassign them to another category first.`);
+    err.statusCode = 409;
+    err.active_products = activeCount;
+    throw err;
+  }
+
+  // 4. If reassignment target is specified, validate target category in Store 2
+  if (targetReassignId) {
+    if (targetReassignId === numId) {
+      const err = new Error('Cannot reassign products to the category being deleted.');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const [targetRows] = await pool.execute(
+      'SELECT id, name FROM marshans_categories WHERE id = ? AND store_id = 2 LIMIT 1',
+      [targetReassignId]
+    );
+    if (!targetRows || targetRows.length === 0) {
+      const err = new Error(`Target Marshans category ${targetReassignId} for reassignment not found.`);
+      err.statusCode = 404;
+      throw err;
+    }
+  }
+
+  // 5. Execute reassignment & deletion within a transaction
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    if (targetReassignId) {
+      await connection.execute(
+        'UPDATE marshans_products SET category_id = ? WHERE category_id = ? AND store_id = 2',
+        [targetReassignId, numId]
+      );
+    } else {
+      // Inactive products get category_id = NULL explicitly
+      await connection.execute(
+        'UPDATE marshans_products SET category_id = NULL WHERE category_id = ? AND store_id = 2',
+        [numId]
+      );
+    }
+
+    // Clean up category media entries
+    try {
+      await connection.execute('DELETE FROM marshans_category_media WHERE category_id = ?', [numId]);
+    } catch (_) {}
+
+    // Delete category row
+    const [delResult] = await connection.execute(
+      'DELETE FROM marshans_categories WHERE id = ? AND store_id = 2',
+      [numId]
+    );
+
+    await connection.commit();
+
+    // 6. Safely clean up category image if not referenced elsewhere
+    if (category.image_url) {
+      await safelyDeleteUploadedFileIfUnreferenced(category.image_url, null, pool, { marshans_category_id: numId });
+    }
+
+    return delResult.affectedRows > 0;
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
 };
 
 module.exports = {

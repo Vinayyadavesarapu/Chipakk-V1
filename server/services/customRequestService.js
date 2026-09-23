@@ -67,9 +67,15 @@ const getCustomRequests = async ({ storeId = 2, status = null, search = null } =
   return rows;
 };
 
-const getCustomRequestById = async (id) => {
-  const query = `SELECT * FROM custom_3d_requests WHERE id = ?`;
-  const [rows] = await pool.execute(query, [id]);
+/** Scoped to a store: custom_3d_requests is multi-tenant (getCustomRequests filters by store_id), so an unscoped
+ * by-id lookup let any admin viewing one store read/quote/convert the other store's request by guessing a
+ * sequential id. storeId is optional (kept for the create-then-return-what-I-just-inserted case, and for the
+ * internal call inside convertCustomRequestToOrder which re-derives it from the already-scoped row). */
+const getCustomRequestById = async (id, storeId = null) => {
+  const params = [id];
+  let query = `SELECT * FROM custom_3d_requests WHERE id = ?`;
+  if (storeId) { query += ' AND (store_id = ? OR store_id IS NULL)'; params.push(storeId); }
+  const [rows] = await pool.execute(query, params);
   return rows[0] || null;
 };
 
@@ -119,7 +125,7 @@ const createCustomRequest = async ({
   return getCustomRequestById(result.insertId);
 };
 
-const updateCustomRequestStatus = async (id, status, admin_notes = null) => {
+const updateCustomRequestStatus = async (id, status, admin_notes = null, storeId = null) => {
   if (!REQUEST_STATUSES.includes(status)) {
     throw new Error(`Invalid status: '${status}'. Allowed: ${REQUEST_STATUSES.join(', ')}`);
   }
@@ -132,19 +138,20 @@ const updateCustomRequestStatus = async (id, status, admin_notes = null) => {
   }
   params.push(id);
 
-  const query = `UPDATE custom_3d_requests SET status = ? ${extra} WHERE id = ?`;
+  let query = `UPDATE custom_3d_requests SET status = ? ${extra} WHERE id = ?`;
+  if (storeId) { query += ' AND (store_id = ? OR store_id IS NULL)'; params.push(storeId); }
   await pool.execute(query, params);
-  return getCustomRequestById(id);
+  return getCustomRequestById(id, storeId);
 };
 
-const setCustomRequestQuote = async (id, { quote_amount, quote_lead_days = 3, admin_notes = '' }) => {
+const setCustomRequestQuote = async (id, { quote_amount, quote_lead_days = 3, admin_notes = '' }, storeId = null) => {
   if (quote_amount === undefined || isNaN(Number(quote_amount))) {
     throw new Error('Quote amount in paise is required');
   }
 
-  const query = `
-    UPDATE custom_3d_requests 
-    SET 
+  let query = `
+    UPDATE custom_3d_requests
+    SET
       quote_amount = ?,
       quote_lead_days = ?,
       quote_valid_until = DATE_ADD(NOW(), INTERVAL 14 DAY),
@@ -152,18 +159,20 @@ const setCustomRequestQuote = async (id, { quote_amount, quote_lead_days = 3, ad
       status = 'Quotation'
     WHERE id = ?
   `;
-  await pool.execute(query, [
+  const params = [
     parseInt(quote_amount, 10),
     parseInt(quote_lead_days, 10) || 3,
     admin_notes || 'Quotation prepared',
     id
-  ]);
+  ];
+  if (storeId) { query += ' AND (store_id = ? OR store_id IS NULL)'; params.push(storeId); }
+  await pool.execute(query, params);
 
-  return getCustomRequestById(id);
+  return getCustomRequestById(id, storeId);
 };
 
-const convertCustomRequestToOrder = async (id) => {
-  const req = await getCustomRequestById(id);
+const convertCustomRequestToOrder = async (id, storeId = null) => {
+  const req = await getCustomRequestById(id, storeId);
   if (!req) throw new Error(`Custom request #${id} not found`);
 
   // Update status to Order

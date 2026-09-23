@@ -20,7 +20,7 @@ const getCustomRequestsHandler = async (req, res, next) => {
 const getCustomRequestByIdHandler = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const request = await customRequestService.getCustomRequestById(id);
+    const request = await customRequestService.getCustomRequestById(id, req.storeId || 2);
     if (!request) {
       return sendError(res, `Custom request #${id} not found`, 404);
     }
@@ -50,7 +50,7 @@ const updateCustomRequestStatusHandler = async (req, res, next) => {
     if (!status) {
       return sendError(res, 'Target status is required', 400);
     }
-    const updated = await customRequestService.updateCustomRequestStatus(id, status, admin_notes);
+    const updated = await customRequestService.updateCustomRequestStatus(id, status, admin_notes, req.storeId || 2);
     return sendSuccess(res, updated, `Custom request updated to status '${status}'`);
   } catch (error) {
     return next(error);
@@ -65,7 +65,7 @@ const setCustomRequestQuoteHandler = async (req, res, next) => {
       quote_amount,
       quote_lead_days,
       admin_notes
-    });
+    }, req.storeId || 2);
 
     writeAuditLog({
       actorId: req.user?.uid || 'admin',
@@ -85,7 +85,7 @@ const setCustomRequestQuoteHandler = async (req, res, next) => {
 const convertCustomRequestToOrderHandler = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const result = await customRequestService.convertCustomRequestToOrder(id);
+    const result = await customRequestService.convertCustomRequestToOrder(id, req.storeId || 2);
 
     writeAuditLog({
       actorId: req.user?.uid || 'admin',

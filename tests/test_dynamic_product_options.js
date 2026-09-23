@@ -787,15 +787,27 @@ async function runTests() {
   // ---------------------------------------------------------------------------
   // TEST W: Zero migrations required verification
   // ---------------------------------------------------------------------------
-  await test('W', 'No new migration files created; system is fully zero-migration compatible', async () => {
+  await test('W', 'No new migration files created for dynamic product options; system is fully zero-migration compatible for THIS feature', async () => {
     const migrationDir = path.join(__dirname, '..', 'database');
     const migrationFiles = fs.readdirSync(migrationDir).filter(f => f.startsWith('migration_') && f.endsWith('.sql'));
-    // Highest existing migration is 017
+    // migration_018_chipakk_material_inventory.sql was added later, for an unrelated feature (CHIPAKK
+    // production-material inventory tracking) -- it is repository-only / not executed on production (see
+    // database/ops and the project's own migration-018 header), and it does not touch product_options,
+    // product_option_values, or product_variants. This test's actual purpose is narrower than "no migration file
+    // in the repo above 017": it's "the dynamic-product-options feature itself required zero schema changes" --
+    // so assert that specifically, instead of pinning an absolute ceiling that goes stale the moment any other,
+    // unrelated feature legitimately adds a migration file.
     const highestMigrationNum = Math.max(...migrationFiles.map(f => {
       const match = f.match(/migration_(\d+)/);
       return match ? parseInt(match[1], 10) : 0;
     }));
-    assert.strictEqual(highestMigrationNum, 17, 'Highest migration must remain 017. Zero new migrations created.');
+    assert.ok(highestMigrationNum <= 18, `Unexpected migration file numbered above 018 found (highest: ${highestMigrationNum}) -- review before assuming it's unrelated.`);
+    const optionsRelatedMigrations = migrationFiles.filter((f) => {
+      if (parseInt(f.match(/migration_(\d+)/)[1], 10) <= 17) return false; // only inspect migrations added after this feature was built
+      const sql = fs.readFileSync(path.join(migrationDir, f), 'utf8');
+      return /product_options|product_option_values|product_variants/i.test(sql);
+    });
+    assert.deepStrictEqual(optionsRelatedMigrations, [], `Dynamic product options must still require zero migrations; found later migration(s) touching its tables: ${optionsRelatedMigrations.join(', ')}`);
   });
 
   // Summary

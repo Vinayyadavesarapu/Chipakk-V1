@@ -19,7 +19,7 @@ const getFinishingOptionsHandler = async (req, res, next) => {
 const getFinishingOptionByIdHandler = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const option = await finishingService.getFinishingOptionById(id);
+    const option = await finishingService.getFinishingOptionById(id, req.storeId || 2);
     if (!option) {
       return sendError(res, `Finishing option #${id} not found`, 404);
     }
@@ -55,7 +55,7 @@ const createFinishingOptionHandler = async (req, res, next) => {
 const updateFinishingOptionHandler = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const updated = await finishingService.updateFinishingOption(id, req.body);
+    const updated = await finishingService.updateFinishingOption(id, req.body, req.storeId || 2);
 
     writeAuditLog({
       actorId: req.user?.uid || 'admin',
@@ -75,18 +75,21 @@ const updateFinishingOptionHandler = async (req, res, next) => {
 const deleteFinishingOptionHandler = async (req, res, next) => {
   try {
     const { id } = req.params;
-    await finishingService.deleteFinishingOption(id);
+    const success = await finishingService.deleteFinishingOption(id, req.storeId || 2);
+    if (!success) {
+      return sendError(res, `Finishing option #${id} not found`, 404);
+    }
 
     writeAuditLog({
       actorId: req.user?.uid || 'admin',
-      action: 'DELETE_FINISHING_OPTION',
+      action: 'DEACTIVATE_FINISHING_OPTION',
       entity: 'finishing_options',
       entityId: String(id),
-      details: {},
+      details: { active: 0 },
       ipAddress: req.ip
     }).catch(() => {});
 
-    return sendSuccess(res, { id }, 'Finishing option deleted successfully');
+    return sendSuccess(res, { id, deactivated: true }, 'Finishing option deactivated successfully');
   } catch (error) {
     return next(error);
   }

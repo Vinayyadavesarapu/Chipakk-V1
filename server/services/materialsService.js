@@ -76,11 +76,20 @@ const getMaterials = async ({ storeId = 2, activeOnly = false, search = null } =
 };
 
 /**
- * Fetch a single material by ID
+ * Fetch a single material by ID, scoped to a store. `materials` is a genuinely multi-tenant table (CHIPAKK's
+ * production-materials service scopes every query by store_id) -- omitting the scope here let any admin viewing
+ * one store read/edit/zero-out the other store's material by guessing a sequential id. storeId is optional (kept
+ * for callers like createMaterial's own return-what-I-just-inserted lookup that don't yet have an id-to-store
+ * relationship to check) but every admin-route caller now passes it.
  */
-const getMaterialById = async (id) => {
-  const query = `SELECT * FROM materials WHERE id = ?`;
-  const [rows] = await pool.execute(query, [id]);
+const getMaterialById = async (id, storeId = null) => {
+  const params = [id];
+  let query = `SELECT * FROM materials WHERE id = ?`;
+  if (storeId) {
+    query += ' AND (store_id = ? OR store_id IS NULL)';
+    params.push(storeId);
+  }
+  const [rows] = await pool.execute(query, params);
   if (!rows || rows.length === 0) return null;
   const r = rows[0];
   return {
@@ -168,8 +177,8 @@ const createMaterial = async ({
 /**
  * Update existing material
  */
-const updateMaterial = async (id, data) => {
-  const existing = await getMaterialById(id);
+const updateMaterial = async (id, data, storeId = null) => {
+  const existing = await getMaterialById(id, storeId);
   if (!existing) throw new Error(`Material #${id} not found`);
 
   const hasDensity = await checkHasDensity();
@@ -206,26 +215,39 @@ const updateMaterial = async (id, data) => {
   if (updates.length === 0) return existing;
 
   params.push(id);
-  const query = `UPDATE materials SET ${updates.join(', ')} WHERE id = ?`;
+  let query = `UPDATE materials SET ${updates.join(', ')} WHERE id = ?`;
+  if (storeId) { query += ' AND (store_id = ? OR store_id IS NULL)'; params.push(storeId); }
   await pool.execute(query, params);
 
-  return getMaterialById(id);
+  return getMaterialById(id, storeId);
 };
 
 /**
  * Adjust material stock by delta
  */
-const adjustStock = async (id, deltaUnits) => {
-  const query = `UPDATE materials SET stock = GREATEST(0, stock + ?) WHERE id = ?`;
-  await pool.execute(query, [parseFloat(deltaUnits) || 0, id]);
-  return getMaterialById(id);
+const adjustStock = async (id, deltaUnits, storeId = null) => {
+  let query = `UPDATE materials SET stock = GREATEST(0, stock + ?) WHERE id = ?`;
+  const params = [parseFloat(deltaUnits) || 0, id];
+  if (storeId) { query += ' AND (store_id = ? OR store_id IS NULL)'; params.push(storeId); }
+  await pool.execute(query, params);
+  return getMaterialById(id, storeId);
 };
 
 /**
- * Delete material
+ * Deactivate a material (soft delete preserving material_stock_movements and historical jobs)
  */
-const deleteMaterial = async (id) => {
-  const [result] = await pool.execute(`DELETE FROM materials WHERE id = ?`, [id]);
+const deleteMaterial = async (id, storeId = 2) => {
+  const numId = parseInt(id, 10);
+  if (isNaN(numId)) throw new Error('Invalid material ID');
+
+  const existing = await getMaterialById(numId);
+  if (!existing) return false;
+
+  const targetStoreId = parseInt(storeId, 10) || 2;
+  const [result] = await pool.execute(
+    'UPDATE materials SET active = 0 WHERE id = ? AND (store_id = ? OR store_id IS NULL)',
+    [numId, targetStoreId]
+  );
   return result.affectedRows > 0;
 };
 

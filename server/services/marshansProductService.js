@@ -1,5 +1,5 @@
 const { pool } = require('../config/database');
-const { sanitizeProductImageUrl, safelyDeleteUploadedFile } = require('../utils/imageUtils');
+const { sanitizeProductImageUrl, safelyDeleteUploadedFile, safelyDeleteUploadedFileIfUnreferenced } = require('../utils/imageUtils');
 
 /**
  * Calculate derived rating tier based on average product rating
@@ -860,8 +860,8 @@ const deleteProductImage = async (productId, imageId, storeId = 2) => {
   // 3. Remove DB record safely
   await pool.execute('DELETE FROM marshans_product_images WHERE id = ? AND product_id = ?', [numImageId, numProductId]);
 
-  // 4. Safely delete physical file if local upload
-  safelyDeleteUploadedFile(imageToDelete.image_url, imageToDelete.storage_path);
+  // 4. Safely delete physical file only if not referenced elsewhere in the database
+  await safelyDeleteUploadedFileIfUnreferenced(imageToDelete.image_url, imageToDelete.storage_path, pool, { marshans_product_image_id: numImageId });
 
   // 5. Promote next image to primary if deleted was primary
   if (imageToDelete.is_primary === 1) {
@@ -889,6 +889,24 @@ const deleteProductImage = async (productId, imageId, storeId = 2) => {
   };
 };
 
+/**
+ * Reactivate a deactivated Marshans product by BIGINT ID
+ */
+const reactivateProduct = async (id, storeId = 2) => {
+  const numId = parseInt(id, 10);
+  if (isNaN(numId)) throw new Error('Invalid product ID');
+
+  const [existing] = await pool.execute('SELECT id FROM marshans_products WHERE id = ? AND store_id = 2', [numId]);
+  if (!existing || existing.length === 0) {
+    const err = new Error(`Marshans product ${numId} not found`);
+    err.statusCode = 404;
+    throw err;
+  }
+
+  await pool.execute('UPDATE marshans_products SET active = 1 WHERE id = ? AND store_id = 2', [numId]);
+  return getProductById(numId, 2);
+};
+
 module.exports = {
   calculateRatingTier,
   getProducts,
@@ -896,5 +914,6 @@ module.exports = {
   createProduct,
   updateProduct,
   deleteProduct,
-  deleteProductImage
+  deleteProductImage,
+  reactivateProduct
 };

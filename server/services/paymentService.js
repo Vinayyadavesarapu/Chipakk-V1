@@ -38,8 +38,13 @@ const toGatewayPaise = (rawTotalPrice, storeId) => {
  */
 const promoteCouponReservation = async (orderId, connection = pool) => {
   try {
+    // FOR UPDATE: verifyPayment (browser-triggered) and handleWebhook (Razorpay server-to-server) can both fire
+    // for the same order and both call this inside their own transaction. Without a lock here, both could read
+    // status='reserved' before either commits, then both blindly increment coupons.usage_count -- over-counting
+    // redemptions and potentially tripping usage_limit for legitimate future customers. Locking these rows makes
+    // the second caller block until the first commits, then re-read the now-'consumed' rows and see none to act on.
     const [usageRows] = await connection.execute(
-      "SELECT id, coupon_id FROM coupon_usage WHERE order_id = ? AND status = 'reserved'",
+      "SELECT id, coupon_id FROM coupon_usage WHERE order_id = ? AND status = 'reserved' FOR UPDATE",
       [orderId]
     );
     if (usageRows && usageRows.length > 0) {

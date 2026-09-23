@@ -25,7 +25,9 @@ const getCategoriesHandler = async (req, res, next) => {
   try {
     const storeId = req.storeId || null;
     const effectiveService = getEffectiveCategoryService(req);
-    const categories = await effectiveService.getCategories({ activeOnly: false, storeId });
+    const isAdmin = Boolean(req.admin || (req.baseUrl && req.baseUrl.includes('/admin')) || (req.originalUrl && req.originalUrl.includes('/admin')));
+    const activeOnly = isAdmin ? (req.query.active_only === 'true' || req.query.active === 'true') : true;
+    const categories = await effectiveService.getCategories({ activeOnly, storeId });
 
     return sendSuccess(res, {
       count: categories.length,
@@ -326,15 +328,47 @@ const deleteCategoryHandler = async (req, res, next) => {
       return sendError(res, 'Invalid category ID format', 400);
     }
 
+    const reassignToCategoryId = req.query.reassign_to_category_id
+      || (req.body && req.body.reassign_to_category_id)
+      || req.query.reassignToCategoryId
+      || (req.body && req.body.reassignToCategoryId);
+
     const effectiveService = getEffectiveCategoryService(req);
-    const success = await effectiveService.deleteCategory(numId, req.storeId || 1);
+    const success = await effectiveService.deleteCategory(numId, req.storeId || 1, {
+      reassignToCategoryId
+    });
 
     if (!success) {
       return sendError(res, `Category with ID ${id} not found`, 404);
     }
 
-    return sendSuccess(res, { deleted: true, id: numId }, 'Category deleted successfully');
+    if (req.user && req.user.uid) {
+      await writeAuditLog(
+        req.user.uid,
+        req.user.email || null,
+        'category.deleted',
+        'category',
+        numId,
+        { reassigned_to: reassignToCategoryId || null }
+      ).catch(err => console.error('[Audit Log Error]', err.message));
+    }
+
+    return sendSuccess(res, {
+      deleted: true,
+      id: numId,
+      reassigned_to: reassignToCategoryId ? parseInt(reassignToCategoryId, 10) : null
+    }, 'Category deleted successfully');
   } catch (error) {
+    if (error.statusCode === 409) {
+      return res.status(409).json({
+        success: false,
+        error: error.message,
+        active_products: error.active_products || 0
+      });
+    }
+    if (error.statusCode) {
+      return sendError(res, error.message, error.statusCode);
+    }
     return next(error);
   }
 };

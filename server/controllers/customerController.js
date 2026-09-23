@@ -11,6 +11,7 @@ const getCustomersHandler = async (req, res, next) => {
 
     const result = await customerService.getCustomers({
       search,
+      store_id: req.storeId || null,
       limit,
       offset
     });
@@ -33,7 +34,7 @@ const getCustomerByIdHandler = async (req, res, next) => {
       return sendError(res, 'Customer ID or Firebase UID is required.', 400);
     }
 
-    const customer = await customerService.getCustomerById(String(id).trim());
+    const customer = await customerService.getCustomerById(String(id).trim(), req.storeId || null);
 
     if (!customer) {
       return sendError(res, `Customer '${id}' not found`, 404);

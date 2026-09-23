@@ -45,9 +45,14 @@ const getFinishingOptions = async ({ storeId = 2, activeOnly = false } = {}) => 
   }));
 };
 
-const getFinishingOptionById = async (id) => {
-  const query = `SELECT * FROM finishing_options WHERE id = ?`;
-  const [rows] = await pool.execute(query, [id]);
+/** Scoped to a store: finishing_options is multi-tenant (getFinishingOptions filters by store_id), so an
+ * unscoped by-id lookup let any admin viewing one store read/edit/deactivate the other store's row by guessing
+ * a sequential id. storeId is optional (kept for the create-then-return-what-I-just-inserted case). */
+const getFinishingOptionById = async (id, storeId = null) => {
+  const params = [id];
+  let query = `SELECT * FROM finishing_options WHERE id = ?`;
+  if (storeId) { query += ' AND (store_id = ? OR store_id IS NULL)'; params.push(storeId); }
+  const [rows] = await pool.execute(query, params);
   if (!rows || rows.length === 0) return null;
   const r = rows[0];
   return {
@@ -101,8 +106,8 @@ const createFinishingOption = async ({
   return getFinishingOptionById(result.insertId);
 };
 
-const updateFinishingOption = async (id, data) => {
-  const existing = await getFinishingOptionById(id);
+const updateFinishingOption = async (id, data, storeId = null) => {
+  const existing = await getFinishingOptionById(id, storeId);
   if (!existing) throw new Error(`Finishing option #${id} not found`);
 
   const updates = [];
@@ -127,14 +132,24 @@ const updateFinishingOption = async (id, data) => {
   if (updates.length === 0) return existing;
 
   params.push(id);
-  const query = `UPDATE finishing_options SET ${updates.join(', ')} WHERE id = ?`;
+  let query = `UPDATE finishing_options SET ${updates.join(', ')} WHERE id = ?`;
+  if (storeId) { query += ' AND (store_id = ? OR store_id IS NULL)'; params.push(storeId); }
   await pool.execute(query, params);
 
-  return getFinishingOptionById(id);
+  return getFinishingOptionById(id, storeId);
 };
 
-const deleteFinishingOption = async (id) => {
-  const [result] = await pool.execute(`DELETE FROM finishing_options WHERE id = ?`, [id]);
+const deleteFinishingOption = async (id, storeId = null) => {
+  const numId = parseInt(id, 10);
+  if (isNaN(numId)) throw new Error('Invalid finishing option ID');
+
+  const existing = await getFinishingOptionById(numId, storeId);
+  if (!existing) return false;
+
+  let query = 'UPDATE finishing_options SET active = 0 WHERE id = ?';
+  const params = [numId];
+  if (storeId) { query += ' AND (store_id = ? OR store_id IS NULL)'; params.push(storeId); }
+  const [result] = await pool.execute(query, params);
   return result.affectedRows > 0;
 };
 
