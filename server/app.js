@@ -15,6 +15,7 @@ const orderRoutes = require('./routes/orders');
 const customerRoutes = require('./routes/customer');
 const paymentRoutes = require('./routes/payments');
 const cartRoutes = require('./routes/cart');
+const custom3dRoutes = require('./routes/custom3d');
 const adminRoutes = require('./routes/admin');
 
 // Import Middlewares
@@ -38,6 +39,8 @@ const defaultAllowedOrigins = [
   'https://api.chipakk.shop',
   'https://themarshans.shop',
   'https://www.themarshans.shop',
+  'https://themarshans.com',
+  'https://www.themarshans.com',
   'https://mediumturquoise-coyote-345247.hostingersite.com'
 ];
 
@@ -231,6 +234,7 @@ app.use('/api/events', eventRoutes);
 app.use('/api/store-builder', getPublicStoreBuilderHandler);
 app.use('/api/orders', orderRoutes);
 app.use('/api/cart', cartRoutes);
+app.use('/api/custom-3d', custom3dRoutes);
 app.use('/api/customer', customerRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/admin', adminRoutes);

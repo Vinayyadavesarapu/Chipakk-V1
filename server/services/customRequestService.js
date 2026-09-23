@@ -84,19 +84,57 @@ const createCustomRequest = async ({
   customer_id = null,
   guest_name,
   guest_email,
+  contactEmail,
+  contactName,
+  name,
+  email,
   guest_phone = '',
+  contactPhone,
+  phone,
   file_url,
+  fileUrl,
   file_name,
-  file_format = 'STL',
+  fileName,
+  file_format,
   file_size_bytes = 0,
-  preferred_material = 'PLA',
-  preferred_finishing = 'Raw Print',
+  fileSize,
+  preferred_material,
+  material = 'PLA',
+  preferred_finishing,
+  finishing = 'Raw Print',
   quantity = 1,
-  customer_notes = ''
+  customer_notes = '',
+  notes,
+  dimensionsMm,
+  color,
+  infillPercent
 }) => {
-  if (!guest_name || !guest_name.trim()) throw new Error('Customer name is required');
-  if (!guest_email || !guest_email.trim()) throw new Error('Customer email is required');
-  if (!file_url) throw new Error('3D model file URL is required');
+  const resolvedEmail = (guest_email || contactEmail || email || '').trim();
+  if (!resolvedEmail) throw new Error('Customer email is required');
+
+  const resolvedName = (guest_name || contactName || name || resolvedEmail.split('@')[0] || 'Collector').trim();
+  const resolvedPhone = (guest_phone || contactPhone || phone || '').trim();
+  const resolvedFileName = (file_name || fileName || 'model.stl').trim();
+  const resolvedFileUrl = (file_url || fileUrl || `/uploads/custom-3d/${encodeURIComponent(resolvedFileName)}`).trim();
+  const resolvedFormat = (file_format || (resolvedFileName.endsWith('.3mf') ? '3MF' : resolvedFileName.endsWith('.step') ? 'STEP' : 'STL')).toUpperCase();
+  const resolvedSizeBytes = parseInt(file_size_bytes || fileSize, 10) || 0;
+  const resolvedMaterial = (preferred_material || material || 'PLA').trim();
+  const resolvedFinishing = (preferred_finishing || finishing || 'Raw Print').trim();
+  const resolvedQty = parseInt(quantity, 10) || 1;
+
+  let resolvedNotes = (customer_notes || notes || '').trim();
+  if (dimensionsMm || color || infillPercent) {
+    const specs = [];
+    if (dimensionsMm && typeof dimensionsMm === 'object') {
+      specs.push(`Dimensions: ${dimensionsMm.x || 0}x${dimensionsMm.y || 0}x${dimensionsMm.z || 0}mm`);
+    }
+    if (color) specs.push(`Color: ${color}`);
+    if (infillPercent !== undefined && infillPercent !== null) specs.push(`Infill: ${infillPercent}%`);
+    if (specs.length > 0) {
+      const specLine = `[Configuration: ${specs.join(', ')}]`;
+      resolvedNotes = resolvedNotes ? `${resolvedNotes}\n${specLine}` : specLine;
+    }
+  }
 
   const requestNumber = `REQ-3D-${Date.now().toString().slice(-6)}`;
   const query = `
@@ -108,17 +146,17 @@ const createCustomRequest = async ({
     store_id || 2,
     requestNumber,
     customer_id || null,
-    guest_name.trim(),
-    guest_email.trim(),
-    guest_phone || '',
-    file_url,
-    file_name || 'model.stl',
-    (file_format || 'STL').toUpperCase(),
-    parseInt(file_size_bytes, 10) || 0,
-    preferred_material || 'PLA',
-    preferred_finishing || 'Raw Print',
-    parseInt(quantity, 10) || 1,
-    customer_notes || ''
+    resolvedName,
+    resolvedEmail,
+    resolvedPhone,
+    resolvedFileUrl,
+    resolvedFileName,
+    resolvedFormat,
+    resolvedSizeBytes,
+    resolvedMaterial,
+    resolvedFinishing,
+    resolvedQty,
+    resolvedNotes
   ];
 
   const [result] = await pool.execute(query, params);
