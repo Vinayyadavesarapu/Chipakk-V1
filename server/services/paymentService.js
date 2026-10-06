@@ -111,7 +111,14 @@ const createPaymentOrder = async (orderId, firebaseUser) => {
 
   const order = orderRows[0];
 
-  // 2. Verify order ownership
+  // 2. Enforce Store 2 isolation: Razorpay is strictly for THE MARSHANS only
+  if (parseInt(order.store_id, 10) !== 2) {
+    const err = new Error('Razorpay payment gateway is exclusively configured for THE MARSHANS (Store 2).');
+    err.status = 403;
+    throw err;
+  }
+
+  // 3. Verify order ownership
   const user = await findUserByFirebaseUid(firebaseUser.uid);
   const isOwner = (user && order.customer_id && Number(user.id) === Number(order.customer_id)) ||
                   (order.customer_email && firebaseUser.email && Boolean(firebaseUser.email_verified) && order.customer_email.toLowerCase() === firebaseUser.email.toLowerCase());
@@ -122,7 +129,7 @@ const createPaymentOrder = async (orderId, firebaseUser) => {
     throw err;
   }
 
-  // 3. Verify payment eligibility
+  // 4. Verify payment eligibility
   if (order.payment_status === 'paid') {
     return {
       already_paid: true,
@@ -182,17 +189,13 @@ const createPaymentOrder = async (orderId, firebaseUser) => {
         [gatewayOrder.gateway_order_id, order.id]
       );
 
-      // Insert payment record (safe check in case payments table exists)
-      try {
-        await connection.execute(
-          `INSERT INTO payments (
-            order_id, provider, gateway_order_id, amount, currency, status, created_at
-          ) VALUES (?, 'razorpay', ?, ?, ?, 'created', NOW())`,
-          [order.id, gatewayOrder.gateway_order_id, amountPaiseForGateway, gatewayOrder.currency || 'INR']
-        );
-      } catch (tblErr) {
-        console.warn('[PaymentService] payments table insertion notice:', tblErr.message);
-      }
+      // Insert payment record
+      await connection.execute(
+        `INSERT INTO payments (
+          order_id, provider, gateway_order_id, amount, currency, status, created_at
+        ) VALUES (?, 'razorpay', ?, ?, ?, 'created', NOW())`,
+        [order.id, gatewayOrder.gateway_order_id, amountPaiseForGateway, gatewayOrder.currency || 'INR']
+      );
 
       await connection.commit();
     } catch (dbErr) {
@@ -223,7 +226,8 @@ const createPaymentOrder = async (orderId, firebaseUser) => {
     order_number: order.order_number,
     customer_name: order.customer_name || '',
     customer_email: order.customer_email || '',
-    customer_phone: phone
+    customer_phone: phone,
+    ...(process.env.RAZORPAY_CHECKOUT_CONFIG_ID ? { checkout_config_id: process.env.RAZORPAY_CHECKOUT_CONFIG_ID } : {})
   };
 };
 
@@ -270,9 +274,38 @@ const verifyPayment = async (params, firebaseUser) => {
   }
 
   const order = orderRows[0];
+
+  // 2. Enforce Store 2 isolation: Razorpay is strictly for THE MARSHANS only
+  if (parseInt(order.store_id, 10) !== 2) {
+    const err = new Error('Razorpay payment verification is exclusively configured for THE MARSHANS (Store 2).');
+    err.status = 403;
+    throw err;
+  }
+
+  // 3. Idempotent check: if order is already paid, return safely
+  if (order.payment_status === 'paid') {
+    return {
+      success: true,
+      already_paid: true,
+      payment_status: 'paid',
+      order_id: order.id,
+      order_number: order.order_number
+    };
+  }
+
   const amountPaise = toGatewayPaise(order.total_price, order.store_id);
 
-  // 2. Verify order ownership
+  // 4. Verify client amount if provided
+  if (params.amount !== undefined && params.amount !== null) {
+    const clientAmount = parseInt(params.amount, 10);
+    if (!isNaN(clientAmount) && clientAmount !== amountPaise) {
+      const err = new Error('Payment amount mismatch.');
+      err.status = 400;
+      throw err;
+    }
+  }
+
+  // 5. Verify order ownership
   const user = await findUserByFirebaseUid(firebaseUser.uid);
   const isOwner = (user && order.customer_id && Number(user.id) === Number(order.customer_id)) ||
                   (order.customer_email && firebaseUser.email && Boolean(firebaseUser.email_verified) && order.customer_email.toLowerCase() === firebaseUser.email.toLowerCase());
@@ -283,14 +316,43 @@ const verifyPayment = async (params, firebaseUser) => {
     throw err;
   }
 
-  // 3. Verify gateway order ID matches
-  if (order.gateway_order_id && order.gateway_order_id !== razorpay_order_id) {
+  // 6. Verify gateway order ID exists and matches
+  if (!order.gateway_order_id || typeof order.gateway_order_id !== 'string' || !order.gateway_order_id.trim()) {
+    const err = new Error('No gateway order is associated with this order.');
+    err.status = 400;
+    throw err;
+  }
+
+  if (order.gateway_order_id !== razorpay_order_id) {
     const err = new Error('Gateway order identifier mismatch.');
     err.status = 400;
     throw err;
   }
 
-  // 4. Verify cryptographic signature
+  // 7. Prevent duplicate gateway_payment_id reuse across different orders
+  const [existingPayment] = await pool.execute(
+    'SELECT id, order_id, status FROM payments WHERE gateway_payment_id = ? LIMIT 1',
+    [razorpay_payment_id]
+  );
+  if (existingPayment && existingPayment.length > 0) {
+    const ep = existingPayment[0];
+    if (Number(ep.order_id) !== Number(order.id)) {
+      const err = new Error('Payment ID is already associated with another order.');
+      err.status = 409;
+      throw err;
+    }
+    if (ep.status === 'captured') {
+      return {
+        success: true,
+        already_paid: true,
+        payment_status: 'paid',
+        order_id: order.id,
+        order_number: order.order_number
+      };
+    }
+  }
+
+  // 8. Verify cryptographic signature
   const isValid = razorpayService.verifyPaymentSignature({
     razorpay_order_id,
     razorpay_payment_id,
@@ -318,7 +380,7 @@ const verifyPayment = async (params, firebaseUser) => {
     throw err;
   }
 
-  // 5. Update Order and Payment records atomically to PAID
+  // 9. Update Order and Payment records atomically to PAID
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
@@ -333,19 +395,18 @@ const verifyPayment = async (params, firebaseUser) => {
       [order.id]
     );
 
-    try {
-      await connection.execute(
-        `INSERT INTO payments (
-          order_id, provider, gateway_order_id, gateway_payment_id, gateway_signature,
-          amount, currency, status, created_at
-        ) VALUES (?, 'razorpay', ?, ?, ?, ?, 'INR', 'captured', NOW())
-        ON DUPLICATE KEY UPDATE
-          status = 'captured',
-          gateway_signature = VALUES(gateway_signature),
-          updated_at = NOW()`,
-        [order.id, razorpay_order_id, razorpay_payment_id, razorpay_signature, amountPaise]
-      );
-    } catch (e) {}
+    // Insert or update payment record without swallowing errors
+    await connection.execute(
+      `INSERT INTO payments (
+        order_id, provider, gateway_order_id, gateway_payment_id, gateway_signature,
+        amount, currency, status, created_at
+      ) VALUES (?, 'razorpay', ?, ?, ?, ?, 'INR', 'captured', NOW())
+      ON DUPLICATE KEY UPDATE
+        status = 'captured',
+        gateway_signature = VALUES(gateway_signature),
+        updated_at = NOW()`,
+      [order.id, razorpay_order_id, razorpay_payment_id, razorpay_signature, amountPaise]
+    );
 
     // Promote reserved coupon to consumed and increment usage
     await promoteCouponReservation(order.id, connection);
@@ -566,7 +627,8 @@ const getPaymentStatus = async (orderId, firebaseUser) => {
 
   const [rows] = await pool.execute(
     `SELECT id, order_number, customer_id, customer_email, payment_method,
-            payment_status, fulfillment_status, total_price, gateway_order_id
+            payment_status, fulfillment_status, total_price, gateway_order_id,
+            COALESCE(store_id, 1) AS store_id
      FROM orders
      WHERE id = ?
      LIMIT 1`,
@@ -580,6 +642,13 @@ const getPaymentStatus = async (orderId, firebaseUser) => {
   }
 
   const order = rows[0];
+
+  // Enforce Store 2 isolation: Razorpay is strictly for THE MARSHANS only
+  if (parseInt(order.store_id, 10) !== 2) {
+    const err = new Error('Payment status query via Razorpay is exclusively configured for THE MARSHANS (Store 2).');
+    err.status = 403;
+    throw err;
+  }
 
   const user = await findUserByFirebaseUid(firebaseUser.uid);
   const isOwner = (user && order.customer_id && Number(user.id) === Number(order.customer_id)) ||

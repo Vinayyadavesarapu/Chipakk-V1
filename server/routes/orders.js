@@ -3,7 +3,9 @@ const { verifyFirebaseToken } = require('../middleware/auth');
 const {
   createCustomerOrderHandler,
   getCustomerOrdersHandler,
-  getCustomerOrderByIdHandler
+  getCustomerOrderByIdHandler,
+  getCustomerOrderTrackingHandler,
+  checkOrderServiceabilityHandler
 } = require('../controllers/orderController');
 const { getCustomerInvoiceHandler } = require('../controllers/taxController');
 
@@ -14,8 +16,10 @@ router.use(verifyFirebaseToken);
 
 // Customer Orders API
 router.post('/', createCustomerOrderHandler);
+router.post('/serviceability', checkOrderServiceabilityHandler);
 router.get('/', getCustomerOrdersHandler);
 router.get('/:id', getCustomerOrderByIdHandler);
+router.get('/:id/tracking', getCustomerOrderTrackingHandler);
 router.get('/:id/invoice', getCustomerInvoiceHandler);
 
 module.exports = router;

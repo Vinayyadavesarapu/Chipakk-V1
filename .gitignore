@@ -9,7 +9,9 @@ node_modules/
 
 # Environment variables
 .env
+.env*
 .env.*
+**/.env*
 !.env.example
 
 # Service account & secrets

@@ -185,6 +185,7 @@ let siteSettings = {
 let activeOrderTab = "All";
 let activeProductionTab = "All";
 let editingProductId = null;
+let currentEditingProduct = null;
 let editingCategoryId = null;
 let editingEventId = null;
 let editingCouponId = null;
@@ -1797,7 +1798,7 @@ function updateLumoProductSectionVisibility() {
     }
 }
 
-function openProductForm(product = null) {
+function openProductForm(product = null, rawRecord = null) {
     const container = document.getElementById('product-form-container');
     if (!container) return;
 
@@ -1805,6 +1806,8 @@ function openProductForm(product = null) {
     const defaultPrefix = activeStoreId === 2 ? 'MRSH' : 'CK';
 
     editingProductId = product ? product.id : null;
+    currentEditingProduct = rawRecord || product || null;
+
     const adminIdVal = product ? (product.admin_id || product.admin_product_id || product.sku || '') : '';
     const titleVal = product ? (product.title || product.name || '') : '';
     const prodFormBadge = document.getElementById('prod-form-header-badge');
@@ -1815,7 +1818,27 @@ function openProductForm(product = null) {
     }
     document.getElementById('prod-form-title').textContent = product ? `[EDIT ${activeStoreId === 2 ? '3D PRODUCT' : 'PRODUCT DROP'}: ${adminIdVal || product.id}]` : `[ADD NEW ${activeStoreId === 2 ? '3D PRODUCT' : 'PRODUCT DROP'}]`;
 
-    document.getElementById('prod-admin-id').value = adminIdVal || `${defaultPrefix}-${String(products.length + 1).padStart(3, '0')}`;
+    const saveBtn = document.getElementById('save-prod-btn');
+    if (saveBtn) {
+        saveBtn.textContent = product
+            ? (activeStoreId === 2 ? 'UPDATE 3D PRODUCT' : 'UPDATE PRODUCT DROP')
+            : (activeStoreId === 2 ? 'SAVE 3D PRODUCT' : 'SAVE PRODUCT DROP');
+    }
+
+    const adminIdInput = document.getElementById('prod-admin-id');
+    if (adminIdInput) {
+        adminIdInput.value = adminIdVal || `${defaultPrefix}-${String(products.length + 1).padStart(3, '0')}`;
+        adminIdInput.readOnly = Boolean(editingProductId);
+        adminIdInput.style.backgroundColor = editingProductId ? '#f1f5f9' : '';
+        adminIdInput.style.cursor = editingProductId ? 'not-allowed' : '';
+    }
+    const adminIdHint = document.getElementById('prod-admin-id-hint');
+    if (adminIdHint) {
+        adminIdHint.textContent = editingProductId
+            ? 'Product ID is fixed for this existing product.'
+            : 'Code printed on order sheets & production queues.';
+    }
+
     if (document.getElementById('prod-sku')) document.getElementById('prod-sku').value = product ? (product.sku || '') : '';
     document.getElementById('prod-title').value = titleVal;
     if (document.getElementById('prod-desc')) {
@@ -1878,28 +1901,36 @@ function openProductForm(product = null) {
     updateLumoProductSectionVisibility();
 
     // Common/primary and gallery images across both stores
-    if (product && Array.isArray(product.images) && product.images.length > 0) {
-        tempProdImages = product.images.map(img => {
+    const sourceImages = (rawRecord && Array.isArray(rawRecord.images) && rawRecord.images.length > 0)
+        ? rawRecord.images
+        : (product && Array.isArray(product.images) && product.images.length > 0 ? product.images : []);
+
+    if (sourceImages.length > 0) {
+        tempProdImages = sourceImages.map((img, idx) => {
             if (typeof img === 'object' && img !== null) {
                 return {
                     id: img.id || null,
                     url: img.image_url || img.external_url || img.url || '',
                     storage_path: img.storage_path || null,
-                    is_primary: !!img.is_primary
+                    is_primary: img.is_primary !== undefined ? !!img.is_primary : (idx === 0)
                 };
             }
-            return { id: null, url: String(img || ''), is_primary: false };
+            return { id: null, url: String(img || ''), storage_path: null, is_primary: idx === 0 };
         }).filter(item => Boolean(item.url));
     } else if (product && (product.primary_image_url || product.lumo_light_image)) {
-        tempProdImages = [{ id: null, url: product.primary_image_url || product.lumo_light_image, is_primary: true }];
+        tempProdImages = [{ id: null, url: product.primary_image_url || product.lumo_light_image, storage_path: product.primary_storage_path || null, is_primary: true }];
     } else {
         tempProdImages = [];
+    }
+    if (tempProdImages.length > 0 && !tempProdImages.some(im => im.is_primary)) {
+        tempProdImages[0].is_primary = true;
     }
     renderProdImageGallery();
 
     // Initialize options & variants
-    if (product && Array.isArray(product.options) && product.options.length > 0) {
-        tempProdOptions = product.options.map(o => ({
+    const rawOptions = (rawRecord && Array.isArray(rawRecord.options)) ? rawRecord.options : product?.options;
+    if (Array.isArray(rawOptions) && rawOptions.length > 0) {
+        tempProdOptions = rawOptions.map(o => ({
             name: o.name || '',
             values: Array.isArray(o.values) ? o.values.map(v => typeof v === 'object' ? (v.value || v.name) : v) : []
         }));
@@ -1907,8 +1938,9 @@ function openProductForm(product = null) {
         tempProdOptions = [];
     }
 
-    if (product && Array.isArray(product.variants) && product.variants.length > 0) {
-        tempProdVariants = product.variants
+    const rawVariants = (rawRecord && Array.isArray(rawRecord.variants)) ? rawRecord.variants : product?.variants;
+    if (Array.isArray(rawVariants) && rawVariants.length > 0) {
+        tempProdVariants = rawVariants
             .filter(v => v.variant_slug !== 'default' || (tempProdOptions.length === 0))
             .map(v => ({
                 id: v.id || v.variant_id || null,
@@ -2170,14 +2202,14 @@ async function editProduct(productId) {
         const raw = res?.data || res;
         if (raw && (raw.id || raw.admin_product_id)) {
             const freshProduct = normalizeProduct(raw);
-            openProductForm(freshProduct);
+            openProductForm(freshProduct, raw);
             return;
         }
     } catch (err) {
         console.warn('Could not load fresh product details, using cached list:', err.message);
     }
     const p = products.find(prod => String(prod.id) === String(productId));
-    if (p) openProductForm(p);
+    if (p) openProductForm(p, p);
 }
 
 function confirmDeleteProduct(productId) {
@@ -2217,12 +2249,26 @@ async function saveProductForm() {
         return;
     }
 
-    const cleanImagePayload = tempProdImages.map(item => {
+    const cleanImagePayload = tempProdImages.map((item, idx) => {
         if (typeof item === 'object' && item !== null) {
-            return item.url;
+            return {
+                id: item.id || undefined,
+                image_url: item.url || item.image_url || '',
+                url: item.url || item.image_url || '',
+                storage_path: item.storage_path || null,
+                is_primary: item.is_primary !== undefined ? (item.is_primary ? 1 : 0) : (idx === 0 ? 1 : 0),
+                sort_order: idx
+            };
         }
-        return String(item || '');
-    }).filter(Boolean);
+        return {
+            id: undefined,
+            image_url: String(item || ''),
+            url: String(item || ''),
+            storage_path: null,
+            is_primary: idx === 0 ? 1 : 0,
+            sort_order: idx
+        };
+    }).filter(img => Boolean(img.image_url || img.url));
 
     const activeStoreId = apiClient.getActiveStoreId ? apiClient.getActiveStoreId() : 1;
     // For Store 1 (CHIPAKK), whole rupees: ₹15 = DB 15. Store 2 (THE MARSHANS) uses paise.
@@ -2285,9 +2331,10 @@ async function saveProductForm() {
         payload.view_360_url = document.getElementById('prod-360-url')?.value.trim() || null;
 
         const lumoDarkImg = document.getElementById('prod-lumo-dark-image')?.value.trim() || null;
+        const firstImgUrl = cleanImagePayload[0]?.url || cleanImagePayload[0]?.image_url || null;
 
         if (isLumo) {
-            payload.lumo_light_image = cleanImagePayload[0] || null;
+            payload.lumo_light_image = firstImgUrl;
             payload.lumo_dark_image = lumoDarkImg;
             payload.lumo_light_360_url = null;
             payload.lumo_dark_360_url = null;
@@ -2323,6 +2370,45 @@ async function saveProductForm() {
         }
     }
 
+    // Preserve existing product fields that are not in the simplified form
+    if (editingProductId && currentEditingProduct) {
+        if (currentEditingProduct.weight_grams !== undefined && currentEditingProduct.weight_grams !== null) {
+            payload.weight_grams = currentEditingProduct.weight_grams;
+        }
+        if (currentEditingProduct.dimensions_mm !== undefined && currentEditingProduct.dimensions_mm !== null) {
+            payload.dimensions_mm = currentEditingProduct.dimensions_mm;
+        }
+        if (currentEditingProduct.short_description !== undefined && currentEditingProduct.short_description !== null) {
+            payload.short_description = currentEditingProduct.short_description;
+        }
+        if (currentEditingProduct.material_info !== undefined && currentEditingProduct.material_info !== null) {
+            payload.material_info = currentEditingProduct.material_info;
+        }
+        if (currentEditingProduct.production_notes !== undefined && currentEditingProduct.production_notes !== null) {
+            payload.production_notes = currentEditingProduct.production_notes;
+        }
+        if (currentEditingProduct.experience_override !== undefined && currentEditingProduct.experience_override !== null) {
+            payload.experience_override = currentEditingProduct.experience_override;
+        }
+
+        if (activeStoreId === 2) {
+            if (Array.isArray(currentEditingProduct.material_ids)) {
+                payload.material_ids = currentEditingProduct.material_ids;
+            } else if (Array.isArray(currentEditingProduct.materials) && currentEditingProduct.materials.length > 0) {
+                payload.material_ids = currentEditingProduct.materials.map(m => m.material_id || m.id).filter(Boolean);
+            }
+            if (Array.isArray(currentEditingProduct.finishing_option_ids)) {
+                payload.finishing_option_ids = currentEditingProduct.finishing_option_ids;
+            } else if (Array.isArray(currentEditingProduct.finishing_options) && currentEditingProduct.finishing_options.length > 0) {
+                payload.finishing_option_ids = currentEditingProduct.finishing_options.map(f => f.finishing_option_id || f.id).filter(Boolean);
+            }
+        } else {
+            if ((!payload.variants || payload.variants.length === 0) && currentEditingProduct.stock !== undefined) {
+                payload.stock = currentEditingProduct.stock;
+            }
+        }
+    }
+
     try {
         if (editingProductId) {
             await apiClient.put(`/admin/products/${editingProductId}`, payload);
@@ -2332,6 +2418,8 @@ async function saveProductForm() {
             showToast(`Product '${adminId}' created.`);
         }
         document.getElementById('product-form-container').style.display = 'none';
+        editingProductId = null;
+        currentEditingProduct = null;
         await refreshProductsFromAPI();
     } catch (err) {
         showToast(`Error saving product: ${err.message}`, 'error');
@@ -5962,6 +6050,8 @@ function setupEventListeners() {
     document.getElementById('new-prod-btn')?.addEventListener('click', () => openProductForm());
     document.getElementById('cancel-prod-btn')?.addEventListener('click', () => {
         document.getElementById('product-form-container').style.display = 'none';
+        editingProductId = null;
+        currentEditingProduct = null;
     });
     document.getElementById('save-prod-btn')?.addEventListener('click', saveProductForm);
 
@@ -6535,6 +6625,7 @@ function setupEventListeners() {
             if (el) el.style.display = 'none';
         });
         editingProductId = null;
+        currentEditingProduct = null;
         editingCategoryId = null;
         editingEventId = null;
         editingCouponId = null;

@@ -1,4 +1,5 @@
 const orderService = require('../services/orderService');
+const velocityService = require('../services/velocityService');
 const { writeAuditLog } = require('../services/auditService');
 const { sendSuccess, sendError } = require('../utils/responseHandler');
 
@@ -236,6 +237,110 @@ const getCustomerOrderByIdHandler = async (req, res, next) => {
   }
 };
 
+/**
+ * Get Authenticated Customer Order Live Tracking Handler
+ * GET /api/orders/:id/tracking
+ */
+const getCustomerOrderTrackingHandler = async (req, res, next) => {
+  try {
+    if (!req.user || !req.user.uid) {
+      return sendError(res, 'Authentication required to track orders.', 401);
+    }
+
+    const { id } = req.params;
+    const order = await orderService.getCustomerOrderById(id, req.user.uid, req.storeId || 1);
+
+    if (!order) {
+      return sendError(res, 'Order not found or access denied.', 404);
+    }
+
+    const trackingData = {
+      order_id: order.id,
+      order_number: order.order_number,
+      fulfillment_status: order.fulfillment_status,
+      payment_status: order.payment_status,
+      courier: order.courier || null,
+      tracking_no: order.tracking_no || null,
+      current_status: order.fulfillment_status,
+      activities: [],
+      track_url: null,
+      pickup_date: order.ship_date || null,
+      delivered_date: null
+    };
+
+    // If order has an AWB / tracking number, belongs to Store 2 (THE MARSHANS), and Velocity is configured, query real-time tracking
+    if (order.tracking_no && parseInt(order.store_id, 10) === 2 && velocityService.isConfigured()) {
+      try {
+        const velRes = await velocityService.trackShipment(order.tracking_no);
+        const result = Array.isArray(velRes) ? velRes[0] : (velRes?.data?.[0] || velRes?.data || velRes);
+        if (result && typeof result === 'object') {
+          trackingData.current_status = result.status || result.current_status || order.fulfillment_status;
+          trackingData.courier = result.courier || result.courier_name || order.courier;
+          trackingData.track_url = result.track_url || result.tracking_url || null;
+          trackingData.activities = Array.isArray(result.activities)
+            ? result.activities
+            : (Array.isArray(result.tracking_activities) ? result.tracking_activities : []);
+          if (result.pickup_date) trackingData.pickup_date = result.pickup_date;
+          if (result.delivered_date) trackingData.delivered_date = result.delivered_date;
+        }
+      } catch (velErr) {
+        console.warn(`[Tracking Warning] Velocity tracking fetch failed for AWB ${order.tracking_no}:`, velErr.message);
+      }
+    }
+
+    return sendSuccess(res, trackingData, 'Order tracking retrieved successfully');
+  } catch (error) {
+    return next(error);
+  }
+};
+
+/**
+ * Check Order Pincode Serviceability Handler
+ * POST /api/orders/serviceability
+ */
+const checkOrderServiceabilityHandler = async (req, res, next) => {
+  try {
+    const storeId = parseInt(req.storeId, 10) || 1;
+    if (storeId !== 2) {
+      return sendError(res, 'Velocity shipping serviceability is exclusively enabled for THE MARSHANS (Store 2).', 403);
+    }
+
+    const { pincode, payment_mode } = req.body || {};
+    const cleanPin = String(pincode || '').trim();
+
+    if (!cleanPin || !/^\d{6}$/.test(cleanPin)) {
+      return sendError(res, 'A valid 6-digit PIN code is required.', 400);
+    }
+
+    if (!velocityService.isConfigured()) {
+      return sendSuccess(res, {
+        serviceable: false,
+        pincode: cleanPin,
+        message: 'Shipping serviceability check is temporarily unavailable. Please try again later.',
+        provider: 'velocity'
+      }, 'Serviceability check unconfigured');
+    }
+
+    try {
+      const result = await velocityService.checkServiceability({
+        to: cleanPin,
+        payment_mode: payment_mode || 'prepaid'
+      });
+      return sendSuccess(res, result, 'Serviceability checked successfully');
+    } catch (velErr) {
+      console.warn(`[Velocity Serviceability Error] PIN ${cleanPin}:`, velErr.message);
+      return sendSuccess(res, {
+        serviceable: false,
+        pincode: cleanPin,
+        message: velErr.message || 'Unable to verify delivery serviceability for this PIN code.',
+        provider: 'velocity'
+      }, 'Serviceability check failed');
+    }
+  } catch (error) {
+    return next(error);
+  }
+};
+
 module.exports = {
   getOrdersHandler,
   getOrderByIdHandler,
@@ -243,6 +348,8 @@ module.exports = {
   updateOrderShippingHandler,
   createCustomerOrderHandler,
   getCustomerOrdersHandler,
-  getCustomerOrderByIdHandler
+  getCustomerOrderByIdHandler,
+  getCustomerOrderTrackingHandler,
+  checkOrderServiceabilityHandler
 };
 

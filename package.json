@@ -5,7 +5,9 @@
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
-    "dev": "node server/index.js"
+    "dev": "node server/index.js",
+    "test": "node tests/test_predeploy_gate.js",
+    "build": "node -c server/*.js server/**/*.js web/js/*.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
