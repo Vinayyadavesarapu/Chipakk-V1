@@ -16,7 +16,7 @@ const razorpayService = require('./razorpayService');
 const findUserByFirebaseUid = async (firebaseUid, connection = pool) => {
   if (!firebaseUid) return null;
   const [rows] = await connection.execute(
-    'SELECT id, email, role FROM users WHERE firebase_uid = ? LIMIT 1',
+    'SELECT id, email FROM users WHERE firebase_uid = ? LIMIT 1',
     [firebaseUid]
   );
   return rows[0] || null;
@@ -672,6 +672,7 @@ const getPaymentStatus = async (orderId, firebaseUser) => {
 };
 
 module.exports = {
+  findUserByFirebaseUid,
   createPaymentOrder,
   verifyPayment,
   handleWebhook,

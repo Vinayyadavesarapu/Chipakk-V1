@@ -293,6 +293,13 @@ const isMissingParamRejected = razorpayService.verifyPaymentSignature({
 });
 check('2.6 Missing parameters rejected safely', isMissingParamRejected === false);
 
+// Check 2.7: findUserByFirebaseUid column contract
+const paymentServiceSrc = fs.readFileSync(path.join(__dirname, '../server/services/paymentService.js'), 'utf8');
+check('2.7 findUserByFirebaseUid does not select non-existent "role" column from users',
+  !/SELECT[^;]+role[^;]+FROM users/i.test(paymentServiceSrc) &&
+  paymentServiceSrc.includes('SELECT id, email FROM users WHERE firebase_uid = ? LIMIT 1')
+);
+
 
 // =============================================================================
 // SUITE 3: VELOCITY INTEGRATION (ENDPOINT PATHS & AUTH RULES)
