@@ -632,7 +632,13 @@ const updateProduct = async (id, updateData) => {
     active,
     featured
   } = updateData;
-  const taxCfg = taxProfileService.parseTaxConfigInput(updateData);
+
+  // Admin HSN / GST Preservation:
+  // On product edit, empty string ("") does not overwrite existing values unless explicitly null or a valid value.
+  const taxInput = { ...updateData };
+  if (taxInput.hsn_code === '') delete taxInput.hsn_code;
+  if (taxInput.gst_rate === '') delete taxInput.gst_rate;
+  const taxCfg = taxProfileService.parseTaxConfigInput(taxInput);
 
   const connection = await pool.getConnection();
 
