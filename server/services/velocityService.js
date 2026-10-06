@@ -153,6 +153,8 @@ const velocityFetch = async (endpoint, options = {}) => {
     const err = new Error(errorMsg);
     err.statusCode = response.status;
     err.data = data;
+    // 401/403 on an authorized call means Velocity rejected our cached bearer token
+    err.isAuthRejection = response.status === 401 || response.status === 403;
     throw err;
   }
 
@@ -160,22 +162,57 @@ const velocityFetch = async (endpoint, options = {}) => {
 };
 
 /**
+ * Runs an authorized Velocity call; if Velocity rejects the cached token, clears it,
+ * obtains a fresh token and retries exactly once. Other errors are not retried.
+ */
+const velocityFetchWithTokenRetry = async (endpoint, options = {}) => {
+  try {
+    return await velocityFetch(endpoint, options);
+  } catch (err) {
+    if (!err.isAuthRejection) throw err;
+    resetTokenCache();
+    return velocityFetch(endpoint, options);
+  }
+};
+
+/**
+ * Normalizes the documented Velocity serviceability response:
+ *   { result: { serviceability_results: [ { carrier_id, carrier_name }, ... ] } }
+ * Velocity documents no "serviceable" flag: serviceable means at least one eligible carrier.
+ * Any other shape is treated as an invalid response (never as serviceable).
+ */
+const normalizeServiceabilityResponse = (data) => {
+  const results = data && data.result && data.result.serviceability_results;
+  if (!Array.isArray(results)) {
+    const err = new Error('Velocity serviceability response did not contain result.serviceability_results.');
+    err.code = 'VELOCITY_INVALID_RESPONSE';
+    err.statusCode = 502;
+    throw err;
+  }
+  const carriers = results
+    .filter((r) => r && typeof r === 'object')
+    .map((r) => ({
+      carrier_id: r.carrier_id !== undefined ? r.carrier_id : null,
+      carrier_name: r.carrier_name !== undefined ? r.carrier_name : null
+    }));
+  return { serviceable: carriers.length > 0, carriers };
+};
+
+/**
  * B3. Shipping Serviceability Check
- * 
+ *
+ * Pickup PIN always comes from MARSHANS_PICKUP_PINCODE; shipment_type is always 'forward'.
+ *
  * @param {Object} params
- * @param {string} [params.from] - Origin / Pickup PIN code (defaults to MARSHANS warehouse PIN 500090)
  * @param {string} params.to - Customer delivery PIN code (6 digits)
  * @param {string} [params.payment_mode='prepaid'] - 'prepaid' | 'cod'
- * @param {string} [params.shipment_type='forward'] - 'forward' | 'reverse'
- * @returns {Promise<Object>} Eligible carriers and serviceability status
+ * @returns {Promise<{serviceable: boolean, carriers: Array<{carrier_id: *, carrier_name: *}>}>}
  */
 const checkServiceability = async ({
-  from,
   to,
-  payment_mode = 'prepaid',
-  shipment_type = 'forward'
+  payment_mode = 'prepaid'
 }) => {
-  const pickupPin = String(from || getDefaultPickupPincode()).trim();
+  const pickupPin = getDefaultPickupPincode();
   const destPin = String(to || '').trim();
 
   if (!/^\d{6}$/.test(destPin)) {
@@ -188,13 +225,14 @@ const checkServiceability = async ({
     from: pickupPin,
     to: destPin,
     payment_mode: String(payment_mode).toLowerCase() === 'cod' ? 'cod' : 'prepaid',
-    shipment_type: shipment_type || 'forward'
+    shipment_type: 'forward'
   };
 
-  return velocityFetch('/custom/api/v1/serviceability', {
+  const data = await velocityFetchWithTokenRetry('/custom/api/v1/serviceability', {
     method: 'POST',
     body: JSON.stringify(payload)
   });
+  return normalizeServiceabilityResponse(data);
 };
 
 /**
@@ -310,6 +348,7 @@ module.exports = {
   isConfigured,
   resetTokenCache,
   getAuthToken,
+  normalizeServiceabilityResponse,
   checkServiceability,
   createForwardShipment,
   trackShipment,

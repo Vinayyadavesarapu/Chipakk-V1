@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server/index.js",
     "dev": "node server/index.js",
-    "test": "node tests/test_predeploy_gate.js",
+    "test": "node tests/test_predeploy_gate.js && node --test tests/test_velocity_serviceability.js",
     "build": "node -c server/*.js server/**/*.js web/js/*.js"
   },
   "dependencies": {

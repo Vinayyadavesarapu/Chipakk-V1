@@ -294,9 +294,20 @@ const getCustomerOrderTrackingHandler = async (req, res, next) => {
   }
 };
 
+const SERVICEABILITY_MESSAGES = {
+  serviceable: 'Delivery is available for this PIN code.',
+  not_serviceable: 'Delivery is not available for this PIN code.',
+  unavailable: 'Shipping serviceability is temporarily unavailable. Please try again later.'
+};
+
 /**
  * Check Order Pincode Serviceability Handler
  * POST /api/orders/serviceability
+ *
+ * Always answers with exactly one of three states (never assumes delivery is available):
+ *   { status: 'serviceable',     serviceable: true,  carriers: [...] }  -> Velocity returned carriers
+ *   { status: 'not_serviceable', serviceable: false, carriers: [] }     -> Velocity returned no carriers
+ *   { status: 'unavailable',     serviceable: false, carriers: [] }     -> config missing / auth / network / API failure
  */
 const checkOrderServiceabilityHandler = async (req, res, next) => {
   try {
@@ -312,30 +323,39 @@ const checkOrderServiceabilityHandler = async (req, res, next) => {
       return sendError(res, 'A valid 6-digit PIN code is required.', 400);
     }
 
+    const paymentMode = String(payment_mode || '').toLowerCase() === 'cod' ? 'cod' : 'prepaid';
+    const unavailable = () => sendSuccess(res, {
+      status: 'unavailable',
+      serviceable: false,
+      carriers: [],
+      pincode: cleanPin,
+      payment_mode: paymentMode,
+      message: SERVICEABILITY_MESSAGES.unavailable
+    }, 'Serviceability check unavailable');
+
     if (!velocityService.isConfigured()) {
-      return sendSuccess(res, {
-        serviceable: false,
-        pincode: cleanPin,
-        message: 'Shipping serviceability check is temporarily unavailable. Please try again later.',
-        provider: 'velocity'
-      }, 'Serviceability check unconfigured');
+      console.warn('[Velocity Serviceability] VELOCITY_USERNAME / VELOCITY_PASSWORD are not configured.');
+      return unavailable();
     }
 
+    let result;
     try {
-      const result = await velocityService.checkServiceability({
-        to: cleanPin,
-        payment_mode: payment_mode || 'prepaid'
-      });
-      return sendSuccess(res, result, 'Serviceability checked successfully');
+      result = await velocityService.checkServiceability({ to: cleanPin, payment_mode: paymentMode });
     } catch (velErr) {
-      console.warn(`[Velocity Serviceability Error] PIN ${cleanPin}:`, velErr.message);
-      return sendSuccess(res, {
-        serviceable: false,
-        pincode: cleanPin,
-        message: velErr.message || 'Unable to verify delivery serviceability for this PIN code.',
-        provider: 'velocity'
-      }, 'Serviceability check failed');
+      // Never forward Velocity internals to customers; log a safe summary for operators.
+      console.warn(`[Velocity Serviceability] PIN ${cleanPin} unavailable: code=${velErr.code || '-'} status=${velErr.statusCode || '-'} ${velErr.message}`);
+      return unavailable();
     }
+
+    const status = result.serviceable ? 'serviceable' : 'not_serviceable';
+    return sendSuccess(res, {
+      status,
+      serviceable: result.serviceable,
+      carriers: result.carriers,
+      pincode: cleanPin,
+      payment_mode: paymentMode,
+      message: SERVICEABILITY_MESSAGES[status]
+    }, 'Serviceability checked successfully');
   } catch (error) {
     return next(error);
   }
