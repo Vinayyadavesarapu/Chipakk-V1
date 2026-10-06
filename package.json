@@ -17,6 +17,9 @@
     "multer": "^1.4.5-lts.1",
     "mysql2": "^3.11.0"
   },
+  "overrides": {
+    "proxy-addr": "2.0.8"
+  },
   "private": true,
   "engines": {
     "node": ">=18.0.0"
