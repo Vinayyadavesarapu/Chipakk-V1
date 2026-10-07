@@ -272,12 +272,14 @@ const getCustomers = async ({ search = '', limit = 50, offset = 0, store_id = nu
   const parsedLimit = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 500);
   const parsedOffset = Math.max(parseInt(offset, 10) || 0, 0);
 
+  const isStore2 = store_id !== null && store_id !== undefined && parseInt(store_id, 10) === 2;
+
   const conditions = [];
   const params = [];
 
   if (search && String(search).trim()) {
     const term = `%${String(search).trim().toLowerCase()}%`;
-    conditions.push('(LOWER(COALESCE(u.full_name, u.name, "")) LIKE ? OR LOWER(COALESCE(u.email, "")) LIKE ? OR COALESCE(u.phone, "") LIKE ?)');
+    conditions.push('(LOWER(COALESCE(u.full_name, "")) LIKE ? OR LOWER(COALESCE(u.email, "")) LIKE ? OR COALESCE(u.phone, "") LIKE ?)');
     params.push(term, term, term);
   }
 
@@ -301,9 +303,20 @@ const getCustomers = async ({ search = '', limit = 50, offset = 0, store_id = nu
   // Count query
   let total = 0;
   try {
-    const countSql = `SELECT COUNT(*) AS total FROM users u ${whereClause}`;
-    const [countRows] = await pool.execute(countSql, params);
-    total = countRows[0]?.total || 0;
+    if (isStore2) {
+      const countSql = `
+        SELECT COUNT(DISTINCT u.id) AS total
+        FROM users u
+        INNER JOIN orders o ON (o.customer_id = u.id OR o.customer_id = u.firebase_uid OR (o.customer_email IS NOT NULL AND LOWER(o.customer_email) = LOWER(u.email)))
+        WHERE o.store_id = 2 ${whereClause ? 'AND ' + conditions.join(' AND ') : ''}
+      `;
+      const [countRows] = await pool.execute(countSql, params);
+      total = countRows[0]?.total || 0;
+    } else {
+      const countSql = `SELECT COUNT(*) AS total FROM users u ${whereClause}`;
+      const [countRows] = await pool.execute(countSql, params);
+      total = countRows[0]?.total || 0;
+    }
   } catch (err) {
     if (err.message && err.message.includes("Unknown column 'full_name'")) {
       const fallbackCountSql = whereClause.replace(/u\.full_name/g, 'u.name');
@@ -314,23 +327,29 @@ const getCustomers = async ({ search = '', limit = 50, offset = 0, store_id = nu
     }
   }
 
-  // Query customers with aggregated order metrics
+  // Store 2 only displays customers with Store 2 orders
+  const havingClause = isStore2 ? 'HAVING COUNT(o.id) > 0' : '';
+
+  // Query customers with aggregated order metrics (zero u.name references)
   const listSql = `
     SELECT
       u.id,
       u.firebase_uid,
-      COALESCE(u.full_name, u.name, 'Customer') AS name,
-      COALESCE(u.full_name, u.name, 'Customer') AS full_name,
-      u.email,
-      u.phone,
+      COALESCE(NULLIF(TRIM(u.full_name), ''), NULLIF(TRIM(MAX(o.customer_name)), ''), 'Customer') AS name,
+      COALESCE(NULLIF(TRIM(u.full_name), ''), NULLIF(TRIM(MAX(o.customer_name)), ''), 'Customer') AS full_name,
+      COALESCE(NULLIF(TRIM(u.full_name), ''), NULLIF(TRIM(MAX(o.customer_name)), ''), 'Customer') AS customer_name,
+      COALESCE(NULLIF(TRIM(u.email), ''), NULLIF(TRIM(MAX(o.customer_email)), ''), '') AS email,
+      COALESCE(NULLIF(TRIM(u.phone), ''), NULLIF(TRIM(MAX(o.customer_phone)), ''), NULLIF(TRIM(MAX(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, '$.phone')))), ''), '') AS phone,
       u.created_at,
       COUNT(o.id) AS total_orders,
-      SUM(CASE WHEN o.fulfillment_status = 'DELIVERED' THEN 1 ELSE 0 END) AS delivered_orders,
-      COALESCE(SUM(CASE WHEN o.payment_status = 'paid' THEN o.total_price ELSE 0 END), 0) AS total_spent
+      SUM(CASE WHEN UPPER(o.fulfillment_status) IN ('DELIVERED', 'COMPLETED') THEN 1 ELSE 0 END) AS completed_orders,
+      COALESCE(SUM(CASE WHEN o.payment_status = 'paid' THEN o.total_price ELSE 0 END), 0) AS total_spent,
+      MAX(o.created_at) AS last_order
     FROM users u
-    LEFT JOIN orders o ON (o.customer_id = u.firebase_uid OR (o.customer_email IS NOT NULL AND LOWER(o.customer_email) = LOWER(u.email)))${orderStoreCondition}
+    LEFT JOIN orders o ON (o.customer_id = u.id OR o.customer_id = u.firebase_uid OR (o.customer_email IS NOT NULL AND LOWER(o.customer_email) = LOWER(u.email)))${orderStoreCondition}
     ${whereClause}
-    GROUP BY u.id, u.firebase_uid, u.email, u.phone, u.created_at
+    GROUP BY u.id, u.firebase_uid, u.email, u.phone, u.full_name, u.created_at
+    ${havingClause}
     ORDER BY u.created_at DESC, u.id DESC
     LIMIT ? OFFSET ?
   `;
@@ -340,41 +359,149 @@ const getCustomers = async ({ search = '', limit = 50, offset = 0, store_id = nu
     const queryParams = [...orderStoreParams, ...params, parsedLimit, parsedOffset];
     const [rows] = await pool.execute(listSql, queryParams);
     customers = rows.map(r => {
-      const deliveredCount = parseInt(r.delivered_orders, 10) || 0;
-      const tier = calculateCustomerTier(deliveredCount);
+      const completedCount = parseInt(r.completed_orders !== undefined ? r.completed_orders : r.delivered_orders, 10) || 0;
+      const tier = calculateCustomerTier(completedCount);
+      const rawSpent = parseInt(r.total_spent, 10) || 0;
+      const spendRupees = isStore2 ? Math.round(rawSpent / 100) : rawSpent;
+      const lastOrderVal = r.last_order ? (r.last_order instanceof Date ? r.last_order.toISOString() : String(r.last_order)) : null;
+
       return {
         id: r.id,
-        firebase_uid: r.firebase_uid,
-        name: r.name,
-        full_name: r.name,
+        firebase_uid: r.firebase_uid || null,
+        name: r.name || 'Customer',
+        full_name: r.name || 'Customer',
+        customer_name: r.name || 'Customer',
         email: r.email || '',
         phone: r.phone || '',
         total_orders: parseInt(r.total_orders, 10) || 0,
-        delivered_orders: deliveredCount,
-        total_spent: parseInt(r.total_spent, 10) || 0,
+        completed_orders: completedCount,
+        delivered_orders: completedCount,
+        total_spend: spendRupees,
+        total_spent: spendRupees,
+        total_spend_rupees: spendRupees,
+        last_order: lastOrderVal,
         status: tier,
         loyalty_tier: tier,
         created_at: r.created_at
       };
     });
+
+    // Check if any guest/unlinked orders exist that match the store filter
+    if (isStore2 || store_id !== null) {
+      try {
+        const existingEmails = new Set(customers.map(c => (c.email || '').toLowerCase()).filter(Boolean));
+        const guestOrderSql = `
+          SELECT
+            o.customer_email,
+            o.customer_name,
+            o.customer_phone,
+            o.shipping_address,
+            o.fulfillment_status,
+            o.payment_status,
+            o.total_price,
+            o.created_at
+          FROM orders o
+          WHERE (o.customer_id IS NULL OR o.customer_id NOT IN (SELECT id FROM users))
+            ${orderStoreCondition}
+          ORDER BY o.created_at DESC
+        `;
+        const [guestRows] = await pool.execute(guestOrderSql, orderStoreParams);
+        if (guestRows && guestRows.length > 0) {
+          const guestMap = new Map();
+          for (const go of guestRows) {
+            const emailKey = (go.customer_email || '').toLowerCase().trim();
+            const key = emailKey || (go.customer_name || '').toLowerCase().trim();
+            if (!key || existingEmails.has(emailKey)) continue;
+
+            if (!guestMap.has(key)) {
+              let parsedPhone = go.customer_phone || '';
+              if (!parsedPhone && go.shipping_address) {
+                try {
+                  const parsedAddr = typeof go.shipping_address === 'string' ? JSON.parse(go.shipping_address) : go.shipping_address;
+                  parsedPhone = parsedAddr.phone || '';
+                } catch (_) {}
+              }
+              guestMap.set(key, {
+                id: `guest_${key}`,
+                firebase_uid: null,
+                name: go.customer_name || 'Customer',
+                email: go.customer_email || '',
+                phone: parsedPhone || '',
+                total_orders: 0,
+                completed_orders: 0,
+                raw_spent: 0,
+                last_order: go.created_at,
+                created_at: go.created_at
+              });
+            }
+
+            const item = guestMap.get(key);
+            item.total_orders += 1;
+            if (['DELIVERED', 'COMPLETED'].includes(String(go.fulfillment_status || '').toUpperCase())) {
+              item.completed_orders += 1;
+            }
+            if (String(go.payment_status || '').toLowerCase() === 'paid') {
+              item.raw_spent += parseInt(go.total_price, 10) || 0;
+            }
+            if (new Date(go.created_at) > new Date(item.last_order)) {
+              item.last_order = go.created_at;
+            }
+          }
+
+          for (const gCust of guestMap.values()) {
+            const spendRupees = isStore2 ? Math.round(gCust.raw_spent / 100) : gCust.raw_spent;
+            const tier = calculateCustomerTier(gCust.completed_orders);
+            customers.push({
+              id: gCust.id,
+              firebase_uid: null,
+              name: gCust.name,
+              full_name: gCust.name,
+              customer_name: gCust.name,
+              email: gCust.email,
+              phone: gCust.phone,
+              total_orders: gCust.total_orders,
+              completed_orders: gCust.completed_orders,
+              delivered_orders: gCust.completed_orders,
+              total_spend: spendRupees,
+              total_spent: spendRupees,
+              total_spend_rupees: spendRupees,
+              last_order: gCust.last_order instanceof Date ? gCust.last_order.toISOString() : String(gCust.last_order),
+              status: tier,
+              loyalty_tier: tier,
+              created_at: gCust.created_at
+            });
+            total += 1;
+          }
+        }
+      } catch (_) {}
+    }
   } catch (err) {
     if (err.message && err.message.includes("Unknown column 'full_name'")) {
       const fallbackListSql = listSql.replace(/u\.full_name/g, 'u.name');
       const queryParams = [...orderStoreParams, ...params, parsedLimit, parsedOffset];
       const [rows] = await pool.execute(fallbackListSql, queryParams);
       customers = rows.map(r => {
-        const deliveredCount = parseInt(r.delivered_orders, 10) || 0;
-        const tier = calculateCustomerTier(deliveredCount);
+        const completedCount = parseInt(r.completed_orders !== undefined ? r.completed_orders : r.delivered_orders, 10) || 0;
+        const tier = calculateCustomerTier(completedCount);
+        const rawSpent = parseInt(r.total_spent, 10) || 0;
+        const spendRupees = isStore2 ? Math.round(rawSpent / 100) : rawSpent;
+        const lastOrderVal = r.last_order ? (r.last_order instanceof Date ? r.last_order.toISOString() : String(r.last_order)) : null;
+
         return {
           id: r.id,
-          firebase_uid: r.firebase_uid,
-          name: r.name,
-          full_name: r.name,
+          firebase_uid: r.firebase_uid || null,
+          name: r.name || 'Customer',
+          full_name: r.name || 'Customer',
+          customer_name: r.name || 'Customer',
           email: r.email || '',
           phone: r.phone || '',
           total_orders: parseInt(r.total_orders, 10) || 0,
-          delivered_orders: deliveredCount,
-          total_spent: parseInt(r.total_spent, 10) || 0,
+          completed_orders: completedCount,
+          delivered_orders: completedCount,
+          total_spend: spendRupees,
+          total_spent: spendRupees,
+          total_spend_rupees: spendRupees,
+          last_order: lastOrderVal,
           status: tier,
           loyalty_tier: tier,
           created_at: r.created_at
@@ -408,60 +535,144 @@ const getCustomerById = async (idOrUid, store_id = null) => {
   let user = null;
   try {
     const [rows] = await pool.execute(
-      `SELECT id, firebase_uid, COALESCE(full_name, name, 'Customer') AS name, email, phone, created_at FROM users u WHERE ${whereCol} = ? LIMIT 1`,
+      `SELECT id, firebase_uid, COALESCE(full_name, 'Customer') AS name, full_name, email, phone, created_at FROM users u WHERE ${whereCol} = ? LIMIT 1`,
       [val]
     );
-    if (!rows || rows.length === 0) return null;
-    user = rows[0];
+    if (rows && rows.length > 0) user = rows[0];
   } catch (err) {
     if (err.message && err.message.includes("Unknown column 'full_name'")) {
       const [rows] = await pool.execute(
-        `SELECT id, firebase_uid, COALESCE(name, 'Customer') AS name, email, phone, created_at FROM users u WHERE ${whereCol} = ? LIMIT 1`,
+        `SELECT id, firebase_uid, COALESCE(name, 'Customer') AS name, name AS full_name, email, phone, created_at FROM users u WHERE ${whereCol} = ? LIMIT 1`,
         [val]
       );
-      if (!rows || rows.length === 0) return null;
-      user = rows[0];
+      if (rows && rows.length > 0) user = rows[0];
     } else {
       throw err;
     }
   }
 
-  // Fetch customer's orders
-  let orderStoreCondition = '';
-  const orderParams = [user.firebase_uid, user.email || ''];
+  const isStore2 = store_id !== null && store_id !== undefined && parseInt(store_id, 10) === 2;
+
+  if (user) {
+    let orderStoreCondition = '';
+    const orderParams = [user.id, user.firebase_uid, user.email || ''];
+    if (store_id !== null && store_id !== undefined && String(store_id).trim() !== '') {
+      const sId = parseInt(store_id, 10);
+      if (!isNaN(sId)) {
+        if (sId === 1) {
+          orderStoreCondition = ' AND (store_id = 1 OR store_id IS NULL)';
+        } else {
+          orderStoreCondition = ' AND store_id = ?';
+          orderParams.push(sId);
+        }
+      }
+    }
+
+    const [orderRows] = await pool.execute(
+      `SELECT id, order_number, customer_name, customer_email, customer_phone, fulfillment_status, payment_status, total_price, created_at FROM orders WHERE (customer_id = ? OR customer_id = ? OR (customer_email IS NOT NULL AND LOWER(customer_email) = LOWER(?)))${orderStoreCondition} ORDER BY created_at DESC LIMIT 20`,
+      orderParams
+    );
+
+    const totalOrders = orderRows.length;
+    const completedOrders = orderRows.filter(o => ['DELIVERED', 'COMPLETED'].includes(String(o.fulfillment_status || '').toUpperCase())).length;
+    const rawTotalSpent = orderRows
+      .filter(o => String(o.payment_status || '').toLowerCase() === 'paid')
+      .reduce((sum, o) => sum + (parseInt(o.total_price, 10) || 0), 0);
+    const totalSpentRupees = isStore2 ? Math.round(rawTotalSpent / 100) : rawTotalSpent;
+    const tier = calculateCustomerTier(completedOrders);
+
+    const resolvedName = (user.name && user.name !== 'Customer') ? user.name : (orderRows[0]?.customer_name || user.name || 'Customer');
+    const resolvedEmail = user.email || orderRows[0]?.customer_email || '';
+    const resolvedPhone = user.phone || orderRows[0]?.customer_phone || '';
+    const lastOrderDate = orderRows[0] ? orderRows[0].created_at : null;
+
+    return {
+      id: user.id,
+      firebase_uid: user.firebase_uid,
+      name: resolvedName,
+      full_name: resolvedName,
+      customer_name: resolvedName,
+      email: resolvedEmail,
+      phone: resolvedPhone,
+      created_at: user.created_at,
+      total_orders: totalOrders,
+      completed_orders: completedOrders,
+      delivered_orders: completedOrders,
+      total_spend: totalSpentRupees,
+      total_spent: totalSpentRupees,
+      total_spend_rupees: totalSpentRupees,
+      last_order: lastOrderDate,
+      status: tier,
+      loyalty_tier: tier,
+      recent_orders: orderRows.map(o => ({
+        ...o,
+        total_price_rupees: isStore2 ? Math.round((parseInt(o.total_price, 10) || 0) / 100) : (parseInt(o.total_price, 10) || 0)
+      }))
+    };
+  }
+
+  // Fallback: check if customer exists in orders table (guest or order id)
+  let orderLookupSql = `SELECT id, order_number, customer_id, customer_name, customer_email, customer_phone, shipping_address, fulfillment_status, payment_status, total_price, created_at FROM orders WHERE `;
+  const orderLookupParams = [];
+  if (isNumeric) {
+    orderLookupSql += `(id = ? OR customer_id = ?)`;
+    orderLookupParams.push(val, val);
+  } else {
+    orderLookupSql += `(LOWER(customer_email) = LOWER(?) OR customer_id = ?)`;
+    orderLookupParams.push(val, val);
+  }
   if (store_id !== null && store_id !== undefined && String(store_id).trim() !== '') {
     const sId = parseInt(store_id, 10);
     if (!isNaN(sId)) {
       if (sId === 1) {
-        orderStoreCondition = ' AND (store_id = 1 OR store_id IS NULL)';
+        orderLookupSql += ' AND (store_id = 1 OR store_id IS NULL)';
       } else {
-        orderStoreCondition = ' AND store_id = ?';
-        orderParams.push(sId);
+        orderLookupSql += ' AND store_id = ?';
+        orderLookupParams.push(sId);
       }
     }
   }
+  orderLookupSql += ' ORDER BY created_at DESC LIMIT 20';
 
-  const [orderRows] = await pool.execute(
-    `SELECT id, order_number, fulfillment_status, payment_status, total_price, created_at FROM orders WHERE (customer_id = ? OR (customer_email IS NOT NULL AND LOWER(customer_email) = LOWER(?)))${orderStoreCondition} ORDER BY created_at DESC LIMIT 20`,
-    orderParams
-  );
+  try {
+    const [guestOrderRows] = await pool.execute(orderLookupSql, orderLookupParams);
+    if (!guestOrderRows || guestOrderRows.length === 0) return null;
 
-  const totalOrders = orderRows.length;
-  const deliveredOrders = orderRows.filter(o => o.fulfillment_status === 'DELIVERED').length;
-  const totalSpent = orderRows
-    .filter(o => o.payment_status === 'paid')
-    .reduce((sum, o) => sum + (parseInt(o.total_price, 10) || 0), 0);
-  const tier = calculateCustomerTier(deliveredOrders);
+    const firstOrder = guestOrderRows[0];
+    const totalOrders = guestOrderRows.length;
+    const completedOrders = guestOrderRows.filter(o => ['DELIVERED', 'COMPLETED'].includes(String(o.fulfillment_status || '').toUpperCase())).length;
+    const rawSpent = guestOrderRows
+      .filter(o => String(o.payment_status || '').toLowerCase() === 'paid')
+      .reduce((sum, o) => sum + (parseInt(o.total_price, 10) || 0), 0);
+    const totalSpentRupees = isStore2 ? Math.round(rawSpent / 100) : rawSpent;
+    const tier = calculateCustomerTier(completedOrders);
 
-  return {
-    ...user,
-    total_orders: totalOrders,
-    delivered_orders: deliveredOrders,
-    total_spent: totalSpent,
-    status: tier,
-    loyalty_tier: tier,
-    recent_orders: orderRows
-  };
+    return {
+      id: firstOrder.customer_id || firstOrder.id,
+      firebase_uid: null,
+      name: firstOrder.customer_name || 'Customer',
+      full_name: firstOrder.customer_name || 'Customer',
+      customer_name: firstOrder.customer_name || 'Customer',
+      email: firstOrder.customer_email || '',
+      phone: firstOrder.customer_phone || '',
+      created_at: firstOrder.created_at,
+      total_orders: totalOrders,
+      completed_orders: completedOrders,
+      delivered_orders: completedOrders,
+      total_spend: totalSpentRupees,
+      total_spent: totalSpentRupees,
+      total_spend_rupees: totalSpentRupees,
+      last_order: firstOrder.created_at,
+      status: tier,
+      loyalty_tier: tier,
+      recent_orders: guestOrderRows.map(o => ({
+        ...o,
+        total_price_rupees: isStore2 ? Math.round((parseInt(o.total_price, 10) || 0) / 100) : (parseInt(o.total_price, 10) || 0)
+      }))
+    };
+  } catch (_) {
+    return null;
+  }
 };
 
 module.exports = {

@@ -366,9 +366,9 @@ function normalizeOrder(o) {
 }
 
 function normalizeCustomer(c) {
-    const rawSpend = parseInt(c.total_spend || c.total_spent, 10) || 0;
+    const rawSpend = parseInt(c.total_spend !== undefined ? c.total_spend : c.total_spent, 10) || 0;
     const spendRupees = c.total_spend_rupees !== undefined ? c.total_spend_rupees : rawSpend;
-    const deliveredCount = parseInt(c.delivered_orders, 10) || 0;
+    const deliveredCount = parseInt(c.completed_orders !== undefined ? c.completed_orders : c.delivered_orders, 10) || 0;
     return {
         ...c,
         id: c.id,
@@ -376,12 +376,13 @@ function normalizeCustomer(c) {
         email: c.email || '',
         phone: c.phone || '',
         total_orders: c.total_orders || 0,
+        completed_orders: deliveredCount,
         delivered_orders: deliveredCount,
         total_spent: spendRupees,
         total_spent_rupees: spendRupees,
         total_spent_paise: spendRupees * 100,
-        status: c.loyalty_tier || calculateCustomerTier(deliveredCount),
-        loyalty_tier: c.loyalty_tier || calculateCustomerTier(deliveredCount),
+        status: c.loyalty_tier || c.status || calculateCustomerTier(deliveredCount),
+        loyalty_tier: c.loyalty_tier || c.status || calculateCustomerTier(deliveredCount),
         last_order: c.last_order || 'N/A',
         address: c.address || ''
     };
@@ -3203,17 +3204,18 @@ function renderCustomersTable() {
 
     tbody.innerHTML = filtered.map(c => `
         <tr>
-            <td><strong>${c.name}</strong></td>
-            <td>${c.email}</td>
+            <td><strong>${c.name}</strong><br><small style="color:#666;">${c.email}</small></td>
             <td><small>${c.phone || '-'}</small></td>
-            <td><span class="status-badge" style="background:#eee; color:#000;">${c.delivered_orders || c.total_orders || 0} Delivered</span></td>
-            <td><strong>₹${c.total_spent || 0}</strong></td>
-            <td><span class="status-badge ${c.status === 'ELITE' ? 'status-live' : (c.status === 'VIP' ? 'status-shipped' : 'status-upcoming')}">${c.status || 'NEW'}</span></td>
+            <td><strong>${c.total_orders || 0}</strong></td>
+            <td><span class="status-badge" style="background:#eee; color:#000;">${c.completed_orders !== undefined ? c.completed_orders : (c.delivered_orders || 0)}</span></td>
+            <td><strong>₹${c.total_spent !== undefined ? c.total_spent : (c.total_spend || 0)}</strong></td>
+            <td><small>${c.last_order && c.last_order !== 'N/A' ? (new Date(c.last_order).toLocaleDateString()) : 'N/A'}</small></td>
+            <td><span class="status-badge ${c.status === 'ELITE' ? 'status-live' : (c.status === 'VIP' ? 'status-shipped' : 'status-upcoming')}">${c.status || c.loyalty_tier || 'NEW'}</span></td>
             <td>
                 <button class="retro-btn view-cust-btn" data-id="${c.id}" style="padding:2px 8px; font-size:0.75rem;">VIEW PROFILE →</button>
             </td>
         </tr>
-    `).join('') || '<tr><td colspan="7">No customers found.</td></tr>';
+    `).join('') || '<tr><td colspan="8">No customers found.</td></tr>';
 
     tbody.querySelectorAll('.view-cust-btn').forEach(btn => {
         btn.addEventListener('click', () => {
