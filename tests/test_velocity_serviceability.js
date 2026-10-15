@@ -202,9 +202,29 @@ test('10. shipment_type is always forward', async () => {
   assert.deepEqual(Object.keys(serviceabilityCalls(calls)[0].body).sort(), ['from', 'payment_mode', 'shipment_type', 'to']);
 });
 
-test('11. Store 1 cannot use the Store 2 serviceability endpoint', async () => {
+test('11. Store 1 returns unavailable without calling Velocity when CHIPAKK_PICKUP_PINCODE is missing', async () => {
+  delete process.env.CHIPAKK_PICKUP_PINCODE;
   const calls = mockVelocity();
   const { status, body } = await callHandler({ storeId: 1 });
+  assert.equal(status, 200);
+  assert.equal(body.data.status, 'unavailable');
+  assert.equal(body.data.serviceable, false);
+  assert.equal(calls.length, 0);
+});
+
+test('11a. Store 1 uses CHIPAKK_PICKUP_PINCODE when configured', async () => {
+  process.env.CHIPAKK_PICKUP_PINCODE = '500001';
+  const calls = mockVelocity({ serviceability: [ok(carriersBody)] });
+  const { status, body } = await callHandler({ storeId: 1 });
+  assert.equal(status, 200);
+  assert.equal(body.data.status, 'serviceable');
+  assert.equal(serviceabilityCalls(calls)[0].body.from, '500001');
+  delete process.env.CHIPAKK_PICKUP_PINCODE;
+});
+
+test('11c. Unsupported store (storeId: 3) is rejected with 403', async () => {
+  const calls = mockVelocity();
+  const { status, body } = await callHandler({ storeId: 3 });
   assert.equal(status, 403);
   assert.equal(body.success, false);
   assert.equal(calls.length, 0);

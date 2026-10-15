@@ -12,7 +12,7 @@ const createPaymentOrderHandler = async (req, res, next) => {
       return sendError(res, 'Order ID is required to initiate payment.', 400);
     }
 
-    const result = await paymentService.createPaymentOrder(order_id, req.user);
+    const result = await paymentService.createPaymentOrder(order_id, req.user, req.storeId);
     return sendSuccess(res, result, 'Payment order created successfully', 200);
   } catch (err) {
     if (err.code === 'GATEWAY_NOT_CONFIGURED') {
@@ -42,7 +42,7 @@ const verifyPaymentHandler = async (req, res, next) => {
       );
     }
 
-    const result = await paymentService.verifyPayment(req.body, req.user);
+    const result = await paymentService.verifyPayment(req.body, req.user, req.storeId);
     return sendSuccess(res, result, 'Payment verified successfully', 200);
   } catch (err) {
     const status = err.status || err.statusCode;
@@ -88,7 +88,7 @@ const webhookHandler = async (req, res, next) => {
 const getPaymentStatusHandler = async (req, res, next) => {
   try {
     const { orderId } = req.params;
-    const result = await paymentService.getPaymentStatus(orderId, req.user);
+    const result = await paymentService.getPaymentStatus(orderId, req.user, req.storeId);
     return sendSuccess(res, result, 'Payment status retrieved successfully', 200);
   } catch (err) {
     const status = err.status || err.statusCode;

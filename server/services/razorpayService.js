@@ -13,25 +13,61 @@ const crypto = require('crypto');
  * - Timing-safe equality used for all signature comparisons to prevent timing attacks.
  */
 
-const getKeyId = () => process.env.RAZORPAY_KEY_ID || '';
-const getKeySecret = () => process.env.RAZORPAY_KEY_SECRET || '';
-const getWebhookSecret = () => process.env.RAZORPAY_WEBHOOK_SECRET || '';
+const getKeyId = (storeId) => {
+  const sId = parseInt(storeId, 10);
+  if (sId === 1 && process.env.CHIPAKK_RAZORPAY_KEY_ID) {
+    return process.env.CHIPAKK_RAZORPAY_KEY_ID;
+  }
+  if (sId === 2 && process.env.MARSHANS_RAZORPAY_KEY_ID) {
+    return process.env.MARSHANS_RAZORPAY_KEY_ID;
+  }
+  return process.env.RAZORPAY_KEY_ID || '';
+};
+
+const getKeySecret = (storeId) => {
+  const sId = parseInt(storeId, 10);
+  if (sId === 1 && process.env.CHIPAKK_RAZORPAY_KEY_SECRET) {
+    return process.env.CHIPAKK_RAZORPAY_KEY_SECRET;
+  }
+  if (sId === 2 && process.env.MARSHANS_RAZORPAY_KEY_SECRET) {
+    return process.env.MARSHANS_RAZORPAY_KEY_SECRET;
+  }
+  return process.env.RAZORPAY_KEY_SECRET || '';
+};
+
+const getWebhookSecret = (storeId) => {
+  const sId = parseInt(storeId, 10);
+  if (sId === 1 && process.env.CHIPAKK_RAZORPAY_WEBHOOK_SECRET) {
+    return process.env.CHIPAKK_RAZORPAY_WEBHOOK_SECRET;
+  }
+  if (sId === 2 && process.env.MARSHANS_RAZORPAY_WEBHOOK_SECRET) {
+    return process.env.MARSHANS_RAZORPAY_WEBHOOK_SECRET;
+  }
+  return process.env.RAZORPAY_WEBHOOK_SECRET || '';
+};
 
 /**
  * Check if Razorpay credentials are fully provisioned
  */
-const isConfigured = () => {
-  const keyId = getKeyId();
-  const secret = getKeySecret();
+const isConfigured = (storeId) => {
+  const keyId = getKeyId(storeId);
+  const secret = getKeySecret(storeId);
   return Boolean(keyId && secret && keyId.trim() && secret.trim());
 };
 
 /**
  * Check if Razorpay Webhook secret is provisioned
  */
-const isWebhookConfigured = () => {
-  const ws = getWebhookSecret();
-  return Boolean(ws && ws.trim());
+const isWebhookConfigured = (storeId) => {
+  if (storeId) {
+    const ws = getWebhookSecret(storeId);
+    return Boolean(ws && ws.trim());
+  }
+  return Boolean(
+    (process.env.RAZORPAY_WEBHOOK_SECRET && process.env.RAZORPAY_WEBHOOK_SECRET.trim()) ||
+    (process.env.CHIPAKK_RAZORPAY_WEBHOOK_SECRET && process.env.CHIPAKK_RAZORPAY_WEBHOOK_SECRET.trim()) ||
+    (process.env.MARSHANS_RAZORPAY_WEBHOOK_SECRET && process.env.MARSHANS_RAZORPAY_WEBHOOK_SECRET.trim())
+  );
 };
 
 /**
@@ -41,25 +77,30 @@ const isWebhookConfigured = () => {
  * @param {number} params.amountPaise - Grand total in paise (authoritative from DB)
  * @param {string} params.receipt - Internal order number (e.g. CHP-20260911-XXXX)
  * @param {Object} [params.notes] - Safe correlation metadata
+ * @param {number|string} [params.storeId] - Store ID (1: CHIPAKK, 2: MARSHANS)
  * @returns {Promise<Object>} Razorpay Order Object
  */
-const createRazorpayOrder = async ({ amountPaise, receipt, notes = {} }) => {
-  if (!isConfigured()) {
+const createRazorpayOrder = async ({ amountPaise, receipt, notes = {}, storeId }) => {
+  if (!isConfigured(storeId)) {
     const err = new Error('Payment gateway credentials are not configured on the server. Please set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET.');
     err.code = 'GATEWAY_NOT_CONFIGURED';
     throw err;
   }
 
-  const keyId = getKeyId();
-  const keySecret = getKeySecret();
+  const keyId = getKeyId(storeId);
+  const keySecret = getKeySecret(storeId);
   const authHeader = 'Basic ' + Buffer.from(`${keyId}:${keySecret}`).toString('base64');
+
+  const sId = parseInt(storeId, 10);
+  const platformName = sId === 2 ? 'THE MARSHANS' : 'CHIPAKK';
 
   const payload = {
     amount: parseInt(amountPaise, 10),
     currency: 'INR',
     receipt: String(receipt).slice(0, 40),
     notes: {
-      platform: 'CHIPAKK',
+      platform: platformName,
+      store_id: String(sId || 1),
       ...notes
     }
   };
@@ -103,8 +144,8 @@ const createRazorpayOrder = async ({ amountPaise, receipt, notes = {} }) => {
  * @param {string} params.razorpay_signature
  * @returns {boolean}
  */
-const verifyPaymentSignature = ({ razorpay_order_id, razorpay_payment_id, razorpay_signature }) => {
-  if (!isConfigured()) {
+const verifyPaymentSignature = ({ razorpay_order_id, razorpay_payment_id, razorpay_signature, storeId }) => {
+  if (!isConfigured(storeId)) {
     const err = new Error('Payment gateway credentials are not configured on the server.');
     err.code = 'GATEWAY_NOT_CONFIGURED';
     throw err;
@@ -114,7 +155,7 @@ const verifyPaymentSignature = ({ razorpay_order_id, razorpay_payment_id, razorp
     return false;
   }
 
-  const secret = getKeySecret();
+  const secret = getKeySecret(storeId);
   const body = `${razorpay_order_id}|${razorpay_payment_id}`;
 
   const expectedSignature = crypto
@@ -139,10 +180,11 @@ const verifyPaymentSignature = ({ razorpay_order_id, razorpay_payment_id, razorp
  * @param {Object} params
  * @param {string} params.rawBody - Exact unparsed request payload string
  * @param {string} params.signature - Value of 'x-razorpay-signature' header
+ * @param {number|string} [params.storeId] - Optional storeId
  * @returns {boolean}
  */
-const verifyWebhookSignature = ({ rawBody, signature }) => {
-  if (!isWebhookConfigured()) {
+const verifyWebhookSignature = ({ rawBody, signature, storeId }) => {
+  if (!isWebhookConfigured(storeId)) {
     const err = new Error('Razorpay webhook secret is not configured on the server.');
     err.code = 'WEBHOOK_SECRET_NOT_CONFIGURED';
     throw err;
@@ -152,20 +194,32 @@ const verifyWebhookSignature = ({ rawBody, signature }) => {
     return false;
   }
 
-  const webhookSecret = getWebhookSecret();
-  const expectedSignature = crypto
-    .createHmac('sha256', webhookSecret)
-    .update(rawBody)
-    .digest('hex');
+  const checkSecret = (sec) => {
+    if (!sec || !sec.trim()) return false;
+    const expected = crypto
+      .createHmac('sha256', sec)
+      .update(rawBody)
+      .digest('hex');
+    const expBuf = Buffer.from(expected, 'utf8');
+    const actBuf = Buffer.from(String(signature), 'utf8');
+    return expBuf.length === actBuf.length && crypto.timingSafeEqual(expBuf, actBuf);
+  };
 
-  const expectedBuf = Buffer.from(expectedSignature, 'utf8');
-  const actualBuf = Buffer.from(String(signature), 'utf8');
-
-  if (expectedBuf.length !== actualBuf.length) {
-    return false;
+  if (storeId) {
+    return checkSecret(getWebhookSecret(storeId));
   }
 
-  return crypto.timingSafeEqual(expectedBuf, actualBuf);
+  const candidateSecrets = [
+    process.env.RAZORPAY_WEBHOOK_SECRET,
+    process.env.CHIPAKK_RAZORPAY_WEBHOOK_SECRET,
+    process.env.MARSHANS_RAZORPAY_WEBHOOK_SECRET
+  ].filter(Boolean);
+
+  for (const candidate of candidateSecrets) {
+    if (checkSecret(candidate)) return true;
+  }
+
+  return false;
 };
 
 module.exports = {

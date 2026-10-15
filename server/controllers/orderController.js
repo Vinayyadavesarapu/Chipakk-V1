@@ -268,10 +268,11 @@ const getCustomerOrderTrackingHandler = async (req, res, next) => {
       delivered_date: null
     };
 
-    // If order has an AWB / tracking number, belongs to Store 2 (THE MARSHANS), and Velocity is configured, query real-time tracking
-    if (order.tracking_no && parseInt(order.store_id, 10) === 2 && velocityService.isConfigured()) {
+    // If order has an AWB / tracking number, belongs to Store 1 or Store 2, and Velocity is configured, query real-time tracking
+    const orderStoreId = parseInt(order.store_id, 10) || 1;
+    if (order.tracking_no && (orderStoreId === 1 || orderStoreId === 2) && velocityService.isConfigured(orderStoreId)) {
       try {
-        const velRes = await velocityService.trackShipment(order.tracking_no);
+        const velRes = await velocityService.trackShipment(order.tracking_no, orderStoreId);
         const result = Array.isArray(velRes) ? velRes[0] : (velRes?.data?.[0] || velRes?.data || velRes);
         if (result && typeof result === 'object') {
           trackingData.current_status = result.status || result.current_status || order.fulfillment_status;
@@ -312,8 +313,8 @@ const SERVICEABILITY_MESSAGES = {
 const checkOrderServiceabilityHandler = async (req, res, next) => {
   try {
     const storeId = parseInt(req.storeId, 10) || 1;
-    if (storeId !== 2) {
-      return sendError(res, 'Velocity shipping serviceability is exclusively enabled for THE MARSHANS (Store 2).', 403);
+    if (storeId !== 1 && storeId !== 2) {
+      return sendError(res, 'Velocity shipping serviceability is enabled for Store 1 and Store 2 only.', 403);
     }
 
     const { pincode, payment_mode } = req.body || {};
@@ -333,17 +334,21 @@ const checkOrderServiceabilityHandler = async (req, res, next) => {
       message: SERVICEABILITY_MESSAGES.unavailable
     }, 'Serviceability check unavailable');
 
-    if (!velocityService.isConfigured()) {
-      console.warn('[Velocity Serviceability] VELOCITY_USERNAME / VELOCITY_PASSWORD are not configured.');
+    if (!velocityService.isConfigured(storeId) || !velocityService.isPickupConfigured(storeId)) {
+      console.warn(`[Velocity Serviceability] VELOCITY credentials or pickup PIN not configured for store ${storeId}.`);
       return unavailable();
     }
 
     let result;
     try {
-      result = await velocityService.checkServiceability({ to: cleanPin, payment_mode: paymentMode });
+      result = await velocityService.checkServiceability({ to: cleanPin, payment_mode: paymentMode, storeId });
     } catch (velErr) {
       // Never forward Velocity internals to customers; log a safe summary for operators.
       console.warn(`[Velocity Serviceability] PIN ${cleanPin} unavailable: code=${velErr.code || '-'} status=${velErr.statusCode || '-'} ${velErr.message}`);
+      return unavailable();
+    }
+
+    if (result.status === 'unavailable') {
       return unavailable();
     }
 

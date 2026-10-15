@@ -16,19 +16,49 @@
  * - Tokens are cached in-memory server-side and renewed before expiry.
  */
 
-// In-memory token cache
-let cachedToken = null;
-let tokenExpiresAt = 0;
-let pendingAuthPromise = null;
+// In-memory token cache keyed by username
+const tokenCache = new Map();
+let pendingAuthPromises = new Map();
 
 const getBaseUrl = () => {
   const url = process.env.VELOCITY_BASE_URL || 'https://shazam.velocity.in';
   return url.replace(/\/+$/, '');
 };
 
-const getUsername = () => process.env.VELOCITY_USERNAME || '';
-const getPassword = () => process.env.VELOCITY_PASSWORD || '';
-const getDefaultPickupPincode = () => {
+const getUsername = (storeId = 2) => {
+  const sId = parseInt(storeId, 10);
+  if (sId === 1 && process.env.CHIPAKK_VELOCITY_USERNAME) {
+    return process.env.CHIPAKK_VELOCITY_USERNAME;
+  }
+  if (sId === 2 && process.env.MARSHANS_VELOCITY_USERNAME) {
+    return process.env.MARSHANS_VELOCITY_USERNAME;
+  }
+  return process.env.VELOCITY_USERNAME || '';
+};
+
+const getPassword = (storeId = 2) => {
+  const sId = parseInt(storeId, 10);
+  if (sId === 1 && process.env.CHIPAKK_VELOCITY_PASSWORD) {
+    return process.env.CHIPAKK_VELOCITY_PASSWORD;
+  }
+  if (sId === 2 && process.env.MARSHANS_VELOCITY_PASSWORD) {
+    return process.env.MARSHANS_VELOCITY_PASSWORD;
+  }
+  return process.env.VELOCITY_PASSWORD || '';
+};
+
+const getPickupPincode = (storeId = 2) => {
+  const sId = parseInt(storeId, 10);
+  if (sId === 1) {
+    const pin = process.env.CHIPAKK_PICKUP_PINCODE;
+    if (!pin || !/^\d{6}$/.test(String(pin).trim())) {
+      const err = new Error('Pickup pincode is not configured for CHIPAKK. Please set CHIPAKK_PICKUP_PINCODE in environment variables.');
+      err.code = 'CHIPAKK_PICKUP_PINCODE_MISSING';
+      err.statusCode = 500;
+      throw err;
+    }
+    return String(pin).trim();
+  }
   const pin = process.env.MARSHANS_PICKUP_PINCODE;
   if (!pin || !/^\d{6}$/.test(String(pin).trim())) {
     const err = new Error('Pickup pincode is not configured. Please set MARSHANS_PICKUP_PINCODE in environment variables.');
@@ -39,12 +69,24 @@ const getDefaultPickupPincode = () => {
   return String(pin).trim();
 };
 
+const isPickupConfigured = (storeId = 2) => {
+  const sId = parseInt(storeId, 10);
+  if (sId === 1) {
+    const pin = process.env.CHIPAKK_PICKUP_PINCODE;
+    return Boolean(pin && /^\d{6}$/.test(String(pin).trim()));
+  }
+  const pin = process.env.MARSHANS_PICKUP_PINCODE;
+  return Boolean(pin && /^\d{6}$/.test(String(pin).trim()));
+};
+
+const getDefaultPickupPincode = () => getPickupPincode(2);
+
 /**
  * Check if Velocity credentials are fully provisioned
  */
-const isConfigured = () => {
-  const user = getUsername();
-  const pass = getPassword();
+const isConfigured = (storeId = 2) => {
+  const user = getUsername(storeId);
+  const pass = getPassword(storeId);
   return Boolean(user && pass && user.trim() && pass.trim());
 };
 
@@ -52,9 +94,8 @@ const isConfigured = () => {
  * Reset token cache (useful for testing or credentials change)
  */
 const resetTokenCache = () => {
-  cachedToken = null;
-  tokenExpiresAt = 0;
-  pendingAuthPromise = null;
+  tokenCache.clear();
+  pendingAuthPromises.clear();
 };
 
 /**
@@ -62,25 +103,29 @@ const resetTokenCache = () => {
  * Obtains and caches a 24-hour JWT token from Velocity API.
  * Automatically renews when expired or within 30 minutes of expiration.
  */
-const getAuthToken = async () => {
-  if (!isConfigured()) {
+const getAuthToken = async (storeId = 2) => {
+  if (!isConfigured(storeId)) {
     const err = new Error('Velocity Shipping credentials are not configured on the server. Please set VELOCITY_USERNAME and VELOCITY_PASSWORD.');
     err.code = 'VELOCITY_NOT_CONFIGURED';
     err.statusCode = 503;
     throw err;
   }
 
+  const username = getUsername(storeId);
+  const password = getPassword(storeId);
   const now = Date.now();
+  const cached = tokenCache.get(username);
+
   // Buffer: renew 30 minutes before 24-hour expiry
-  if (cachedToken && tokenExpiresAt > now + 30 * 60 * 1000) {
-    return cachedToken;
+  if (cached && cached.expiresAt > now + 30 * 60 * 1000) {
+    return cached.token;
   }
 
-  if (pendingAuthPromise) {
-    return pendingAuthPromise;
+  if (pendingAuthPromises.has(username)) {
+    return pendingAuthPromises.get(username);
   }
 
-  pendingAuthPromise = (async () => {
+  const authPromise = (async () => {
     try {
       const baseUrl = getBaseUrl();
       const response = await fetch(`${baseUrl}/custom/api/v1/auth-token`, {
@@ -90,8 +135,8 @@ const getAuthToken = async () => {
           'Accept': 'application/json'
         },
         body: JSON.stringify({
-          username: getUsername(),
-          password: getPassword()
+          username,
+          password
         })
       });
 
@@ -115,22 +160,25 @@ const getAuthToken = async () => {
       }
 
       // Documentation specifies 24-hour validity (24 * 60 * 60 * 1000 ms)
-      cachedToken = token;
-      tokenExpiresAt = Date.now() + 23 * 60 * 60 * 1000; // cache for 23 hours safely
+      tokenCache.set(username, {
+        token,
+        expiresAt: Date.now() + 23 * 60 * 60 * 1000 // cache for 23 hours safely
+      });
       return token;
     } finally {
-      pendingAuthPromise = null;
+      pendingAuthPromises.delete(username);
     }
   })();
 
-  return pendingAuthPromise;
+  pendingAuthPromises.set(username, authPromise);
+  return authPromise;
 };
 
 /**
  * Generic authorized request wrapper for Velocity endpoints
  */
-const velocityFetch = async (endpoint, options = {}) => {
-  const token = await getAuthToken();
+const velocityFetch = async (endpoint, options = {}, storeId = 2) => {
+  const token = await getAuthToken(storeId);
   const baseUrl = getBaseUrl();
   const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
 
@@ -165,13 +213,14 @@ const velocityFetch = async (endpoint, options = {}) => {
  * Runs an authorized Velocity call; if Velocity rejects the cached token, clears it,
  * obtains a fresh token and retries exactly once. Other errors are not retried.
  */
-const velocityFetchWithTokenRetry = async (endpoint, options = {}) => {
+const velocityFetchWithTokenRetry = async (endpoint, options = {}, storeId = 2) => {
   try {
-    return await velocityFetch(endpoint, options);
+    return await velocityFetch(endpoint, options, storeId);
   } catch (err) {
     if (!err.isAuthRejection) throw err;
-    resetTokenCache();
-    return velocityFetch(endpoint, options);
+    const username = getUsername(storeId);
+    tokenCache.delete(username);
+    return velocityFetch(endpoint, options, storeId);
   }
 };
 
@@ -210,9 +259,20 @@ const normalizeServiceabilityResponse = (data) => {
  */
 const checkServiceability = async ({
   to,
-  payment_mode = 'prepaid'
+  payment_mode = 'prepaid',
+  storeId = 2
 }) => {
-  const pickupPin = getDefaultPickupPincode();
+  const sId = parseInt(storeId, 10) || 1;
+  if (!isPickupConfigured(sId)) {
+    return {
+      serviceable: false,
+      status: 'unavailable',
+      reason: `Pickup pincode is not configured for store ${sId}.`,
+      carriers: []
+    };
+  }
+
+  const pickupPin = getPickupPincode(sId);
   const destPin = String(to || '').trim();
 
   if (!/^\d{6}$/.test(destPin)) {
@@ -231,7 +291,7 @@ const checkServiceability = async ({
   const data = await velocityFetchWithTokenRetry('/custom/api/v1/serviceability', {
     method: 'POST',
     body: JSON.stringify(payload)
-  });
+  }, sId);
   return normalizeServiceabilityResponse(data);
 };
 
@@ -241,9 +301,10 @@ const checkServiceability = async ({
  * Manifests forward shipment with Velocity and assigns carrier.
  * 
  * @param {Object} payload - Authoritative shipment payload
+ * @param {number|string} [storeId=2] - Store ID
  * @returns {Promise<Object>} Velocity order ID, shipment ID, AWB, courier name, tracking URL
  */
-const createForwardShipment = async (payload) => {
+const createForwardShipment = async (payload, storeId = 2) => {
   if (!payload || !payload.order_id) {
     const err = new Error('Order details are required to orchestrate shipment.');
     err.statusCode = 400;
@@ -272,7 +333,7 @@ const createForwardShipment = async (payload) => {
   return velocityFetch('/custom/api/v1/forward-order-orchestration', {
     method: 'POST',
     body: JSON.stringify(payload)
-  });
+  }, storeId);
 };
 
 /**
@@ -281,9 +342,10 @@ const createForwardShipment = async (payload) => {
  * Fetches real-time shipment tracking details for one or more AWBs.
  * 
  * @param {string|string[]} awbs - Air Waybill number(s)
+ * @param {number|string} [storeId=2] - Store ID
  * @returns {Promise<Object>} Tracking details including status, courier, activities timeline, track URL
  */
-const trackShipment = async (awbs) => {
+const trackShipment = async (awbs, storeId = 2) => {
   const awbList = Array.isArray(awbs)
     ? awbs.map(a => String(a).trim()).filter(Boolean)
     : [String(awbs || '').trim()].filter(Boolean);
@@ -297,16 +359,17 @@ const trackShipment = async (awbs) => {
   return velocityFetch('/custom/api/v1/order-tracking', {
     method: 'POST',
     body: JSON.stringify({ awbs: awbList })
-  });
+  }, storeId);
 };
 
 /**
  * B9. Cancel Order / Shipment
  * 
  * @param {string|string[]} awbs - Air Waybill number(s) to cancel
+ * @param {number|string} [storeId=2] - Store ID
  * @returns {Promise<Object>} Cancellation status
  */
-const cancelShipment = async (awbs) => {
+const cancelShipment = async (awbs, storeId = 2) => {
   const awbList = Array.isArray(awbs)
     ? awbs.map(a => String(a).trim()).filter(Boolean)
     : [String(awbs || '').trim()].filter(Boolean);
@@ -320,7 +383,7 @@ const cancelShipment = async (awbs) => {
   return velocityFetch('/custom/api/v1/cancel-order', {
     method: 'POST',
     body: JSON.stringify({ awbs: awbList })
-  });
+  }, storeId);
 };
 
 /**
@@ -329,9 +392,10 @@ const cancelShipment = async (awbs) => {
  * Prepared adapter for return shipments when requested by business workflows.
  * 
  * @param {Object} payload - Reverse shipment details
+ * @param {number|string} [storeId=2] - Store ID
  * @returns {Promise<Object>} Reverse pickup confirmation
  */
-const createReverseShipment = async (payload) => {
+const createReverseShipment = async (payload, storeId = 2) => {
   if (!payload || !payload.order_id) {
     const err = new Error('Order details are required for reverse pickup.');
     err.statusCode = 400;
@@ -341,11 +405,13 @@ const createReverseShipment = async (payload) => {
   return velocityFetch('/custom/api/v1/reverse-order-orchestration', {
     method: 'POST',
     body: JSON.stringify(payload)
-  });
+  }, storeId);
 };
 
 module.exports = {
   isConfigured,
+  isPickupConfigured,
+  getPickupPincode,
   resetTokenCache,
   getAuthToken,
   normalizeServiceabilityResponse,

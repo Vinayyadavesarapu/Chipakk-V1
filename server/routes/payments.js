@@ -9,14 +9,14 @@ const {
 
 const router = express.Router();
 
-// Middleware: Strictly enforce Store 2 (THE MARSHANS) for customer payment routes
-const enforceMarshansStoreOnly = (req, res, next) => {
-  const storeId = parseInt(req.storeId, 10);
-  if (storeId !== 2) {
+// Middleware: Enforce supported stores (Store 1: CHIPAKK, Store 2: THE MARSHANS)
+const enforceSupportedStore = (req, res, next) => {
+  const storeId = parseInt(req.storeId, 10) || 1;
+  if (storeId !== 1 && storeId !== 2) {
     return res.status(403).json({
       success: false,
       error: {
-        message: 'Razorpay payment routes are exclusively enabled for THE MARSHANS (Store 2).',
+        message: 'Razorpay payment routes are enabled for Store 1 and Store 2 only.',
         statusCode: 403
       }
     });
@@ -27,9 +27,9 @@ const enforceMarshansStoreOnly = (req, res, next) => {
 // 1. Gateway Webhook Endpoint (Called by Razorpay, signature verified in controller)
 router.post('/webhook', webhookHandler);
 
-// 2. Customer Endpoints (Protected by Firebase Authentication & strictly isolated to Store 2)
-router.post('/create', verifyFirebaseToken, enforceMarshansStoreOnly, createPaymentOrderHandler);
-router.post('/verify', verifyFirebaseToken, enforceMarshansStoreOnly, verifyPaymentHandler);
-router.get('/status/:orderId', verifyFirebaseToken, enforceMarshansStoreOnly, getPaymentStatusHandler);
+// 2. Customer Endpoints (Protected by Firebase Authentication & isolated to Store 1 and Store 2)
+router.post('/create', verifyFirebaseToken, enforceSupportedStore, createPaymentOrderHandler);
+router.post('/verify', verifyFirebaseToken, enforceSupportedStore, verifyPaymentHandler);
+router.get('/status/:orderId', verifyFirebaseToken, enforceSupportedStore, getPaymentStatusHandler);
 
 module.exports = router;

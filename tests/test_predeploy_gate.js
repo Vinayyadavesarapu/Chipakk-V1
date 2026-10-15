@@ -216,21 +216,21 @@ check('1.14 Simulated payload preserves image storage_path metadata',
 
 
 // =============================================================================
-// SUITE 2: RAZORPAY INTEGRATION & STORE 2 ISOLATION
+// SUITE 2: RAZORPAY INTEGRATION & STORE ISOLATION
 // =============================================================================
-console.log('\n--- SUITE 2: RAZORPAY INTEGRATION (STORE ID 2 ONLY) ---');
+console.log('\n--- SUITE 2: RAZORPAY INTEGRATION (STORE 1 & STORE 2) ---');
 
 const paymentsRouteContent = fs.readFileSync(path.join(__dirname, '../server/routes/payments.js'), 'utf8');
 const razorpayService = require('../server/services/razorpayService');
 
-// Check 2.1: Route strictly rejects non-Store 2
-check('2.1 payments.js strictly enforces Store 2 via enforceMarshansStoreOnly middleware',
-  paymentsRouteContent.includes('const enforceMarshansStoreOnly = (req, res, next) =>') &&
-  paymentsRouteContent.includes('if (storeId !== 2)') &&
-  paymentsRouteContent.includes('Razorpay payment routes are exclusively enabled for THE MARSHANS (Store 2).')
+// Check 2.1: Route enforces supported stores (Store 1: CHIPAKK, Store 2: THE MARSHANS)
+check('2.1 payments.js enforces supported stores via enforceSupportedStore middleware',
+  paymentsRouteContent.includes('const enforceSupportedStore = (req, res, next) =>') &&
+  paymentsRouteContent.includes('if (storeId !== 1 && storeId !== 2)') &&
+  paymentsRouteContent.includes('Razorpay payment routes are enabled for Store 1 and Store 2 only.')
 );
 
-// Check 2.2: Mock enforceMarshansStoreOnly
+// Check 2.2: Mock enforceSupportedStore
 function simulateStoreGuard(storeId) {
   let statusSent = null;
   let bodySent = null;
@@ -242,8 +242,8 @@ function simulateStoreGuard(storeId) {
   const mockReq = { storeId };
   
   const middleware = (req, res, next) => {
-    const sId = parseInt(req.storeId, 10);
-    if (sId !== 2) {
+    const sId = parseInt(req.storeId, 10) || 1;
+    if (sId !== 1 && sId !== 2) {
       return res.status(403).json({ success: false, error: { statusCode: 403 } });
     }
     next();
@@ -253,11 +253,14 @@ function simulateStoreGuard(storeId) {
   return { statusSent, nextCalled };
 }
 
-check('2.2 Store 1 (CHIPAKK) is rejected with HTTP 403 on payment route',
-  simulateStoreGuard(1).statusSent === 403 && !simulateStoreGuard(1).nextCalled
+check('2.2 Store 1 (CHIPAKK) passes through payment route',
+  simulateStoreGuard(1).nextCalled === true && simulateStoreGuard(1).statusSent === null
 );
 check('2.3 Store 2 (THE MARSHANS) passes through payment route',
   simulateStoreGuard(2).nextCalled === true && simulateStoreGuard(2).statusSent === null
+);
+check('2.3b Unsupported store (Store 3) is rejected with HTTP 403 on payment route',
+  simulateStoreGuard(3).statusSent === 403 && !simulateStoreGuard(3).nextCalled
 );
 
 // Check 2.4: HMAC-SHA256 signature verification logic

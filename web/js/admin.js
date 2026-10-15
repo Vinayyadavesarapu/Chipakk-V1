@@ -353,6 +353,8 @@ function normalizeOrder(o) {
         total_price_rupees: totalPriceRupees,
         total_price_paise: totalPriceRupees * 100,
         payment_status: String(o.payment_status || 'paid').toLowerCase() === 'paid' ? 'Paid' : (String(o.payment_status).charAt(0).toUpperCase() + String(o.payment_status).slice(1)),
+        payment_method: o.payment_method || '',
+        gateway_order_id: o.gateway_order_id || '',
         status: uiStatus,
         raw_fulfillment_status: statusStr,
         shipping_status: (statusStr === 'SHIPPED' || statusStr === 'OUT_FOR_DELIVERY' || statusStr === 'DELIVERED') ? 'Shipped' : 'Unshipped',
@@ -3088,6 +3090,15 @@ function renderOrderDetailModalContent(o) {
     const payBadge = document.getElementById('ord-detail-pay-status');
     payBadge.textContent = o.payment_status;
     payBadge.className = `status-badge ${o.payment_status === 'Paid' ? 'status-live' : 'status-upcoming'}`;
+
+    const payMeta = document.getElementById('ord-detail-pay-meta');
+    if (payMeta) {
+        const methodStr = o.payment_method ? `Method: <strong>${escapeHtml(o.payment_method)}</strong>` : '';
+        const gwStr = o.gateway_order_id ? `Ref: <span style="font-family:monospace;">${escapeHtml(o.gateway_order_id)}</span>` : '';
+        const metaText = [methodStr, gwStr].filter(Boolean).join(' | ');
+        payMeta.innerHTML = metaText;
+        payMeta.style.display = metaText ? 'block' : 'none';
+    }
 
     renderOrderTimeline(o);
 

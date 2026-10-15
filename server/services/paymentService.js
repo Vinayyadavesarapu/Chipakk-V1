@@ -84,7 +84,7 @@ const releaseCouponReservation = async (orderId, connection = pool) => {
  * @param {number|string} orderId - Internal CHIPAKK order ID
  * @param {Object} firebaseUser - Verified customer Firebase auth token payload
  */
-const createPaymentOrder = async (orderId, firebaseUser) => {
+const createPaymentOrder = async (orderId, firebaseUser, reqStoreId) => {
   const numId = parseInt(orderId, 10);
   if (isNaN(numId) || numId <= 0) {
     const err = new Error('Invalid order ID provided.');
@@ -110,12 +110,23 @@ const createPaymentOrder = async (orderId, firebaseUser) => {
   }
 
   const order = orderRows[0];
+  const orderStoreId = parseInt(order.store_id, 10) || 1;
 
-  // 2. Enforce Store 2 isolation: Razorpay is strictly for THE MARSHANS only
-  if (parseInt(order.store_id, 10) !== 2) {
-    const err = new Error('Razorpay payment gateway is exclusively configured for THE MARSHANS (Store 2).');
+  // 2. Enforce supported stores: Store 1 (CHIPAKK) and Store 2 (THE MARSHANS)
+  if (orderStoreId !== 1 && orderStoreId !== 2) {
+    const err = new Error('Razorpay payment gateway is supported for Store 1 and Store 2 only.');
     err.status = 403;
     throw err;
+  }
+
+  // Cross-store isolation check
+  if (reqStoreId !== undefined && reqStoreId !== null) {
+    const parsedReqStoreId = parseInt(reqStoreId, 10);
+    if (!isNaN(parsedReqStoreId) && parsedReqStoreId !== orderStoreId) {
+      const err = new Error('Cross-store order access denied.');
+      err.status = 403;
+      throw err;
+    }
   }
 
   // 3. Verify order ownership
@@ -176,7 +187,8 @@ const createPaymentOrder = async (orderId, firebaseUser) => {
         order_id: String(order.id),
         order_number: order.order_number,
         customer_id: String(order.customer_id || '')
-      }
+      },
+      storeId: orderStoreId
     });
 
     // 5. Record gateway order ID on the order and create payment attempt record
@@ -218,7 +230,7 @@ const createPaymentOrder = async (orderId, firebaseUser) => {
   // 6. Return only safe public checkout configuration to browser
   return {
     already_paid: false,
-    key_id: razorpayService.getKeyId(),
+    key_id: razorpayService.getKeyId(orderStoreId),
     gateway_order_id: gatewayOrder.gateway_order_id,
     amount: gatewayOrder.amount, // in paise
     currency: gatewayOrder.currency || 'INR',
@@ -241,7 +253,7 @@ const createPaymentOrder = async (orderId, firebaseUser) => {
  * @param {string} params.razorpay_signature
  * @param {Object} firebaseUser - Verified customer Firebase auth token payload
  */
-const verifyPayment = async (params, firebaseUser) => {
+const verifyPayment = async (params, firebaseUser, reqStoreId) => {
   const { order_id, razorpay_order_id, razorpay_payment_id, razorpay_signature } = params;
 
   const numId = parseInt(order_id, 10);
@@ -274,12 +286,23 @@ const verifyPayment = async (params, firebaseUser) => {
   }
 
   const order = orderRows[0];
+  const orderStoreId = parseInt(order.store_id, 10) || 1;
 
-  // 2. Enforce Store 2 isolation: Razorpay is strictly for THE MARSHANS only
-  if (parseInt(order.store_id, 10) !== 2) {
-    const err = new Error('Razorpay payment verification is exclusively configured for THE MARSHANS (Store 2).');
+  // 2. Enforce supported stores: Store 1 (CHIPAKK) and Store 2 (THE MARSHANS)
+  if (orderStoreId !== 1 && orderStoreId !== 2) {
+    const err = new Error('Razorpay payment verification is supported for Store 1 and Store 2 only.');
     err.status = 403;
     throw err;
+  }
+
+  // Cross-store isolation check
+  if (reqStoreId !== undefined && reqStoreId !== null) {
+    const parsedReqStoreId = parseInt(reqStoreId, 10);
+    if (!isNaN(parsedReqStoreId) && parsedReqStoreId !== orderStoreId) {
+      const err = new Error('Cross-store order access denied.');
+      err.status = 403;
+      throw err;
+    }
   }
 
   // 3. Idempotent check: if order is already paid, return safely
@@ -356,7 +379,8 @@ const verifyPayment = async (params, firebaseUser) => {
   const isValid = razorpayService.verifyPaymentSignature({
     razorpay_order_id,
     razorpay_payment_id,
-    razorpay_signature
+    razorpay_signature,
+    storeId: orderStoreId
   });
 
   if (!isValid) {
@@ -617,7 +641,7 @@ const handleWebhook = async (rawBody, signatureHeader) => {
  * @param {number|string} orderId
  * @param {Object} firebaseUser
  */
-const getPaymentStatus = async (orderId, firebaseUser) => {
+const getPaymentStatus = async (orderId, firebaseUser, reqStoreId) => {
   const numId = parseInt(orderId, 10);
   if (isNaN(numId) || numId <= 0) {
     const err = new Error('Invalid order ID.');
@@ -642,12 +666,23 @@ const getPaymentStatus = async (orderId, firebaseUser) => {
   }
 
   const order = rows[0];
+  const orderStoreId = parseInt(order.store_id, 10) || 1;
 
-  // Enforce Store 2 isolation: Razorpay is strictly for THE MARSHANS only
-  if (parseInt(order.store_id, 10) !== 2) {
-    const err = new Error('Payment status query via Razorpay is exclusively configured for THE MARSHANS (Store 2).');
+  // Enforce supported stores: Store 1 (CHIPAKK) and Store 2 (THE MARSHANS)
+  if (orderStoreId !== 1 && orderStoreId !== 2) {
+    const err = new Error('Payment status query via Razorpay is supported for Store 1 and Store 2 only.');
     err.status = 403;
     throw err;
+  }
+
+  // Cross-store isolation check
+  if (reqStoreId !== undefined && reqStoreId !== null) {
+    const parsedReqStoreId = parseInt(reqStoreId, 10);
+    if (!isNaN(parsedReqStoreId) && parsedReqStoreId !== orderStoreId) {
+      const err = new Error('Cross-store order access denied.');
+      err.status = 403;
+      throw err;
+    }
   }
 
   const user = await findUserByFirebaseUid(firebaseUser.uid);

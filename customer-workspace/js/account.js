@@ -607,8 +607,50 @@
 
     const orderTotal = order.total_price_rupees ?? order.total_price ?? order.total_price_inr ?? order.total ?? 0;
     $("#trackModalTotal").textContent = formatPrice(orderTotal);
-    $("#trackModalCourier").textContent = order.courier_name || (order.tracking_number ? "BlueDart Express" : "Standard Shipping (Awaiting Dispatch)");
-    $("#trackModalTrackingNo").textContent = order.tracking_number || "Will be assigned once package is dispatched";
+
+    const courier = order.courier || order.courier_name || null;
+    const trackingNo = order.tracking_no || order.tracking_number || null;
+
+    $("#trackModalCourier").textContent = courier || (trackingNo ? "Courier Partner" : "Standard Shipping (Awaiting Dispatch)");
+    $("#trackModalTrackingNo").textContent = trackingNo || "Will be assigned once package is dispatched";
+
+    const activitiesEl = $("#trackModalActivities");
+    const liveLinkEl = $("#trackModalLiveLink");
+    if (activitiesEl) {
+      activitiesEl.style.display = "none";
+      activitiesEl.innerHTML = "";
+    }
+    if (liveLinkEl) {
+      liveLinkEl.style.display = "none";
+      liveLinkEl.innerHTML = "";
+    }
+
+    if (order.id && trackingNo) {
+      const getTrackingFn = window.CHIPAKK?.getCustomerOrderTrackingApi || window.CHIPAKK?.api?.getOrderTracking;
+      if (getTrackingFn) {
+        getTrackingFn(order.id).then((tData) => {
+          if (!tData) return;
+          if (tData.courier) $("#trackModalCourier").textContent = tData.courier;
+          if (tData.current_status) $("#trackModalStatus").textContent = tData.current_status;
+          if (tData.track_url && liveLinkEl) {
+            liveLinkEl.innerHTML = `<a href="${escapeAttr(tData.track_url)}" target="_blank" rel="noopener noreferrer" style="font-weight: 700; color: #2563eb; text-decoration: underline;">Track on Courier Website →</a>`;
+            liveLinkEl.style.display = "block";
+          }
+          if (Array.isArray(tData.activities) && tData.activities.length > 0 && activitiesEl) {
+            activitiesEl.innerHTML = `<div style="font-weight: 700; margin-bottom: 4px; color: #1e293b;">Tracking Milestones:</div>` +
+              tData.activities.slice(0, 5).map(act => {
+                const date = act.date || act.timestamp ? new Date(act.date || act.timestamp).toLocaleString("en-IN") : "";
+                const desc = act.status || act.activity || act.description || "";
+                const loc = act.location ? ` (${act.location})` : "";
+                return `<div style="padding: 2px 0; color: #444;">• <strong>${escapeHtml(desc)}</strong>${escapeHtml(loc)} <small style="color: #888;">${escapeHtml(date)}</small></div>`;
+              }).join("");
+            activitiesEl.style.display = "block";
+          }
+        }).catch((e) => {
+          console.warn("[Tracking] Live tracking query notice:", e.message);
+        });
+      }
+    }
 
     // Shipping address snapshot
     const addrEl = $("#trackModalAddress");

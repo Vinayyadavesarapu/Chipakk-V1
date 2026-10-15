@@ -347,6 +347,14 @@
   }
 
   /**
+   * Fetch Customer Order Tracking
+   * GET /api/orders/:id/tracking
+   */
+  async function getCustomerOrderTrackingApi(id) {
+    return fetchAuthenticated(`/orders/${encodeURIComponent(id)}/tracking`);
+  }
+
+  /**
    * Fetch Authenticated Customer Profile
    * GET /api/customer/me
    */
@@ -2063,6 +2071,7 @@
     createOrderApi,
     getCustomerOrdersApi,
     getCustomerOrderByIdApi,
+    getCustomerOrderTrackingApi,
     getCustomerProfileApi,
     updateCustomerProfileApi,
     getCustomerAddressesApi,
@@ -2079,6 +2088,7 @@
       createOrder: createOrderApi,
       getOrders: getCustomerOrdersApi,
       getOrderById: getCustomerOrderByIdApi,
+      getOrderTracking: getCustomerOrderTrackingApi,
       getProfile: getCustomerProfileApi,
       updateProfile: updateCustomerProfileApi,
       getAddresses: getCustomerAddressesApi,
