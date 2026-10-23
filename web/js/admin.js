@@ -804,9 +804,15 @@ async function refreshStoreBuilderFromAPI() {
     try {
         const res = await apiClient.get('/admin/store-builder');
         const data = res?.data || res || {};
-        if (Array.isArray(data.heroGroups)) heroGroups = data.heroGroups;
-        if (Array.isArray(data.promoBanners)) promoBanners = data.promoBanners;
-        if (Array.isArray(data.storeSections)) storeSections = data.storeSections;
+        if (data.hero_config) heroConfig = data.hero_config;
+        else if (data.heroConfig) heroConfig = data.heroConfig;
+        else heroConfig = null;
+        if (data.announcement_bar) announcementBarConfig = data.announcement_bar;
+        else if (data.announcementBar) announcementBarConfig = data.announcementBar;
+        else announcementBarConfig = null;
+        if (Array.isArray(data.heroGroups || data.hero_groups)) heroGroups = data.heroGroups || data.hero_groups;
+        if (Array.isArray(data.promoBanners || data.promo_banners)) promoBanners = data.promoBanners || data.promo_banners;
+        if (Array.isArray(data.storeSections || data.content_sections)) storeSections = data.storeSections || data.content_sections;
         renderStoreBuilder();
     } catch (err) {
         console.error('[refreshStoreBuilderFromAPI]', err.message);
@@ -836,7 +842,7 @@ async function refreshReviewsFromAPI() {
     }
 }
 
-const STORE_TAX_CONFIG_KEYS = ['custom_sticker_hsn_code', 'custom_sticker_gst_rate', 'trade_name', 'invoice_prefix', 'default_gst_rate', 'gst_pct', 'gst_rate', 'gst_enabled'];
+const STORE_TAX_CONFIG_KEYS = ['custom_sticker_hsn_code', 'custom_sticker_gst_rate', 'trade_name', 'invoice_prefix', 'default_gst_rate', 'gst_pct', 'gst_rate', 'gst_enabled', 'announcement_text', 'announcement_active'];
 
 async function refreshSettingsFromAPI() {
     try {
@@ -4955,15 +4961,21 @@ async function refreshChipakkMovements() {
 
 function renderStoreBuilder() {
     // 1. Populate Announcement Bar controls
+    // Use the store-scoped settings flow (siteSettings) as the primary source of truth so that
+    // an asynchronous or stale announcementBarConfig from a previous store never overwrites the active toggle.
     if (announcementBarConfig) {
-        const textInput = document.getElementById('announcement-text-input');
-        const activeSelect = document.getElementById('announcement-active-toggle');
-        const speedSelect = document.getElementById('announcement-speed-select');
-        const prevText = document.getElementById('announcement-preview-text');
-        if (textInput && announcementBarConfig.text !== undefined) textInput.value = announcementBarConfig.text;
-        if (activeSelect && announcementBarConfig.enabled !== undefined) activeSelect.value = String(announcementBarConfig.enabled);
-        if (speedSelect && announcementBarConfig.marquee_speed) speedSelect.value = announcementBarConfig.marquee_speed;
-        if (prevText && announcementBarConfig.text) prevText.textContent = announcementBarConfig.text;
+        const textInput = document.getElementById('set-announcement');
+        const activeSelect = document.getElementById('set-announcement-active');
+        if (textInput && announcementBarConfig.text !== undefined && !textInput.value) {
+            textInput.value = announcementBarConfig.text;
+        }
+        if (activeSelect) {
+            if (siteSettings && siteSettings.announcement_active !== undefined) {
+                activeSelect.value = String(siteSettings.announcement_active === true || siteSettings.announcement_active === 'true' || siteSettings.announcement_active === 1);
+            } else if (announcementBarConfig.enabled !== undefined) {
+                activeSelect.value = String(announcementBarConfig.enabled);
+            }
+        }
     }
 
     // 2. Populate Hero Mode & Fixed Banner controls
@@ -5592,11 +5604,16 @@ function loadSystemSettings() {
     }
 
     // Announcement Ticker
+    const annBadge = document.getElementById('announcement-store-badge');
+    if (annBadge) annBadge.textContent = isMarshans ? 'THE MARSHANS' : 'CHIPAKK';
     if (document.getElementById('set-announcement')) {
         document.getElementById('set-announcement').value = siteSettings.announcement_text || '';
     }
     if (document.getElementById('set-announcement-active')) {
-        document.getElementById('set-announcement-active').value = String(siteSettings.announcement_active === true || siteSettings.announcement_active === 'true');
+        const isActive = siteSettings.announcement_active !== undefined
+            ? (siteSettings.announcement_active === true || siteSettings.announcement_active === 'true' || siteSettings.announcement_active === 1)
+            : (announcementBarConfig && announcementBarConfig.enabled !== undefined ? Boolean(announcementBarConfig.enabled) : true);
+        document.getElementById('set-announcement-active').value = String(isActive);
     }
 
     // 3D Manufacturing Controls (THE MARSHANS)
@@ -5952,36 +5969,6 @@ function setupEventListeners() {
         if (prevImg) prevImg.src = e.target.value.trim();
     });
 
-    // Announcement Ticker Live Preview & Save
-    document.getElementById('announcement-text-input')?.addEventListener('input', (e) => {
-        const prevText = document.getElementById('announcement-preview-text');
-        if (prevText) prevText.textContent = e.target.value;
-    });
-
-    document.getElementById('save-announcement-btn')?.addEventListener('click', async () => {
-        const text = document.getElementById('announcement-text-input')?.value.trim() || '';
-        const enabled = document.getElementById('announcement-active-toggle')?.value === 'true';
-        const marqueeSpeed = document.getElementById('announcement-speed-select')?.value || 'normal';
-
-        const btn = document.getElementById('save-announcement-btn');
-        const origText = btn ? btn.textContent : '';
-        if (btn) { btn.disabled = true; btn.textContent = 'SAVING...'; }
-        try {
-            await apiClient.put('/admin/store-builder', {
-                announcement_bar: {
-                    enabled,
-                    text,
-                    mode: 'MARQUEE',
-                    marquee_speed: marqueeSpeed
-                }
-            });
-            showToast("Announcement ticker saved and published!");
-        } catch (err) {
-            showToast(`Error saving announcement ticker: ${err.message}`, 'error');
-        } finally {
-            if (btn) { btn.disabled = false; btn.textContent = origText || 'SAVE ANNOUNCEMENT TICKER'; }
-        }
-    });
 
     document.getElementById('apply-analytics-filter-btn')?.addEventListener('click', async () => {
         const btn = document.getElementById('apply-analytics-filter-btn');
@@ -6327,17 +6314,54 @@ function setupEventListeners() {
     });
 
     document.getElementById('save-announcement-btn')?.addEventListener('click', async () => {
+        const btn = document.getElementById('save-announcement-btn');
+        const originalText = btn ? btn.textContent : '';
+        if (btn) { btn.disabled = true; btn.textContent = "SAVING..."; }
+
+        const activeStoreId = apiClient.getActiveStoreId ? apiClient.getActiveStoreId() : 1;
+        const isMarshans = activeStoreId === 2;
+
+        let text = document.getElementById('set-announcement')?.value.trim() || '';
+        const active = document.getElementById('set-announcement-active')?.value === 'true';
+
+        // Safe sensible default if enabled without custom message
+        if (active && !text) {
+            text = isMarshans
+                ? 'PRECISION 3D PRINTING & CUSTOM ON-DEMAND MANUFACTURING'
+                : 'WELCOME TO CHIPAKK! FREE SHIPPING ON ORDERS ₹300+';
+            if (document.getElementById('set-announcement')) {
+                document.getElementById('set-announcement').value = text;
+            }
+        }
+
         const payload = {
-            announcement_text: document.getElementById('set-announcement')?.value || '',
-            announcement_active: document.getElementById('set-announcement-active')?.value === 'true',
-            announcement_rolling: document.getElementById('set-announcement-rolling')?.value === 'true'
+            announcement_text: text,
+            announcement_active: active
         };
+
         try {
             await apiClient.put('/admin/settings', payload);
-            showToast("Announcement ticker saved successfully.");
-            await refreshSettingsFromAPI();
+            try {
+                await apiClient.put('/admin/store-builder', {
+                    announcement_bar: {
+                        enabled: active,
+                        text: text,
+                        mode: 'MARQUEE',
+                        marquee_speed: 'normal'
+                    }
+                });
+            } catch (_) {
+                // Secondary sync notice only
+            }
+            showToast(`Announcement banner saved successfully for ${isMarshans ? 'THE MARSHANS' : 'CHIPAKK'}.`);
+            await Promise.allSettled([
+                refreshSettingsFromAPI(),
+                refreshStoreBuilderFromAPI()
+            ]);
         } catch (err) {
             showToast(`Error saving announcement: ${err.message}`, 'error');
+        } finally {
+            if (btn) { btn.disabled = false; btn.textContent = originalText || "SAVE ANNOUNCEMENT BANNER"; }
         }
     });
 
@@ -6511,6 +6535,8 @@ function setupEventListeners() {
             }
             if (domain) domain.textContent = 'themarshans.shop';
             if (shipStoreLabel) shipStoreLabel.textContent = 'THE MARSHANS (themarshans.shop)';
+            const annBadgeMarshans = document.getElementById('announcement-store-badge');
+            if (annBadgeMarshans) annBadgeMarshans.textContent = 'THE MARSHANS';
 
             // Update product labels to 3D Products
             if (navProdLabel) navProdLabel.textContent = '🏷️ 3D Products';
@@ -6573,6 +6599,8 @@ function setupEventListeners() {
             }
             if (domain) domain.textContent = 'chipakk.shop';
             if (shipStoreLabel) shipStoreLabel.textContent = 'CHIPAKK (chipakk.shop)';
+            const annBadgeChipakk = document.getElementById('announcement-store-badge');
+            if (annBadgeChipakk) annBadgeChipakk.textContent = 'CHIPAKK';
 
             // Restore product labels to Sticker Drops
             if (navProdLabel) navProdLabel.textContent = '🏷️ Products & Drops';
@@ -6666,6 +6694,13 @@ function setupEventListeners() {
         // Clear in-memory data to prevent stale UI flash
         products = [];
         categories = [];
+        heroConfig = null;
+        announcementBarConfig = null;
+        heroGroups = [];
+        promoBanners = [];
+        storeSections = [];
+        delete siteSettings.announcement_active;
+        delete siteSettings.announcement_text;
         renderProductsTable();
         populateCategoryDropdowns();
 

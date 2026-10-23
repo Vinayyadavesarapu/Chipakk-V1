@@ -26,8 +26,8 @@
       freeShippingThreshold: 300,
       shippingFee: 50,
       currencySymbol: "₹",
-      announcementActive: false,
-      announcementText: ""
+      announcementActive: true,
+      announcementText: "WELCOME TO CHIPAKK! FREE SHIPPING ON ORDERS ₹300+"
     },
 
     // SHARED PLATFORM ARCHITECTURE (THE MARSHANS ↔ CHIPAKK)
@@ -509,8 +509,28 @@
     const tradeName = actual.trade_name || storeName;
     const legalSupplierName = actual.legal_supplier_name || "";
 
-    const announcementActive = actual.announcement_active !== false && Boolean(actual.announcement_text);
-    const announcementText = actual.announcement_text || "";
+    const activeStoreId = getActiveStoreId();
+    const isMarshans = activeStoreId === 2;
+    const defaultAnnouncement = isMarshans
+      ? "PRECISION 3D PRINTING & CUSTOM ON-DEMAND MANUFACTURING"
+      : "WELCOME TO CHIPAKK! FREE SHIPPING ON ORDERS ₹300+";
+
+    let announcementText = defaultAnnouncement;
+    if (actual.announcement_text !== undefined && actual.announcement_text !== null) {
+      announcementText = String(actual.announcement_text).trim();
+    } else if (actual.announcementText !== undefined && actual.announcementText !== null) {
+      announcementText = String(actual.announcementText).trim();
+    } else if (CHIPAKK_DATA.settings && CHIPAKK_DATA.settings.announcementText) {
+      announcementText = CHIPAKK_DATA.settings.announcementText;
+    }
+
+    const rawActive = actual.announcement_active !== undefined
+      ? actual.announcement_active
+      : actual.announcementActive;
+
+    const announcementActive = rawActive !== undefined
+      ? Boolean(rawActive === true || rawActive === "true" || rawActive === 1) && Boolean(announcementText)
+      : (Boolean(announcementText) && (CHIPAKK_DATA.settings ? Boolean(CHIPAKK_DATA.settings.announcementActive) : true));
 
     return {
       storeName,
@@ -531,25 +551,35 @@
       tradeName,
       legalSupplierName,
       announcementActive,
-      announcementText
+      announcementText,
+      saleEndTime: actual.sale_end_time || actual.saleEndTime || null
     };
   }
 
   function normalizeEvent(e) {
     if (!e) return null;
     const id = String(e.id);
-    const title = e.name || e.title || "Drop Event";
-    const description = e.description || "Limited edition designs available now.";
-    const eventType = (e.event_type || "drop").toUpperCase();
-    const ribbon = `${eventType} DROP`;
-    const cta = e.cta || "Shop The Drop";
-    const ctaLink = e.ctaLink || "shop.html";
-    const endsAt = e.end_time ? new Date(e.end_time).getTime() : (e.endsAt || (Date.now() + 24 * 60 * 60 * 1000));
+    const title = e.name || e.title || "Special Sale";
+    const description = e.description || e.subtitle || "Limited-time promotional pricing on select stickers.";
+    const eventType = (e.event_type || "sale").toUpperCase();
+    const discountPercent = e.discount_percent || e.discount_value || null;
+    const ribbon = eventType === "SALE" ? "SALE" : `${eventType} DROP`;
+    const cta = e.cta || "EXPLORE ALL STICKERS";
+    const ctaLink = e.ctaLink || e.target_url || "shop.html";
+    let endsAt = null;
+    if (e.end_time) {
+      const parsed = new Date(e.end_time).getTime();
+      if (!isNaN(parsed) && parsed > 0) endsAt = parsed;
+    } else if (typeof e.endsAt === "number" && !isNaN(e.endsAt) && e.endsAt > 0) {
+      endsAt = e.endsAt;
+    }
 
     return {
       id,
       title,
       description,
+      eventType,
+      discountPercent,
       ribbon,
       cta,
       ctaLink,
@@ -691,6 +721,8 @@
     }
   }
 
+  let announcementUnsub = null;
+
   function syncAnnouncementBar(settings) {
     let bar = $("#globalAnnouncementBar");
     if (!bar) {
@@ -703,13 +735,32 @@
       }
     }
 
-    if (bar) {
-      if (settings.announcementActive && settings.announcementText) {
-        bar.textContent = settings.announcementText;
-        bar.style.display = "block";
+    if (!bar) return;
+
+    if (announcementUnsub) {
+      announcementUnsub();
+      announcementUnsub = null;
+    }
+
+    if (settings && settings.announcementActive && settings.announcementText) {
+      const countdown = typeof window !== "undefined" ? window.CHIPAKK_COUNTDOWN : null;
+      if (countdown && typeof countdown.subscribe === "function") {
+        announcementUnsub = countdown.subscribe(function (state) {
+          if (!bar) return;
+          if (state && state.isValid && !state.isExpired) {
+            bar.innerHTML = `<span class="announcement-content"><span class="announcement-text">${escapeHtml(settings.announcementText)}</span> <span class="announcement-timer" aria-label="Sale countdown">Ends in: <strong>${state.days}d ${String(state.hours).padStart(2, "0")}h ${String(state.minutes).padStart(2, "0")}m ${String(state.seconds).padStart(2, "0")}s</strong></span></span>`;
+          } else {
+            bar.innerHTML = `<span class="announcement-content"><span class="announcement-text">${escapeHtml(settings.announcementText)}</span></span>`;
+          }
+          bar.style.display = "block";
+        });
+        countdown.start();
       } else {
-        bar.style.display = "none";
+        bar.innerHTML = `<span class="announcement-content"><span class="announcement-text">${escapeHtml(settings.announcementText)}</span></span>`;
+        bar.style.display = "block";
       }
+    } else {
+      bar.style.display = "none";
     }
   }
 
@@ -907,7 +958,12 @@
 
   async function getStoreSettings(options = {}) {
     try {
-      const data = await fetchApi("/settings", options);
+      const activeStoreId = getActiveStoreId();
+      const data = await fetchApi("/settings", {
+        refresh: true,
+        headers: { "X-Store-ID": String(activeStoreId) },
+        ...options
+      });
       if (data && typeof data === "object") {
         const normalized = normalizeSettings(data);
         CHIPAKK_DATA.settings = normalized;

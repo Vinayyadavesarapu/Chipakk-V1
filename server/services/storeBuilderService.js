@@ -123,7 +123,7 @@ const STORE_1_HERO_DEFAULT = {
 
 const STORE_1_ANNOUNCEMENT_DEFAULT = {
   enabled: true,
-  text: 'WELCOME TO CHIPAKK! FREE SHIPPING OVER ₹300',
+  text: 'WELCOME TO CHIPAKK! FREE SHIPPING ON ORDERS ₹300+',
   mode: 'MARQUEE',
   marquee_speed: 'normal'
 };
@@ -354,13 +354,21 @@ const getPublicStoreBuilderData = async (storeId = 1) => {
     const adminData = await getStoreBuilderAdminData(numericStoreId);
     const storeSettings = await getStoreSettings(numericStoreId);
 
+    const isAnnouncementEnabled = storeSettings.announcement_active !== undefined
+      ? Boolean(storeSettings.announcement_active === true || storeSettings.announcement_active === 'true' || storeSettings.announcement_active === 1)
+      : Boolean(adminData.announcement_bar?.enabled);
+
+    const announcementText = storeSettings.announcement_text !== undefined && storeSettings.announcement_text !== null
+      ? String(storeSettings.announcement_text).trim()
+      : (adminData.announcement_bar?.text || '');
+
     // 1. Filter active Announcement Bar
-    const announcement_bar = adminData.announcement_bar && adminData.announcement_bar.enabled
+    const announcement_bar = isAnnouncementEnabled && Boolean(announcementText)
       ? {
           enabled: true,
-          text: adminData.announcement_bar.text || '',
-          mode: adminData.announcement_bar.mode || 'STATIC',
-          marquee_speed: adminData.announcement_bar.marquee_speed || 'normal'
+          text: announcementText,
+          mode: adminData.announcement_bar?.mode || 'STATIC',
+          marquee_speed: adminData.announcement_bar?.marquee_speed || 'normal'
         }
       : { enabled: false, text: '', mode: 'STATIC', marquee_speed: 'normal' };
 
@@ -465,8 +473,8 @@ const getPublicStoreBuilderData = async (storeId = 1) => {
       content_sections: contentSections,
       store_info: {
         store_name: storeSettings.store_name || (isMarshans ? 'THE MARSHANS' : 'CHIPAKK'),
-        announcement_text: storeSettings.announcement_text || adminData.announcement_bar?.text || '',
-        announcement_active: storeSettings.announcement_active !== false && Boolean(adminData.announcement_bar?.enabled),
+        announcement_text: announcementText,
+        announcement_active: isAnnouncementEnabled && Boolean(announcementText),
         maintenance_active: storeSettings.maintenance_active || false,
         free_shipping_threshold: storeSettings.free_shipping_threshold || 0,
         free_shipping_threshold_rupees: Math.round((storeSettings.free_shipping_threshold || 0) / 100)

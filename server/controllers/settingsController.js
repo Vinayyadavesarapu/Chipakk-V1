@@ -51,8 +51,8 @@ const getSettingsHandler = async (req, res, next) => {
       free_shipping_threshold: activeShippingThreshold,
       free_shipping_threshold_rupees: freeShippingThresholdRupees,
       free_shipping_calculation: 'gross_subtotal',
-      announcement_text: settings.announcement_text || '',
-      announcement_active: settings.announcement_active || false,
+      announcement_text: settings.announcement_text !== undefined && settings.announcement_text !== null ? String(settings.announcement_text) : '',
+      announcement_active: settings.announcement_active === true || settings.announcement_active === 'true' || settings.announcement_active === 1,
       maintenance_active: settings.maintenance_active || false,
       maintenance_message: settings.maintenance_message || '',
       support_email: settings.support_email || (storeId === 2 ? 'support@themarshans.shop' : 'support@chipakk.shop'),
@@ -64,6 +64,10 @@ const getSettingsHandler = async (req, res, next) => {
       publicSettings.material_settings = settings.material_settings;
     }
 
+    res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
+
     return sendSuccess(res, {
       settings: publicSettings
     }, 'Store settings retrieved successfully');
@@ -71,6 +75,10 @@ const getSettingsHandler = async (req, res, next) => {
     console.warn('[Settings Public Handler Fallback]', error.message);
     const fallbackStoreId = req.storeId || 1;
     const isMarshans = fallbackStoreId === 2;
+
+    res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
 
     return sendSuccess(res, {
       settings: {
@@ -88,7 +96,7 @@ const getSettingsHandler = async (req, res, next) => {
         free_shipping_threshold: isMarshans ? 0 : 300,
         free_shipping_threshold_rupees: isMarshans ? 0 : 300,
         free_shipping_calculation: 'gross_subtotal',
-        announcement_text: isMarshans ? 'PRECISION 3D PRINTING & RAPID PROTOTYPING' : 'WELCOME TO CHIPAKK!',
+        announcement_text: isMarshans ? 'PRECISION 3D PRINTING & CUSTOM ON-DEMAND MANUFACTURING' : 'WELCOME TO CHIPAKK! FREE SHIPPING ON ORDERS ₹300+',
         announcement_active: true,
         maintenance_active: false,
         maintenance_message: '',
@@ -109,6 +117,10 @@ const getAdminSettingsHandler = async (req, res, next) => {
     const storeId = req.storeId || 1;
     const settings = await settingsService.getStoreSettings(storeId);
 
+    res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
+
     return sendSuccess(res, {
       store_id: storeId,
       store_code: req.storeCode || (storeId === 2 ? 'marshans' : 'chipakk'),
@@ -118,6 +130,10 @@ const getAdminSettingsHandler = async (req, res, next) => {
     console.warn('[Settings Admin Handler Fallback]', error.message);
     const fallbackStoreId = req.storeId || 1;
     const isMarshans = fallbackStoreId === 2;
+
+    res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
 
     return sendSuccess(res, {
       store_id: fallbackStoreId,
