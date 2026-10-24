@@ -95,6 +95,30 @@ RewriteRule ^account\.html$ customer-workspace/account.html [L]
 RewriteRule ^reset-password/?$ customer-workspace/reset-password.html [L]
 RewriteRule ^reset-password\.html$ customer-workspace/reset-password.html [L]
 
+# /shipping-policy
+# /shipping-policy.html
+RewriteRule ^shipping-policy/?$ customer-workspace/shipping-policy.html [L]
+RewriteRule ^shipping-policy\.html$ customer-workspace/shipping-policy.html [L]
+
+# /refund-policy
+# /refund-policy.html
+RewriteRule ^refund-policy/?$ customer-workspace/refund-policy.html [L]
+RewriteRule ^refund-policy\.html$ customer-workspace/refund-policy.html [L]
+
+# /privacy-policy
+# /privacy-policy.html
+RewriteRule ^privacy-policy/?$ customer-workspace/privacy-policy.html [L]
+RewriteRule ^privacy-policy\.html$ customer-workspace/privacy-policy.html [L]
+
+# /terms
+# /terms.html
+# /terms-and-conditions
+# /terms-and-conditions.html
+RewriteRule ^terms/?$ customer-workspace/terms.html [L]
+RewriteRule ^terms\.html$ customer-workspace/terms.html [L]
+RewriteRule ^terms-and-conditions/?$ customer-workspace/terms.html [L]
+RewriteRule ^terms-and-conditions\.html$ customer-workspace/terms.html [L]
+
 # ---------------------------------------------------------
 # 7. ROOT CUSTOMER HOMEPAGE
 # ---------------------------------------------------------

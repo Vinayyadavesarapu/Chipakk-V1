@@ -187,12 +187,17 @@ app.get('/css/admin.css', (req, res) => {
 
 // 2. CHIPAKK Customer Storefront Direct Routes
 const customerPages = [
-  'shop', 'categories', 'custom-stickers', 'product', 'checkout', 'account', 'reset-password'
+  'shop', 'categories', 'custom-stickers', 'product', 'checkout', 'account', 'reset-password',
+  'shipping-policy', 'refund-policy', 'privacy-policy', 'terms'
 ];
 customerPages.forEach(page => {
   app.get([`/${page}.html`, `/${page}`], (req, res) => {
     res.sendFile(path.join(customerDir, `${page}.html`));
   });
+});
+
+app.get(['/terms-and-conditions.html', '/terms-and-conditions'], (req, res) => {
+  res.sendFile(path.join(customerDir, 'terms.html'));
 });
 
 app.get('/robots.txt', (req, res) => {
