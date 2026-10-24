@@ -163,6 +163,17 @@ storefrontPages.forEach(page => {
   });
 });
 
+policyFiles.forEach(file => {
+  const content = fs.readFileSync(path.join(CW_DIR, file), 'utf8');
+
+  runCheck(`${file} footer structure matches site-wide neo-brutalist styling (.footer-top, .footer-social, no .footer-inner)`, () => {
+    assert(content.includes('<div class="footer-top">'), `Missing .footer-top grid container in ${file}`);
+    assert(content.includes('<div class="footer-social">'), `Missing .footer-social container in ${file}`);
+    assert(!content.includes('class="footer-inner"'), `Deprecated .footer-inner found in ${file}`);
+    assert(!content.includes('class="social-links"'), `Deprecated .social-links found in ${file}`);
+  });
+});
+
 runCheck('checkout.html contains live agreement links to terms.html and privacy-policy.html', () => {
   const content = fs.readFileSync(path.join(CW_DIR, 'checkout.html'), 'utf8');
   assert(content.includes('href="terms.html"'), 'checkout.html does not link to terms.html');
