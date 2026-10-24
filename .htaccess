@@ -34,7 +34,7 @@ RewriteRule ^js/(admin|api|firebase-config|migration)\.js$ web/js/$1.js [L]
 RewriteRule ^css/style\.css$ customer-workspace/css/style.css [L]
 
 # Customer scripts
-RewriteRule ^js/(app|auth|media|catalog|tax|home|shop|categories|custom-stickers|product|checkout|account|reset-password)\.js$ customer-workspace/js/$1.js [L]
+RewriteRule ^js/(app|auth|media|catalog|tax|home|shop|categories|custom-stickers|product|checkout|account|reset-password|countdown)\.js$ customer-workspace/js/$1.js [L]
 
 # ---------------------------------------------------------
 # 4. CUSTOMER MEDIA ASSETS

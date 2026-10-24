@@ -77,8 +77,9 @@
       const sBtnLink = escapeAttr(slideData.secondaryButtonLink || "custom-stickers.html");
 
       const hasImg = Boolean(slideData.image_url || slideData.image);
-      const rawImg = slideData.image_url || slideData.image || "assets/images/logo.png";
-      const imgSrc = media.resolve(rawImg) || "assets/images/hero-fallback.svg";
+      const rawImg = slideData.image_url || slideData.image || "assets/images/hero.png";
+      const cleanImg = (!rawImg || rawImg.includes("hero-fallback.svg") || rawImg.includes("hero-banner-1.png")) ? "assets/images/hero.png" : rawImg;
+      const imgSrc = media.resolve(cleanImg) || "assets/images/hero.png";
       const imgAltRaw = slideData.imageAlt || slideData.title || "CHIPAKK Sticker Culture";
 
       const stats = Array.isArray(slideData.stats) ? slideData.stats : (hero.stats || [
@@ -145,15 +146,12 @@
 
             <!-- RIGHT: Large Expressive Visual Artwork Canvas -->
             <div class="hero-visual" aria-hidden="true">
-              <!-- Neo-Brutalist Doodles, Scribbles & Arrows -->
+              <!-- Neo-Brutalist Doodles, Scribbles & Accents -->
               <svg class="hero-scribble scribble-1" viewBox="0 0 80 80" fill="none" stroke="#111" stroke-width="4" stroke-linecap="round">
                 <path d="M10 10 L70 70 M70 10 L10 70"/>
               </svg>
               <svg class="hero-scribble scribble-2" viewBox="0 0 100 40" fill="none" stroke="#111" stroke-width="4" stroke-linecap="round">
                 <path d="M2 20 Q 20 2, 38 20 T 74 20 T 98 20"/>
-              </svg>
-              <svg class="hero-scribble scribble-arrow" viewBox="0 0 60 60" fill="none" stroke="#111" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M50 12 Q 20 10 14 40 M14 40 l-8-10 M14 40 l12-4"/>
               </svg>
 
               <!-- Main Artwork Photo Frame -->
@@ -163,7 +161,6 @@
 
               <!-- Hand-Drawn Stickers, Speech Bubbles & Accents -->
               <div class="hero-doodle doodle-bubble">Small stickers.<br />Big personality.</div>
-              <div class="hero-doodle doodle-crown">👑</div>
               <div class="hero-doodle doodle-burst">Good ideas<br />stick around</div>
               <div class="hero-doodle doodle-note">Life is better<br />with stickers ♥</div>
               <div class="hero-doodle doodle-star">★</div>
@@ -261,63 +258,97 @@
      4. NEW DROP & PROMOTION SECTION
      ========================================================= */
 
-  let dropTimerInterval = null;
+  let dropCountdownUnsub = null;
   function renderDropSection(events) {
     const dropSection = $("#drop");
     const titleEl = $(".drop-title");
     const descEl = $(".drop-desc");
+    const badgeEl = $(".drop-badge");
     const ribbonEl = $(".drop-ribbon");
+    const cardTitleEl = $(".drop-card-title");
     const ctaEl = $(".drop-copy .btn");
     const eyebrowEl = $(".drop-copy .eyebrow");
     const timerEl = $(".drop-timer");
-
-    if (!events || !events.length) {
-      // Clean fallback state when no live event exists
-      if (eyebrowEl) eyebrowEl.textContent = "Weekly releases";
-      if (titleEl) titleEl.textContent = "Next Sticker Drop Incoming";
-      if (descEl) descEl.textContent = "We create and drop limited-edition artist sticker packs every week. Follow along and explore our active catalog in the meantime.";
-      if (ribbonEl) ribbonEl.textContent = "DROPS";
-      if (ctaEl) {
-        ctaEl.textContent = "Explore All Stickers →";
-        ctaEl.setAttribute("href", "shop.html");
-      }
-      if (timerEl) timerEl.style.display = "none";
-      if (dropTimerInterval) clearInterval(dropTimerInterval);
-      return;
-    }
-
-    const drop = events[0];
-
-    if (eyebrowEl) eyebrowEl.textContent = "This week only";
-    if (titleEl) titleEl.textContent = drop.title;
-    if (descEl) descEl.textContent = drop.description;
-    if (ribbonEl) ribbonEl.textContent = drop.ribbon || "LIMITED DROP";
-    if (ctaEl) {
-      ctaEl.textContent = (drop.cta || "Shop The Drop") + " →";
-      ctaEl.setAttribute("href", drop.ctaLink || "shop.html");
-    }
-    if (timerEl) timerEl.style.display = "flex";
-
     const daysEl = $("#timerDays");
     const hoursEl = $("#timerHours");
     const minsEl = $("#timerMins");
+    const secsEl = $("#timerSecs");
 
-    function tick() {
-      const diff = Math.max(0, drop.endsAt - Date.now());
-      const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-      const hours = Math.floor((diff / (1000 * 60 * 60)) % 24);
-      const mins = Math.floor((diff / (1000 * 60)) % 60);
-
-      if (daysEl) daysEl.textContent = String(days).padStart(2, "0");
-      if (hoursEl) hoursEl.textContent = String(hours).padStart(2, "0");
-      if (minsEl) minsEl.textContent = String(mins).padStart(2, "0");
-
-      if (diff <= 0) clearInterval(dropTimerInterval);
+    if (dropCountdownUnsub) {
+      dropCountdownUnsub();
+      dropCountdownUnsub = null;
     }
 
-    tick();
-    clearInterval(dropTimerInterval);
-    dropTimerInterval = setInterval(tick, 60 * 1000);
+    const countdown = typeof window !== "undefined" ? window.CHIPAKK_COUNTDOWN : null;
+
+    // Locate active event or genuine store sale setting
+    const eventList = Array.isArray(events) ? events : [];
+    const activeEvent = eventList.find(e => e && e.active && e.endsAt && e.endsAt > Date.now()) || null;
+
+    let genuineEndsAt = null;
+    if (activeEvent && activeEvent.endsAt) {
+      genuineEndsAt = activeEvent.endsAt;
+    } else if (typeof window !== "undefined") {
+      if (window.CHIPAKK_SALE_END) {
+        const parsedWindow = new Date(window.CHIPAKK_SALE_END).getTime();
+        if (!isNaN(parsedWindow) && parsedWindow > Date.now()) genuineEndsAt = parsedWindow;
+      } else if (window.CHIPAKK_DATA && window.CHIPAKK_DATA.settings && window.CHIPAKK_DATA.settings.saleEndTime) {
+        const parsedSettings = new Date(window.CHIPAKK_DATA.settings.saleEndTime).getTime();
+        if (!isNaN(parsedSettings) && parsedSettings > Date.now()) genuineEndsAt = parsedSettings;
+      }
+    }
+
+    if (genuineEndsAt) {
+      if (countdown) countdown.setTarget(genuineEndsAt);
+      if (eyebrowEl) eyebrowEl.textContent = activeEvent && activeEvent.eventType === "SALE" ? "LIMITED-TIME SALE" : "SPECIAL PROMOTION";
+      if (titleEl) titleEl.textContent = activeEvent?.title || "SPECIAL STICKER SALE";
+      if (descEl) descEl.textContent = activeEvent?.description || "Special promotional pricing available across select stickers and collections.";
+      if (badgeEl) badgeEl.textContent = "⚡ SALE EVENT";
+      if (cardTitleEl) cardTitleEl.textContent = "STICKER SALE";
+      if (ribbonEl) ribbonEl.textContent = "SALE";
+      if (ctaEl) {
+        ctaEl.textContent = (activeEvent?.cta || "EXPLORE ALL STICKERS") + " →";
+        ctaEl.setAttribute("href", activeEvent?.ctaLink || "shop.html");
+      }
+    } else {
+      // Clean, honest unconfigured state (no fake deadlines, no fake discounts, no fake weekly releases)
+      if (countdown) countdown.setTarget(null);
+      if (eyebrowEl) eyebrowEl.textContent = "SPECIAL PROMOTION";
+      if (titleEl) titleEl.textContent = "YOUR VIBE. YOUR STICKERS.";
+      if (descEl) descEl.textContent = "From everyday essentials to your favorite aesthetic, discover stickers that make every surface a little more you.";
+      if (badgeEl) badgeEl.textContent = "⚡ SPECIAL PROMOTION";
+      if (cardTitleEl) cardTitleEl.textContent = "STICKER DEALS";
+      if (ribbonEl) ribbonEl.textContent = "PROMO";
+      if (timerEl) timerEl.style.display = "none";
+      if (ctaEl) {
+        ctaEl.textContent = "EXPLORE ALL STICKERS →";
+        ctaEl.setAttribute("href", "shop.html");
+      }
+    }
+
+    if (countdown && typeof countdown.subscribe === "function") {
+      dropCountdownUnsub = countdown.subscribe(function (state) {
+        if (!state || !state.isValid) {
+          if (timerEl) timerEl.style.display = "none";
+          return;
+        }
+
+        if (state.isExpired) {
+          if (timerEl) timerEl.style.display = "none";
+          if (descEl) {
+            descEl.textContent = "This promotional sale has ended. Stay tuned for upcoming special offers!";
+          }
+          return;
+        }
+
+        if (timerEl) timerEl.style.display = "flex";
+        if (daysEl) daysEl.textContent = String(state.days).padStart(2, "0");
+        if (hoursEl) hoursEl.textContent = String(state.hours).padStart(2, "0");
+        if (minsEl) minsEl.textContent = String(state.minutes).padStart(2, "0");
+        if (secsEl) secsEl.textContent = String(state.seconds).padStart(2, "0");
+      });
+      countdown.start();
+    }
   }
 
   /* =========================================================
@@ -363,7 +394,78 @@
   }
 
   /* =========================================================
-     6. INITIALIZE HOME PAGE
+     6. PROMO VIDEO OBSERVER & CONTROLLER
+     ========================================================= */
+
+  function initPromoVideo() {
+    const video = document.getElementById("promoVideo");
+    if (!video) return;
+
+    const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+
+    let isSourceAttached = false;
+    function attachSource() {
+      if (isSourceAttached) return;
+      isSourceAttached = true;
+      const source = video.querySelector("source[data-src]");
+      if (source && source.dataset.src) {
+        source.src = source.dataset.src;
+        video.load();
+      } else if (video.dataset.src) {
+        video.src = video.dataset.src;
+        video.load();
+      }
+    }
+
+    function playVideo() {
+      if (prefersReducedMotion.matches) return;
+      attachSource();
+      const playPromise = video.play();
+      if (playPromise !== undefined) {
+        playPromise.catch(() => {
+          // Autoplay policy or low power mode - poster remains cleanly visible
+        });
+      }
+    }
+
+    function pauseVideo() {
+      if (!video.paused) {
+        video.pause();
+      }
+    }
+
+    if ("IntersectionObserver" in window) {
+      const observer = new IntersectionObserver((entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            playVideo();
+          } else {
+            pauseVideo();
+          }
+        });
+      }, {
+        root: null,
+        rootMargin: "200px 0px", // Preload slightly before scrolling into view
+        threshold: 0.15
+      });
+
+      observer.observe(video);
+    } else {
+      // Fallback: attach source and attempt play
+      playVideo();
+    }
+
+    if (prefersReducedMotion.addEventListener) {
+      prefersReducedMotion.addEventListener("change", (e) => {
+        if (e.matches) {
+          pauseVideo();
+        }
+      });
+    }
+  }
+
+  /* =========================================================
+     7. INITIALIZE HOME PAGE
      ========================================================= */
 
   function initHome() {
@@ -371,6 +473,7 @@
     // the HTML and events are decorative, so neither holds the loader.
     const releaseLoader = loader.hold("home-content");
     initProductEvents();
+    initPromoVideo();
 
     Promise.allSettled([
       getCategories().then(renderCategoriesPreview),

@@ -58,7 +58,8 @@
       primaryButtonLink: "shop.html",
       secondaryButtonText: "Custom Stickers",
       secondaryButtonLink: "custom-stickers.html",
-      image: "assets/images/logo.png",
+      image: "assets/images/hero.png",
+      fallbackImage: "assets/images/hero-fallback.svg",
       imageAlt: "CHIPAKK Sticker Collage Artwork",
       badge: "ORIGINAL ART",
       stats: [
@@ -592,6 +593,13 @@
     const fallback = CHIPAKK_DATA.hero;
     if (!sb || !sb.hero) return fallback;
 
+    const resolveHeroImg = (url) => {
+      if (!url || String(url).includes('hero-fallback.svg') || String(url).includes('hero-banner-1.png')) {
+        return fallback.image;
+      }
+      return url;
+    };
+
     const hero = sb.hero;
     if (hero.mode === 'fixed') {
       return {
@@ -612,8 +620,8 @@
         show_secondary_btn: hero.show_secondary_btn !== false,
         secondaryButtonText: hero.secondary_btn_text || fallback.secondaryButtonText,
         secondaryButtonLink: hero.secondary_btn_url || fallback.secondaryButtonLink,
-        image_url: hero.image_url || fallback.image,
-        image: hero.image_url || fallback.image,
+        image_url: resolveHeroImg(hero.image_url),
+        image: resolveHeroImg(hero.image_url),
         imageAlt: hero.title || fallback.imageAlt
       };
     } else if (hero.mode === 'carousel' && Array.isArray(hero.slides) && hero.slides.length > 0) {
@@ -637,8 +645,8 @@
         show_secondary_btn: first.show_secondary_btn !== false,
         secondaryButtonText: first.secondary_btn_text || fallback.secondaryButtonText,
         secondaryButtonLink: first.secondary_btn_url || fallback.secondaryButtonLink,
-        image_url: first.image_url || fallback.image,
-        image: first.image_url || fallback.image,
+        image_url: resolveHeroImg(first.image_url),
+        image: resolveHeroImg(first.image_url),
         imageAlt: first.title || fallback.imageAlt
       };
     }
@@ -1974,6 +1982,10 @@
     }
 
     function init() {
+      if (typeof window !== "undefined" && window.location.protocol === "file:") {
+        hide("file-protocol");
+        return;
+      }
       startVideo();
       // init() runs from the DOMContentLoaded handler (or later), never while parsing, so the
       // DOM is ready here. Re-read the state instead of relying on the value captured at load.

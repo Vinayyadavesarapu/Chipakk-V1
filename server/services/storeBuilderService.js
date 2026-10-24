@@ -83,7 +83,7 @@ const setStoreKey = async (baseKey, storeId, value, description = null) => {
 const STORE_1_HERO_DEFAULT = {
   mode: 'fixed',
   fixed_banner: {
-    image_url: 'assets/images/hero-fallback.svg',
+    image_url: 'assets/images/hero.png',
     show_eyebrow: true,
     eyebrow: 'New designs every week',
     show_title: true,
@@ -101,7 +101,7 @@ const STORE_1_HERO_DEFAULT = {
     slides: [
       {
         id: 'slide_1',
-        image_url: 'assets/images/hero-fallback.svg',
+        image_url: 'assets/images/hero.png',
         show_eyebrow: true,
         eyebrow: 'New designs every week',
         show_title: true,
@@ -380,7 +380,8 @@ const getPublicStoreBuilderData = async (storeId = 1) => {
     if (heroMode === 'fixed') {
       const fb = heroConfig.fixed_banner || {};
       const rawImg = fb.image_url || '';
-      const safeImg = (!rawImg || rawImg.includes('hero-banner-1.png')) ? 'assets/images/hero-fallback.svg' : rawImg;
+      const defaultHeroImg = isMarshans ? 'assets/images/hero-fallback.svg' : 'assets/images/hero.png';
+      const safeImg = (!rawImg || rawImg.includes('hero-banner-1.png') || rawImg.includes('hero-fallback.svg')) ? defaultHeroImg : rawImg;
       hero = {
         mode: 'fixed',
         enabled: true,
@@ -489,7 +490,7 @@ const getPublicStoreBuilderData = async (storeId = 1) => {
       hero: {
         mode: 'fixed',
         enabled: true,
-        image_url: 'assets/images/hero-fallback.svg',
+        image_url: isMarshansFallback ? 'assets/images/hero-fallback.svg' : 'assets/images/hero.png',
         show_eyebrow: true,
         eyebrow: isMarshansFallback ? 'Precision On-Demand Manufacturing' : 'New designs every week',
         show_title: true,

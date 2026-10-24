@@ -91,7 +91,11 @@
        2. GLOBAL HEADER
        ========================================================= -->
   <header class="site-header">
-    <div id="globalAnnouncementBar" class="global-announcement-bar" style="display: none;"></div>
+    <div id="globalAnnouncementBar" class="global-announcement-bar">
+      <span class="announcement-content">
+        <span class="announcement-text">WELCOME TO CHIPAKK! FREE SHIPPING ON ORDERS ₹300+</span>
+      </span>
+    </div>
     <div class="brand-family-bar">
       <div class="brand-family-inner">
         <div class="storefront-switcher" role="navigation" aria-label="Brand storefronts">
@@ -242,14 +246,10 @@
             <svg class="hero-scribble scribble-2" viewBox="0 0 100 40" fill="none" stroke="#111" stroke-width="4" stroke-linecap="round">
               <path d="M2 20 Q 20 2, 38 20 T 74 20 T 98 20"/>
             </svg>
-            <svg class="hero-scribble scribble-arrow" viewBox="0 0 60 60" fill="none" stroke="#111" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M50 12 Q 20 10 14 40 M14 40 l-8-10 M14 40 l12-4"/>
-            </svg>
             <div class="hero-photo-frame">
-              <img src="assets/images/hero-fallback.svg" alt="CHIPAKK Sticker Culture" class="hero-photo-img" data-hero-img width="560" height="560" fetchpriority="high" decoding="async" />
+              <img src="assets/images/hero.png" alt="CHIPAKK Sticker Culture" class="hero-photo-img" data-hero-img data-media data-fallback-src="assets/images/hero-fallback.svg" width="560" height="560" fetchpriority="high" decoding="async" />
             </div>
             <div class="hero-doodle doodle-bubble">Small stickers.<br />Big personality.</div>
-            <div class="hero-doodle doodle-crown">👑</div>
             <div class="hero-doodle doodle-burst">Good ideas<br />stick around</div>
             <div class="hero-doodle doodle-note">Life is better<br />with stickers ♥</div>
             <div class="hero-doodle doodle-star">★</div>
@@ -324,26 +324,42 @@
       </div>
     </section>
 
-    <!-- NEW DROP / PROMO -->
+    <!-- PROMOTIONAL SALE / OFFERS -->
     <section class="drop-section" id="drop">
       <div class="drop-inner">
-        <div class="drop-art" aria-hidden="true">
-          <span class="drop-ribbon">LIMITED</span>
-          <span>🚀</span>
+        <div class="drop-showcase-card drop-video-frame" id="dropVideoFrame">
+          <span class="drop-video-badge" aria-hidden="true">⚡ SPECIAL PROMOTION</span>
+          <div class="drop-video-wrapper">
+            <video
+              class="drop-promo-video"
+              id="promoVideo"
+              poster="assets/images/offer_promo_poster.jpg"
+              data-src="assets/video/offer_promo.mp4"
+              preload="none"
+              muted
+              playsinline
+              loop
+              width="1280"
+              height="720"
+              aria-label="Chipakk sticker showcase video">
+              <source data-src="assets/video/offer_promo.mp4" type="video/mp4" />
+              Your browser does not support HTML5 video.
+            </video>
+          </div>
         </div>
         <div class="drop-copy">
-          <span class="eyebrow">This week only</span>
-          <h2 class="drop-title">New Drop: Retro Arcade Pack</h2>
+          <span class="eyebrow">SPECIAL PROMOTION</span>
+          <h2 class="drop-title">YOUR VIBE. YOUR STICKERS.</h2>
           <p class="drop-desc">
-            12 brand-new retro-inspired designs just landed. Glow-in-the-dark finishes,
-            holographic options, and exclusive designs that won't come back once they're gone.
+            From everyday essentials to your favorite aesthetic, discover stickers that make every surface a little more you.
           </p>
-          <div class="drop-timer" aria-label="Time remaining">
-            <div><b id="timerDays">03</b><span>Days</span></div>
-            <div><b id="timerHours">14</b><span>Hours</span></div>
-            <div><b id="timerMins">22</b><span>Mins</span></div>
+          <div class="drop-timer" id="dropTimer" aria-label="Time remaining" style="display: none;">
+            <div><b id="timerDays">00</b><span>Days</span></div>
+            <div><b id="timerHours">00</b><span>Hours</span></div>
+            <div><b id="timerMins">00</b><span>Mins</span></div>
+            <div><b id="timerSecs">00</b><span>Secs</span></div>
           </div>
-          <a href="shop.html" class="btn btn-primary">Shop The Drop →</a>
+          <a href="shop.html" class="btn btn-primary">EXPLORE ALL STICKERS →</a>
         </div>
       </div>
     </section>
@@ -539,6 +555,7 @@
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
   <script src="js/auth.js?v=1.2.0"></script>
   <script src="js/media.js?v=1.2.0"></script>
+  <script src="js/countdown.js?v=1.2.0"></script>
   <script src="js/catalog.js?v=1.2.0"></script>
   <script src="js/app.js?v=1.2.0"></script>
   <script src="js/home.js?v=1.2.0"></script>

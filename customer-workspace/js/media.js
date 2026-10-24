@@ -38,6 +38,15 @@
 
   function apiOriginFrom(apiBase) {
     var base = String(apiBase || "").trim();
+    if (!base) {
+      if (typeof window !== "undefined" && window.location) {
+        var host = window.location.hostname;
+        if (host === "localhost" || host === "127.0.0.1") {
+          return window.location.protocol + "//" + window.location.host;
+        }
+      }
+      return "https://api.chipakk.shop";
+    }
     return base.replace(/\/+$/, "").replace(/\/api$/i, "");
   }
 
