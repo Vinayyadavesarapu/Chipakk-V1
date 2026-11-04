@@ -20,7 +20,7 @@ const STORE_1_DEFAULTS = {
   free_shipping_enabled: true,
   free_shipping_threshold: 300,
   free_shipping_calculation: 'gross_subtotal',
-  announcement_text: 'WELCOME TO CHIPAKK! GET 10% OFF ON YOUR FIRST ORDER',
+  announcement_text: 'WELCOME TO CHIPAKK! FREE SHIPPING ON ORDERS ₹300+',
   announcement_active: true,
   maintenance_active: false,
   maintenance_message: 'CHIPAKK is currently undergoing scheduled maintenance.',
@@ -166,6 +166,20 @@ const validateSettingsPayload = (settingsMap) => {
     err.statusCode = 400;
     throw err;
   }
+
+  // Validate announcement settings if present
+  if (settingsMap.announcement_text !== undefined && settingsMap.announcement_text !== null) {
+    if (typeof settingsMap.announcement_text !== 'string' && typeof settingsMap.announcement_text !== 'number') {
+      const err = new Error('Announcement text must be a string.');
+      err.statusCode = 400;
+      throw err;
+    }
+    if (String(settingsMap.announcement_text).length > 500) {
+      const err = new Error('Announcement text cannot exceed 500 characters.');
+      err.statusCode = 400;
+      throw err;
+    }
+  }
 };
 
 /**
@@ -270,6 +284,12 @@ const updateStoreSettings = async (storeId = 1, settingsMap = {}) => {
         if (key === 'tax_pricing_mode' && typeof value === 'string') {
           value = value.trim().toLowerCase();
         }
+        if (key === 'announcement_text' && value !== null && value !== undefined) {
+          value = String(value).trim();
+        }
+        if (key === 'announcement_active' && value !== null && value !== undefined) {
+          value = Boolean(value === true || value === 'true' || value === 1);
+        }
         if ((key === 'shipping_fee' || key === 'free_shipping_threshold') && value !== null && value !== undefined && value !== '') {
           value = Number(value);
         }
@@ -315,6 +335,104 @@ const updateStoreSettings = async (storeId = 1, settingsMap = {}) => {
         });
       } catch (syncErr) {
         console.error('[Settings] Saved settings but could not sync the shipping rule:', syncErr.message);
+      }
+    }
+
+    // Keep store_builder announcement bar synchronized so all public endpoints agree
+    if (settingsMap.announcement_text !== undefined || settingsMap.announcement_active !== undefined) {
+      try {
+        const storeBarKey = `store_builder_announcement_bar_store_${numericStoreId}`;
+        let existingBar = {};
+        try {
+          const [existingRows] = await pool.execute(`SELECT setting_value FROM site_settings WHERE setting_key = ?`, [storeBarKey]);
+          if (existingRows && existingRows.length && existingRows[0].setting_value) {
+            existingBar = typeof existingRows[0].setting_value === 'string' ? JSON.parse(existingRows[0].setting_value) : existingRows[0].setting_value;
+          }
+        } catch (_) {}
+
+        let currentActive;
+        if (settingsMap.announcement_active !== undefined) {
+          currentActive = Boolean(
+            settingsMap.announcement_active === true ||
+            settingsMap.announcement_active === 'true' ||
+            settingsMap.announcement_active === 1
+          );
+        } else {
+          // If announcement_active is omitted, preserve the actual existing store-scoped enabled state.
+          // Do NOT implicitly turn a disabled announcement ON.
+          try {
+            const [activeRows] = await pool.execute(
+              'SELECT setting_value FROM store_settings WHERE store_id = ? AND setting_key = ?',
+              [numericStoreId, 'announcement_active']
+            );
+            if (activeRows && activeRows.length && activeRows[0].setting_value !== undefined && activeRows[0].setting_value !== null) {
+              let val = activeRows[0].setting_value;
+              if (typeof val === 'string') {
+                try { val = JSON.parse(val); } catch (_) {}
+              }
+              currentActive = Boolean(val === true || val === 'true' || val === 1);
+            }
+          } catch (_) {}
+
+          if (currentActive === undefined) {
+            if (existingBar && existingBar.enabled !== undefined) {
+              currentActive = Boolean(existingBar.enabled);
+            } else {
+              const defaults = numericStoreId === 2 ? STORE_2_DEFAULTS : STORE_1_DEFAULTS;
+              currentActive = Boolean(defaults.announcement_active);
+            }
+          }
+        }
+
+        let currentText;
+        if (settingsMap.announcement_text !== undefined) {
+          currentText = String(settingsMap.announcement_text).trim();
+        } else if (existingBar && existingBar.text !== undefined && existingBar.text !== null) {
+          currentText = String(existingBar.text).trim();
+        } else {
+          try {
+            const [textRows] = await pool.execute(
+              'SELECT setting_value FROM store_settings WHERE store_id = ? AND setting_key = ?',
+              [numericStoreId, 'announcement_text']
+            );
+            if (textRows && textRows.length && textRows[0].setting_value !== undefined && textRows[0].setting_value !== null) {
+              let val = textRows[0].setting_value;
+              if (typeof val === 'string') {
+                try { val = JSON.parse(val); } catch (_) {}
+              }
+              currentText = String(val).trim();
+            }
+          } catch (_) {}
+
+          if (currentText === undefined) {
+            const defaults = numericStoreId === 2 ? STORE_2_DEFAULTS : STORE_1_DEFAULTS;
+            currentText = String(defaults.announcement_text || '').trim();
+          }
+        }
+
+        const barVal = JSON.stringify({
+          ...existingBar,
+          enabled: currentActive,
+          text: currentText,
+          mode: existingBar.mode || 'MARQUEE',
+          marquee_speed: existingBar.marquee_speed || 'normal'
+        });
+
+        await pool.execute(`
+          INSERT INTO site_settings (setting_key, setting_value, description)
+          VALUES (?, ?, ?)
+          ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)
+        `, [storeBarKey, barVal, `Store Builder ${numericStoreId} Announcement Bar`]);
+
+        if (numericStoreId === 1) {
+          await pool.execute(`
+            INSERT INTO site_settings (setting_key, setting_value, description)
+            VALUES (?, ?, ?)
+            ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)
+          `, ['store_builder_announcement_bar', barVal, 'Store Builder 1 Announcement Bar']);
+        }
+      } catch (_) {
+        // site_settings table missing or fallback
       }
     }
 

@@ -5,6 +5,18 @@ const { sendSuccess } = require('../utils/responseHandler');
 /**
  * Resolves effective storeId from request context (middleware, query, header, or body)
  */
+const setNoCacheHeaders = (res) => {
+  if (typeof res.set === 'function') {
+    res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
+  } else if (typeof res.setHeader === 'function') {
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+  }
+};
+
 const resolveEffectiveStoreId = (req) => {
   if (req.storeId) {
     const parsed = parseInt(req.storeId, 10);
@@ -32,6 +44,7 @@ const resolveEffectiveStoreId = (req) => {
  * GET /api/admin/store-builder
  */
 const getStoreBuilderAdminHandler = async (req, res, next) => {
+  setNoCacheHeaders(res);
   try {
     const storeId = resolveEffectiveStoreId(req);
     const data = await storeBuilderService.getStoreBuilderAdminData(storeId);
@@ -88,6 +101,7 @@ const updateStoreBuilderAdminHandler = async (req, res, next) => {
  * GET /api/store-builder
  */
 const getPublicStoreBuilderHandler = async (req, res, next) => {
+  setNoCacheHeaders(res);
   try {
     const storeId = resolveEffectiveStoreId(req);
     const publicData = await storeBuilderService.getPublicStoreBuilderData(storeId);
