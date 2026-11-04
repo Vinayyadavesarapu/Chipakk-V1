@@ -653,6 +653,7 @@
             <ul class="admin-sidebar-nav">
                 <li class="store-module-chipakk"><a href="#" class="admin-nav-item" data-tab="tab-production">🖨️ POD Production Queue</a></li>
                 <li class="store-module-chipakk"><a href="#" class="admin-nav-item" data-tab="tab-chipakk-inventory">📦 Production Inventory</a></li>
+                <li class="store-module-marshans" style="display: none;"><a href="#" class="admin-nav-item" data-tab="tab-custom-forge" id="nav-custom-forge-link">🔨 Custom Forge Orders <span id="cf-order-nav-badge" class="cf-nav-badge" style="display: none; background: #ef4444; color: #ffffff; border-radius: 999px; font-size: 0.7rem; font-weight: 900; padding: 1px 6px; margin-left: 6px; border: 1px solid #b91c1c; line-height: 1; vertical-align: middle;">0</span></a></li>
                 <li class="store-module-marshans-future" style="display: none;"><a href="#" class="admin-nav-item" data-tab="tab-custom-requests">📋 Custom Requests</a></li>
                 <li class="store-module-marshans-future" style="display: none;"><a href="#" class="admin-nav-item" data-tab="tab-production-jobs">⚙️ Production Jobs</a></li>
                 <li><a href="#" class="admin-nav-item" data-tab="tab-shipping"><span id="nav-shipping-label">🚚 Shipping Management</span></a></li>
@@ -1804,6 +1805,61 @@
                             </tr>
                         </thead>
                         <tbody id="custom-requests-tbody"></tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- TAB: CUSTOM FORGE ORDERS (THE MARSHANS ONLY) -->
+            <section id="tab-custom-forge" class="tab-content store-module-marshans" style="display: none;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 10px;">
+                    <div>
+                        <h2 style="font-weight: 900; text-transform: uppercase; margin: 0;">🔨 Custom Forge Orders & Manufacturing</h2>
+                        <p style="font-size: 0.85rem; color: #555; font-weight: bold; margin: 4px 0 0 0;">Dedicated Additive Manufacturing Workflow for Lady Justice & Custom Nameplates</p>
+                    </div>
+                </div>
+
+                <div class="order-filter-tabs" id="custom-forge-status-tabs">
+                    <button class="retro-btn order-tab-btn active" data-cf-status="">ALL</button>
+                    <button class="retro-btn order-tab-btn" data-cf-status="order_placed">ORDER PLACED</button>
+                    <button class="retro-btn order-tab-btn" data-cf-status="3d_printing">3D PRINTING</button>
+                    <button class="retro-btn order-tab-btn" data-cf-status="post_processing">POST-PROCESSING</button>
+                    <button class="retro-btn order-tab-btn" data-cf-status="nameplate_fabrication">NAMEPLATE FAB</button>
+                    <button class="retro-btn order-tab-btn" data-cf-status="quality_check">QUALITY CHECK</button>
+                    <button class="retro-btn order-tab-btn" data-cf-status="ready_to_ship">READY TO SHIP</button>
+                    <button class="retro-btn order-tab-btn" data-cf-status="shipped">SHIPPED</button>
+                    <button class="retro-btn order-tab-btn" data-cf-status="delivered">DELIVERED</button>
+                    <button class="retro-btn order-tab-btn" data-cf-status="cancelled">CANCELLED</button>
+                </div>
+
+                <div style="display: flex; gap: 15px; margin-bottom: 20px; background: #fff; padding: 12px; border: 2px solid var(--text-color, #000);">
+                    <input type="text" id="custom-forge-search-input" class="retro-input"
+                        placeholder="Search by Order #, Customer Name, Phone, or Engraved Text..."
+                        style="flex: 1;">
+                    <button id="custom-forge-reset-search-btn" class="retro-btn"
+                        style="padding: 4px 10px; font-size: 0.8rem;">RESET</button>
+                </div>
+
+                <div class="admin-table-container">
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>Order Number</th>
+                                <th>Customer</th>
+                                <th>Phone</th>
+                                <th>Size Variant</th>
+                                <th>Custom Mode</th>
+                                <th>Nameplate Material</th>
+                                <th>Engraved Details</th>
+                                <th>Amount</th>
+                                <th>Payment</th>
+                                <th>Production Status</th>
+                                <th>Date</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="custom-forge-orders-tbody">
+                            <tr><td colspan="12" style="text-align: center; padding: 20px;">Loading Custom Forge orders...</td></tr>
+                        </tbody>
                     </table>
                 </div>
             </section>
@@ -3039,6 +3095,81 @@
                         <tr><td colspan="8" style="text-align: center; padding: 20px; color: #666;">Loading movement history...</td></tr>
                     </tbody>
                 </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- CUSTOM FORGE ORDER DETAIL MODAL -->
+    <div id="custom-forge-order-modal" class="modal-overlay" style="display: none;">
+        <div class="retro-panel modal-body-scroll" style="background: #fff; max-width: 850px; width: 95%;">
+            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid var(--text-color, #000); padding-bottom: 12px; margin-bottom: 15px;">
+                <div>
+                    <h3 id="cf-detail-title" style="font-weight: 900; margin: 0;">[CUSTOM FORGE ORDER DETAILS]</h3>
+                    <small id="cf-detail-date" style="color: #666; font-weight: bold;"></small>
+                </div>
+                <button class="icon-btn" id="close-cf-order-modal-btn" style="font-size: 1.2rem; font-weight: 900;">×</button>
+            </div>
+
+            <!-- Workflow Status Stepper / Selector -->
+            <div class="retro-panel" style="background: #fafafa; padding: 15px; margin-bottom: 20px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+                    <div>
+                        <div style="font-size: 0.75rem; font-weight: 900; text-transform: uppercase; color: #555; margin-bottom: 4px;">PRODUCTION LIFECYCLE STATE</div>
+                        <select id="cf-detail-status-select" class="retro-input" style="padding: 4px 8px; font-weight: bold; font-size: 0.85rem; width: 220px;">
+                            <option value="order_placed">ORDER PLACED</option>
+                            <option value="3d_printing">3D PRINTING</option>
+                            <option value="post_processing">POST-PROCESSING</option>
+                            <option value="nameplate_fabrication">NAMEPLATE FABRICATION</option>
+                            <option value="quality_check">QUALITY CHECK</option>
+                            <option value="ready_to_ship">READY TO SHIP</option>
+                            <option value="shipped">SHIPPED</option>
+                            <option value="delivered">DELIVERED</option>
+                            <option value="cancelled">CANCELLED</option>
+                        </select>
+                    </div>
+                    <button id="cf-update-status-btn" class="retro-btn retro-btn-primary" style="padding: 4px 12px; font-size: 0.8rem;">UPDATE STATUS</button>
+                </div>
+            </div>
+
+            <div class="admin-grid-2col" style="gap: 15px; margin-bottom: 20px;">
+                <!-- 3D Model & Customization Specs -->
+                <div class="retro-panel" style="background: #fff; font-size: 0.85rem;">
+                    <h4 style="font-weight: 900; border-bottom: 1px solid #ddd; padding-bottom: 6px; margin-bottom: 10px; color: #0284c7;">⚙️ 3D MODEL & NAMEPLATE SPECIFICATIONS</h4>
+                    <div><strong>Product:</strong> <span id="cf-detail-prod-name">Lady Justice</span></div>
+                    <div><strong>Size Variant:</strong> <span id="cf-detail-size-variant" style="font-weight: bold;"></span></div>
+                    <div><strong>Approx Height:</strong> <span id="cf-detail-height-mm"></span></div>
+                    <div style="margin-top: 10px; border-top: 1px dashed #ddd; padding-top: 10px;">
+                        <strong>Custom Mode:</strong> <span id="cf-detail-custom-mode-badge" class="status-badge"></span>
+                    </div>
+                    <div id="cf-detail-customization-section" style="margin-top: 8px; background: #f8fafc; border: 1px solid #e2e8f0; padding: 10px; border-radius: 4px; display: none;">
+                        <div><strong>Engraved Name:</strong> <span id="cf-detail-engraved-name" style="font-weight: 900; color: #0f172a;"></span></div>
+                        <div style="margin-top: 4px;"><strong>Designation:</strong> <span id="cf-detail-engraved-desig" style="font-weight: bold; color: #334155;"></span></div>
+                        <div style="margin-top: 4px;"><strong>Nameplate Material:</strong> <span id="cf-detail-nameplate-mat" class="status-badge" style="background: #e0e7ff; color: #3730a3; font-weight: bold;"></span></div>
+                    </div>
+                </div>
+
+                <!-- Customer Details & Pricing Breakdown -->
+                <div class="retro-panel" style="background: #fff; font-size: 0.85rem;">
+                    <h4 style="font-weight: 900; border-bottom: 1px solid #ddd; padding-bottom: 6px; margin-bottom: 10px;">👤 CUSTOMER & ORDER BREAKDOWN</h4>
+                    <div><strong>Customer Name:</strong> <span id="cf-detail-cust-name" style="font-weight: bold;"></span></div>
+                    <div><strong>Email:</strong> <span id="cf-detail-cust-email"></span></div>
+                    <div><strong>Phone:</strong> <span id="cf-detail-cust-phone"></span></div>
+                    <div style="margin-top: 8px;"><strong>Delivery Address:</strong>
+                        <div id="cf-detail-cust-address" style="background: #f9f8f3; padding: 6px; border: 1px solid #ddd; margin-top: 4px; font-size: 0.8rem;"></div>
+                    </div>
+                    <div style="margin-top: 10px; border-top: 1px dashed #ddd; padding-top: 8px;">
+                        <div>Subtotal: <span id="cf-detail-subtotal"></span></div>
+                        <div>Shipping Fee: <span id="cf-detail-shipping"></span></div>
+                        <div style="font-size: 1.05rem; font-weight: 900; color: #059669; margin-top: 4px;">Total: <span id="cf-detail-total"></span></div>
+                        <div>Payment Status: <span id="cf-detail-pay-status" class="status-badge"></span></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Chronological Status History -->
+            <div class="retro-panel" style="background: #fff; margin-bottom: 10px;">
+                <h4 style="font-weight: 900; margin-bottom: 8px;">📜 PRODUCTION AUDIT TRAIL</h4>
+                <div id="cf-timeline-container" style="max-height: 160px; overflow-y: auto; font-size: 0.8rem;"></div>
             </div>
         </div>
     </div>

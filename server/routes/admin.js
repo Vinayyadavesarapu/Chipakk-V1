@@ -122,6 +122,13 @@ const {
   getStoreBuilderAdminHandler,
   updateStoreBuilderAdminHandler
 } = require('../controllers/storeBuilderController');
+const {
+  getAdminCustomForgeOrdersHandler,
+  getAdminCustomForgeOrderByIdHandler,
+  updateAdminCustomForgeOrderStatusHandler,
+  getAdminCustomForgeUnreadCountHandler,
+  acknowledgeAdminCustomForgeOrdersHandler
+} = require('../controllers/customForgeController');
 const chipakkMaterialController = require('../controllers/chipakkMaterialController');
 
 const router = express.Router();
@@ -238,6 +245,14 @@ router.put('/orders/:id/status', updateOrderStatusHandler);
 router.patch('/orders/:id/status', updateOrderStatusHandler);
 router.put('/orders/:id/shipping', updateOrderShippingHandler);
 router.post('/orders/:id/ship', updateOrderShippingHandler);
+
+// Custom Forge Orders Management & Notifications (Store 2: THE MARSHANS)
+router.get('/custom-forge/orders', getAdminCustomForgeOrdersHandler);
+router.get('/custom-forge/orders/unread-count', getAdminCustomForgeUnreadCountHandler);
+router.post('/custom-forge/orders/acknowledge', acknowledgeAdminCustomForgeOrdersHandler);
+router.get('/custom-forge/orders/:id', getAdminCustomForgeOrderByIdHandler);
+router.patch('/custom-forge/orders/:id/status', updateAdminCustomForgeOrderStatusHandler);
+router.put('/custom-forge/orders/:id/status', updateAdminCustomForgeOrderStatusHandler);
 
 // Generic Admin File Upload (Hostinger Storage)
 router.post('/upload', (req, res, next) => {

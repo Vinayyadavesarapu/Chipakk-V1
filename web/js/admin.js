@@ -156,6 +156,9 @@ let productionJobs = [];
 let activeProdJobStage = '';
 let customRequests = [];
 let activeCustomReqStatus = '';
+let customForgeOrders = [];
+let activeCfStatus = '';
+let activeCfOrderViewing = null;
 let dashboardMetrics = null;
 let monthlyStats = [];
 let heroConfig = null;
@@ -902,6 +905,70 @@ async function refreshCustomRequestsFromAPI(statusFilter = '') {
     }
 }
 
+function updateCustomForgeNavBadge(count) {
+    const badge = document.getElementById('cf-order-nav-badge');
+    if (!badge) return;
+    const num = parseInt(count, 10) || 0;
+    if (num > 0) {
+        badge.textContent = String(num);
+        badge.style.display = 'inline-block';
+    } else {
+        badge.textContent = '0';
+        badge.style.display = 'none';
+    }
+}
+
+async function checkCustomForgeUnreadCount() {
+    if (apiClient.getActiveStoreId() !== 2) {
+        updateCustomForgeNavBadge(0);
+        return;
+    }
+    try {
+        const res = await apiClient.get('/admin/custom-forge/orders/unread-count');
+        const data = res?.data || res;
+        const count = data?.unread_count || 0;
+        updateCustomForgeNavBadge(count);
+    } catch (_) {
+        // Silently tolerate background check failures
+    }
+}
+
+async function refreshCustomForgeOrdersFromAPI(statusFilter = activeCfStatus, searchQuery = '') {
+    try {
+        const queryParams = [];
+        if (statusFilter) queryParams.push(`status=${encodeURIComponent(statusFilter)}`);
+        if (searchQuery) queryParams.push(`search=${encodeURIComponent(searchQuery)}`);
+        const qs = queryParams.length ? `?${queryParams.join('&')}` : '';
+        const res = await apiClient.get(`/admin/custom-forge/orders${qs}`);
+        const raw = res?.data?.orders || res?.orders || (Array.isArray(res?.data) ? res.data : []) || (Array.isArray(res) ? res : []);
+        customForgeOrders = Array.isArray(raw) ? raw : [];
+        renderCustomForgeTable();
+
+        // Acknowledge visible, eligible orders actually loaded and viewed by the administrator
+        // Only acknowledge when Custom Forge tab is active, and only acknowledge eligible orders
+        // Eligible: payment_status === 'paid' AND production_status === 'order_placed'
+        const cfTab = document.getElementById('tab-custom-forge');
+        const isTabActive = cfTab && cfTab.style.display !== 'none';
+
+        if (isTabActive) {
+            const loadedEligibleOrderIds = customForgeOrders
+                .filter(o => (o.payment_status || '').toLowerCase() === 'paid' && (o.production_status || '').toLowerCase() === 'order_placed')
+                .map(o => o.id);
+
+            if (loadedEligibleOrderIds.length > 0) {
+                try {
+                    await apiClient.post('/admin/custom-forge/orders/acknowledge', {
+                        order_ids: loadedEligibleOrderIds
+                    });
+                    await checkCustomForgeUnreadCount();
+                } catch (_) {}
+            }
+        }
+    } catch (err) {
+        console.error('[refreshCustomForgeOrdersFromAPI]', err.message);
+    }
+}
+
 function updateState() {
     updateCustomerStatsAndTiers();
     saveState();
@@ -1269,6 +1336,8 @@ function setupNavigation() {
                 refreshAuditLogsFromAPI();
             } else if (targetSecId === 'tab-chipakk-inventory') {
                 refreshChipakkMaterialsFromAPI();
+            } else if (targetSecId === 'tab-custom-forge') {
+                refreshCustomForgeOrdersFromAPI();
             }
 
             window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -4459,6 +4528,277 @@ async function rejectCustomRequest() {
 }
 
 // =============================================================================
+// 10A-2. THE MARSHANS: CUSTOM FORGE ORDERS & MANUFACTURING WORKFLOW (STORE 2 ONLY)
+// =============================================================================
+
+function renderCustomForgeTable() {
+    const tbody = document.getElementById('custom-forge-orders-tbody');
+    if (!tbody) return;
+
+    if (!customForgeOrders || customForgeOrders.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="12" style="text-align:center; padding:20px; color:#666;">No Custom Forge orders found.</td></tr>';
+        return;
+    }
+
+    const statusBadgeStyles = {
+        'order_placed': 'background: #fef3c7; color: #92400e; border: 1px solid #f59e0b;',
+        '3d_printing': 'background: #dbeafe; color: #1e40af; border: 1px solid #3b82f6;',
+        'post_processing': 'background: #e0e7ff; color: #3730a3; border: 1px solid #6366f1;',
+        'nameplate_fabrication': 'background: #f3e8ff; color: #6b21a8; border: 1px solid #a855f7;',
+        'quality_check': 'background: #fef08a; color: #854d0e; border: 1px solid #eab308;',
+        'ready_to_ship': 'background: #dcfce7; color: #166534; border: 1px solid #22c55e;',
+        'shipped': 'background: #ccfbf1; color: #115e59; border: 1px solid #14b8a6;',
+        'delivered': 'background: #10b981; color: #ffffff; border: 1px solid #059669;',
+        'cancelled': 'background: #fee2e2; color: #991b1b; border: 1px solid #ef4444;'
+    };
+
+    const statusLabels = {
+        'order_placed': 'ORDER PLACED',
+        '3d_printing': '3D PRINTING',
+        'post_processing': 'POST-PROCESSING',
+        'nameplate_fabrication': 'NAMEPLATE FAB',
+        'quality_check': 'QUALITY CHECK',
+        'ready_to_ship': 'READY TO SHIP',
+        'shipped': 'SHIPPED',
+        'delivered': 'DELIVERED',
+        'cancelled': 'CANCELLED'
+    };
+
+    tbody.innerHTML = customForgeOrders.map(o => {
+        const totalRupees = Math.round((o.total_amount_paise || o.total_price || 0) / 100).toLocaleString('en-IN');
+        const badgeStyle = statusBadgeStyles[o.production_status] || 'background: #f1f5f9; color: #334155;';
+        const label = statusLabels[o.production_status] || (o.production_status || 'UNKNOWN').toUpperCase();
+        const dateStr = o.created_at ? new Date(o.created_at).toLocaleDateString('en-IN') : '-';
+        const isCustom = o.custom_mode === 1 || o.custom_mode === true || o.custom_mode_enabled === 1 || o.custom_mode_enabled === true;
+        const customBadge = isCustom
+            ? '<span class="status-badge" style="background: #e0f2fe; color: #0369a1; font-weight: bold;">ENABLED</span>'
+            : '<span class="status-badge" style="background: #f1f5f9; color: #64748b;">OFF</span>';
+        const matBadge = o.nameplate_material
+            ? `<span class="status-badge" style="background: #e0e7ff; color: #3730a3; font-weight: bold;">${escapeHtml(o.nameplate_material)}</span>`
+            : '<span style="color:#888;">-</span>';
+        const engravedInfo = o.engraved_name
+            ? `<strong>${escapeHtml(o.engraved_name)}</strong><br><small style="color:#555;">${escapeHtml(o.designation || o.engraved_designation || 'NIL')}</small>`
+            : '<span style="color:#888;">None</span>';
+
+        return `
+            <tr>
+                <td><strong>${escapeHtml(o.order_number)}</strong></td>
+                <td>${escapeHtml(o.customer_name || 'Customer')}<br><small style="color:#666;">${escapeHtml(o.customer_email || '')}</small></td>
+                <td>${escapeHtml(o.customer_phone || '-')}</td>
+                <td><strong>${escapeHtml(o.variant_name || o.size_label_snapshot || 'Lady Justice')}</strong></td>
+                <td>${customBadge}</td>
+                <td>${matBadge}</td>
+                <td>${engravedInfo}</td>
+                <td><strong>₹${totalRupees}</strong></td>
+                <td><span class="status-badge" style="background:#ecfdf5; color:#065f46; font-weight:bold;">${escapeHtml((o.payment_status || 'captured').toUpperCase())}</span></td>
+                <td><span class="status-badge" style="${badgeStyle}; font-weight:bold;">${label}</span></td>
+                <td><small style="color:#666;">${dateStr}</small></td>
+                <td>
+                    <button class="retro-btn view-cf-order-btn" data-id="${o.id}" style="padding: 2px 8px; font-size: 0.75rem; font-weight: bold;">VIEW DETAILS →</button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+
+    tbody.querySelectorAll('.view-cf-order-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const id = btn.getAttribute('data-id');
+            openCustomForgeDetailModal(id);
+        });
+    });
+}
+
+async function openCustomForgeDetailModal(orderId) {
+    try {
+        const res = await apiClient.get(`/admin/custom-forge/orders/${orderId}`);
+        const order = res?.data?.order || res?.order;
+        if (!order) {
+            showToast("Custom Forge order not found", "error");
+            return;
+        }
+
+        activeCfOrderViewing = order;
+        if ((order.payment_status || '').toLowerCase() === 'paid' && (order.production_status || '').toLowerCase() === 'order_placed') {
+            apiClient.post('/admin/custom-forge/orders/acknowledge', { order_ids: [order.id] })
+                .then(() => checkCustomForgeUnreadCount())
+                .catch(() => {});
+        }
+        const modal = document.getElementById('custom-forge-order-modal');
+        if (!modal) return;
+
+        // Header
+        const titleEl = document.getElementById('cf-detail-title');
+        if (titleEl) titleEl.textContent = `[CUSTOM FORGE ORDER: ${order.order_number}]`;
+        const dateEl = document.getElementById('cf-detail-date');
+        if (dateEl) dateEl.textContent = `Placed on ${new Date(order.created_at).toLocaleString('en-IN')}`;
+
+        // Lifecycle Status Select with Payment-to-Production Enforcement
+        const statusSelect = document.getElementById('cf-detail-status-select');
+        const isPaid = (order.payment_status || '').toLowerCase() === 'paid';
+        if (statusSelect) {
+            statusSelect.value = order.production_status || 'order_placed';
+            const prodStages = ['3d_printing', 'post_processing', 'nameplate_fabrication', 'quality_check', 'ready_to_ship', 'shipped', 'delivered'];
+            Array.from(statusSelect.options).forEach(opt => {
+                if (prodStages.includes(opt.value)) {
+                    opt.disabled = !isPaid;
+                    opt.textContent = opt.value.replace(/_/g, ' ').toUpperCase() + (!isPaid ? ' (LOCKED: UNPAID)' : '');
+                } else {
+                    opt.disabled = false;
+                    opt.textContent = opt.value.replace(/_/g, ' ').toUpperCase();
+                }
+            });
+        }
+
+        // 3D Model Specs & Customization
+        const item = (order.items && order.items[0]) || {};
+        const prodNameEl = document.getElementById('cf-detail-prod-name');
+        if (prodNameEl) prodNameEl.textContent = 'Lady Justice';
+        const sizeVariantEl = document.getElementById('cf-detail-size-variant');
+        if (sizeVariantEl) sizeVariantEl.textContent = item.variant_name || item.size_label_snapshot || '-';
+        const heightEl = document.getElementById('cf-detail-height-mm');
+        if (heightEl) heightEl.textContent = item.height_mm ? `${item.height_mm} mm` : (item.height_mm_snapshot ? `${item.height_mm_snapshot} mm` : '-');
+
+        const isCustom = item.custom_mode === 1 || item.custom_mode === true || item.custom_mode_enabled === 1 || item.custom_mode_enabled === true || order.custom_mode === 1 || order.custom_mode === true;
+        const customBadge = document.getElementById('cf-detail-custom-mode-badge');
+        const customSec = document.getElementById('cf-detail-customization-section');
+        if (customBadge) {
+            customBadge.textContent = isCustom ? 'ENABLED' : 'DISABLED';
+            customBadge.style.background = isCustom ? '#e0f2fe' : '#f1f5f9';
+            customBadge.style.color = isCustom ? '#0369a1' : '#64748b';
+        }
+
+        if (customSec) {
+            const custData = item.customization || order.customization || {
+                engraved_name: order.engraved_name,
+                designation: order.designation || order.engraved_designation,
+                nameplate_material: order.nameplate_material
+            };
+            const engName = custData.engraved_name || custData.name;
+            if (isCustom && custData && engName) {
+                customSec.style.display = 'block';
+                const engravedNameEl = document.getElementById('cf-detail-engraved-name');
+                if (engravedNameEl) engravedNameEl.textContent = engName || 'N/A';
+                const engravedDesigEl = document.getElementById('cf-detail-engraved-desig');
+                if (engravedDesigEl) engravedDesigEl.textContent = custData.designation || custData.engraved_designation || 'NIL';
+                const matEl = document.getElementById('cf-detail-nameplate-mat');
+                if (matEl) matEl.textContent = custData.nameplate_material || custData.material || 'N/A';
+            } else {
+                customSec.style.display = 'none';
+            }
+        }
+
+        // Customer & Order Breakdown
+        const custNameEl = document.getElementById('cf-detail-cust-name');
+        if (custNameEl) custNameEl.textContent = order.customer_name || 'N/A';
+        const custEmailEl = document.getElementById('cf-detail-cust-email');
+        if (custEmailEl) custEmailEl.textContent = order.customer_email || 'N/A';
+        const custPhoneEl = document.getElementById('cf-detail-cust-phone');
+        if (custPhoneEl) custPhoneEl.textContent = order.customer_phone || 'N/A';
+
+        const addrEl = document.getElementById('cf-detail-cust-address');
+        if (addrEl) {
+            let addr = order.shipping_address;
+            if (typeof addr === 'string') {
+                try { addr = JSON.parse(addr); } catch (_) {}
+            }
+            if (addr && typeof addr === 'object') {
+                addrEl.innerHTML = `
+                    <div><strong>${escapeHtml(addr.name || order.customer_name || '')}</strong></div>
+                    <div>${escapeHtml(addr.address_line1 || addr.address || '')} ${escapeHtml(addr.address_line2 || '')}</div>
+                    <div>${escapeHtml(addr.city || '')}, ${escapeHtml(addr.state || '')} - ${escapeHtml(addr.postal_code || addr.pincode || '')}</div>
+                    <div>Phone: ${escapeHtml(addr.phone || order.customer_phone || 'N/A')}</div>
+                `;
+            } else {
+                addrEl.textContent = escapeHtml(String(addr || 'No address provided.'));
+            }
+        }
+
+        const subtotalPaise = order.subtotal_paise !== undefined ? order.subtotal_paise : order.subtotal;
+        const subtotalEl = document.getElementById('cf-detail-subtotal');
+        if (subtotalEl) subtotalEl.textContent = `₹${Math.round((subtotalPaise || 0) / 100).toLocaleString('en-IN')}`;
+        const shipEl = document.getElementById('cf-detail-shipping');
+        if (shipEl) {
+            const shipFee = order.shipping_fee_paise !== undefined ? order.shipping_fee_paise : (order.shipping_charge || 0);
+            shipEl.textContent = shipFee > 0 ? `₹${Math.round(shipFee / 100).toLocaleString('en-IN')}` : 'FREE';
+        }
+        const totalPaise = order.total_amount_paise !== undefined ? order.total_amount_paise : order.total_price;
+        const totalEl = document.getElementById('cf-detail-total');
+        if (totalEl) totalEl.textContent = `₹${Math.round((totalPaise || 0) / 100).toLocaleString('en-IN')}`;
+        const payStatusEl = document.getElementById('cf-detail-pay-status');
+        if (payStatusEl) {
+            payStatusEl.textContent = (order.payment_status || 'captured').toUpperCase();
+            payStatusEl.className = 'status-badge status-live';
+        }
+
+        // Production Audit Trail
+        const timelineEl = document.getElementById('cf-timeline-container');
+        if (timelineEl) {
+            const history = Array.isArray(order.status_history) ? order.status_history : [];
+            if (history.length === 0) {
+                timelineEl.innerHTML = '<div style="color:#888;">No history records available.</div>';
+            } else {
+                timelineEl.innerHTML = history.map(h => {
+                    const timeStr = h.created_at ? new Date(h.created_at).toLocaleString('en-IN') : '-';
+                    const statusText = (h.new_status || h.status || '').toUpperCase();
+                    const noteText = h.note || h.notes || '';
+                    const actorText = h.changed_by ? ` (by ${escapeHtml(h.changed_by)})` : '';
+                    return `
+                        <div style="padding: 6px 0; border-bottom: 1px solid #f1f5f9; display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <span class="status-badge" style="background:#e2e8f0; color:#1e293b; font-weight:bold; font-size:0.75rem;">${escapeHtml(statusText)}</span>
+                                ${noteText ? `<span style="margin-left: 8px; color: #475569;">${escapeHtml(noteText)}</span>` : ''}
+                                <small style="color: #64748b; margin-left: 4px;">${actorText}</small>
+                            </div>
+                            <small style="color: #94a3b8;">${timeStr}</small>
+                        </div>
+                    `;
+                }).join('');
+            }
+        }
+
+        modal.style.display = 'flex';
+    } catch (err) {
+        showToast(`Error loading order details: ${err.message}`, 'error');
+    }
+}
+
+async function updateCustomForgeStatus() {
+    if (!activeCfOrderViewing || !activeCfOrderViewing.id) {
+        showToast("No active Custom Forge order selected", "error");
+        return;
+    }
+
+    const selectEl = document.getElementById('cf-detail-status-select');
+    const targetStatus = selectEl ? selectEl.value : null;
+    if (!targetStatus) return;
+
+    const prodStages = ['3d_printing', 'post_processing', 'nameplate_fabrication', 'quality_check', 'ready_to_ship', 'shipped', 'delivered'];
+    const isPaid = (activeCfOrderViewing.payment_status || '').toLowerCase() === 'paid';
+    if (prodStages.includes(targetStatus) && !isPaid) {
+        showToast(`Cannot enter production: Order #${activeCfOrderViewing.order_number} is unpaid (payment_status: ${activeCfOrderViewing.payment_status}). Only verified paid orders can enter production.`, "error");
+        return;
+    }
+
+    const btn = document.getElementById('cf-update-status-btn');
+    const origText = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = "UPDATING..."; }
+
+    try {
+        await apiClient.patch(`/admin/custom-forge/orders/${activeCfOrderViewing.id}/status`, {
+            status: targetStatus,
+            notes: `Status updated via Admin Operations Terminal`
+        });
+        showToast(`Order #${activeCfOrderViewing.order_number} status updated to ${targetStatus.toUpperCase()}.`);
+        await openCustomForgeDetailModal(activeCfOrderViewing.id);
+        await refreshCustomForgeOrdersFromAPI();
+    } catch (err) {
+        showToast(`Failed to update status: ${err.message}`, "error");
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = origText || "UPDATE STATUS"; }
+    }
+}
+
+// =============================================================================
 // 10B. CHIPAKK: PRODUCTION-MATERIAL INVENTORY & STOCK MOVEMENTS (STORE 1 ONLY)
 // =============================================================================
 
@@ -6650,6 +6990,9 @@ function setupEventListeners() {
         const orderDetailModal = document.getElementById('order-detail-modal');
         if (orderDetailModal) orderDetailModal.style.display = 'none';
         activeOrderViewing = null;
+        const cfOrderModal = document.getElementById('custom-forge-order-modal');
+        if (cfOrderModal) cfOrderModal.style.display = 'none';
+        activeCfOrderViewing = null;
         const custDetailModal = document.getElementById('customer-detail-modal');
         if (custDetailModal) custDetailModal.style.display = 'none';
 
@@ -6679,6 +7022,7 @@ function setupEventListeners() {
             await Promise.allSettled([
                 refreshDashboardFromAPI(),
                 refreshOrdersFromAPI(),
+                numericId === 2 ? refreshCustomForgeOrdersFromAPI() : Promise.resolve(),
                 refreshProductsFromAPI(),
                 numericId === 1 ? refreshChipakkMaterialsFromAPI() : refreshMaterialsFromAPI(),
                 numericId === 2 ? refreshFinishingFromAPI() : Promise.resolve(),
@@ -6689,6 +7033,12 @@ function setupEventListeners() {
                 refreshCouponsFromAPI()
             ]);
         } catch (_) {}
+
+        if (numericId === 2) {
+            checkCustomForgeUnreadCount();
+        } else {
+            updateCustomForgeNavBadge(0);
+        }
     }
 
     document.getElementById('switch-store-chipakk')?.addEventListener('click', () => switchActiveStore(1));
@@ -7088,6 +7438,47 @@ function setupEventListeners() {
     document.getElementById('chipakk-hist-mat-filter')?.addEventListener('change', refreshChipakkMovements);
     document.getElementById('chipakk-hist-type-filter')?.addEventListener('change', refreshChipakkMovements);
 
+    // --- THE MARSHANS CUSTOM FORGE EVENT LISTENERS ---
+    document.querySelectorAll('#custom-forge-status-tabs .order-tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('#custom-forge-status-tabs .order-tab-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            activeCfStatus = btn.getAttribute('data-cf-status') || '';
+            const searchVal = (document.getElementById('custom-forge-search-input')?.value || '').trim();
+            refreshCustomForgeOrdersFromAPI(activeCfStatus, searchVal);
+        });
+    });
+
+    let cfSearchDebounce = null;
+    document.getElementById('custom-forge-search-input')?.addEventListener('input', (e) => {
+        clearTimeout(cfSearchDebounce);
+        cfSearchDebounce = setTimeout(() => {
+            refreshCustomForgeOrdersFromAPI(activeCfStatus, e.target.value.trim());
+        }, 250);
+    });
+
+    document.getElementById('custom-forge-reset-search-btn')?.addEventListener('click', () => {
+        const input = document.getElementById('custom-forge-search-input');
+        if (input) input.value = '';
+        refreshCustomForgeOrdersFromAPI(activeCfStatus, '');
+    });
+
+    document.getElementById('close-cf-order-modal-btn')?.addEventListener('click', () => {
+        const modal = document.getElementById('custom-forge-order-modal');
+        if (modal) modal.style.display = 'none';
+        activeCfOrderViewing = null;
+    });
+
+    document.getElementById('cf-update-status-btn')?.addEventListener('click', updateCustomForgeStatus);
+
+    window.addEventListener('click', (e) => {
+        const cfModal = document.getElementById('custom-forge-order-modal');
+        if (cfModal && e.target === cfModal) {
+            cfModal.style.display = 'none';
+            activeCfOrderViewing = null;
+        }
+    });
+
     // Single Guarded Periodic Polling (every 30s) for live sessions, team members, and audit logs
     if (!window.__adminPollingInterval) {
         window.__adminPollingInterval = setInterval(() => {
@@ -7095,6 +7486,9 @@ function setupEventListeners() {
                 refreshActiveSessionsFromAPI();
                 refreshAuditLogsFromAPI();
                 refreshTeamFromAPI();
+                if (apiClient.getActiveStoreId() === 2) {
+                    checkCustomForgeUnreadCount();
+                }
             }
         }, 30000);
     }

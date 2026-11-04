@@ -16,6 +16,7 @@ const customerRoutes = require('./routes/customer');
 const paymentRoutes = require('./routes/payments');
 const cartRoutes = require('./routes/cart');
 const custom3dRoutes = require('./routes/custom3d');
+const customForgeRoutes = require('./routes/customForge');
 const adminRoutes = require('./routes/admin');
 
 // Import Middlewares
@@ -235,6 +236,7 @@ app.use('/api/store-builder', getPublicStoreBuilderHandler);
 app.use('/api/orders', orderRoutes);
 app.use('/api/cart', cartRoutes);
 app.use('/api/custom-3d', custom3dRoutes);
+app.use('/api/custom-forge', customForgeRoutes);
 app.use('/api/customer', customerRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/admin', adminRoutes);
