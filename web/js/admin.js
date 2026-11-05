@@ -634,13 +634,16 @@ async function loadAllAdminData() {
             }
         }
 
+        const activeStoreId = apiClient.getActiveStoreId ? apiClient.getActiveStoreId() : 1;
         try {
             await Promise.allSettled([
                 refreshMaterialsFromAPI(),
                 refreshFinishingFromAPI(),
                 refreshProductionJobsFromAPI(),
                 refreshCustomRequestsFromAPI(),
-                refreshChipakkMaterialsFromAPI()
+                refreshChipakkMaterialsFromAPI(),
+                activeStoreId === 2 ? refreshCustomForgeOrdersFromAPI() : Promise.resolve(),
+                activeStoreId === 2 ? checkCustomForgeUnreadCount() : Promise.resolve()
             ]);
         } catch (_) {}
 
@@ -940,7 +943,11 @@ async function checkCustomForgeUnreadCount() {
 }
 
 async function refreshCustomForgeOrdersFromAPI(statusFilter = activeCfStatus, searchQuery = '') {
+    const tbody = document.getElementById('custom-forge-orders-tbody');
     try {
+        if (tbody && (!customForgeOrders || customForgeOrders.length === 0)) {
+            tbody.innerHTML = '<tr><td colspan="12" style="text-align: center; padding: 20px; color: #666;">Loading Custom Forge orders...</td></tr>';
+        }
         const queryParams = [];
         if (statusFilter) queryParams.push(`status=${encodeURIComponent(statusFilter)}`);
         if (searchQuery) queryParams.push(`search=${encodeURIComponent(searchQuery)}`);
@@ -972,6 +979,16 @@ async function refreshCustomForgeOrdersFromAPI(statusFilter = activeCfStatus, se
         }
     } catch (err) {
         console.error('[refreshCustomForgeOrdersFromAPI]', err.message);
+        if (tbody) {
+            tbody.innerHTML = `<tr><td colspan="12" style="text-align: center; padding: 20px; color: #dc2626;">
+                Failed to load Custom Forge orders: ${escapeHtml(err.message || 'Network error')}.
+                <button class="retro-btn" id="btn-retry-cf-orders" style="margin-left: 10px; padding: 2px 8px; font-size: 0.75rem;">RETRY</button>
+            </td></tr>`;
+            document.getElementById('btn-retry-cf-orders')?.addEventListener('click', () => {
+                refreshCustomForgeOrdersFromAPI(statusFilter, searchQuery);
+            });
+        }
+        showToast(`Failed to load Custom Forge orders: ${err.message}`, 'error');
     }
 }
 
@@ -981,6 +998,7 @@ function updateState() {
     renderDashboardMetrics();
     renderSalesChart();
     renderProductsTable();
+    renderCustomForgeTable();
     renderCategoriesTable();
     renderMaterialsTable();
     renderInventoryTable();
@@ -1253,7 +1271,71 @@ function initDashboard() {
         setupEventListeners();
         isDashboardInitialized = true;
     }
+    // Execution Order:
+    // 1. API/store initialization
+    const activeStoreId = apiClient.getActiveStoreId ? apiClient.getActiveStoreId() : 1;
+    // 2. Store switcher initialization & 3. Custom Forge sidebar visibility
+    updateStoreSwitcherUI(activeStoreId, { switchTab: false });
+    // 4. restoreInitialTab()
+    restoreInitialTab();
+    // 5. Initial dashboard state sync
     updateState();
+}
+
+const MARSHANS_ONLY_TABS = ['tab-custom-forge', 'tab-materials', 'tab-inventory', 'tab-finishing', 'tab-production-jobs', 'tab-custom-requests'];
+const CHIPAKK_ONLY_TABS = ['tab-production', 'tab-chipakk-inventory', 'tab-events', 'tab-team', 'tab-settings', 'tab-logs'];
+
+function isTabAllowedForStore(tabId, storeId) {
+    if (storeId === 1 && MARSHANS_ONLY_TABS.includes(tabId)) return false;
+    if (storeId === 2 && CHIPAKK_ONLY_TABS.includes(tabId)) return false;
+    return true;
+}
+
+function switchAdminTab(targetSecId, options = {}) {
+    if (!targetSecId) return;
+    const storeId = apiClient.getActiveStoreId ? apiClient.getActiveStoreId() : 1;
+    let finalTabId = targetSecId;
+    if (!isTabAllowedForStore(finalTabId, storeId)) {
+        finalTabId = 'tab-dashboard';
+    }
+    const targetNav = document.querySelector(`.admin-nav-item[data-tab="${finalTabId}"]`)
+        || document.querySelector(`.admin-nav-item[data-section="${finalTabId}"]`);
+    const targetSec = document.getElementById(finalTabId);
+    if (targetNav && targetSec) {
+        document.querySelectorAll('.admin-nav-item').forEach(el => el.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
+        targetNav.classList.add('active');
+        targetSec.style.display = 'block';
+        if (options.updateHash !== false) {
+            history.replaceState(null, '', `#${finalTabId}`);
+        }
+        if (options.scrollToTop !== false) {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+    }
+}
+
+function restoreInitialTab() {
+    const storeId = apiClient.getActiveStoreId ? apiClient.getActiveStoreId() : 1;
+    const hash = window.location.hash ? window.location.hash.substring(1) : '';
+    let initialTab = '';
+
+    if (hash && document.getElementById(hash) && isTabAllowedForStore(hash, storeId)) {
+        initialTab = hash;
+    } else {
+        try {
+            const saved = localStorage.getItem('chipakk_admin_active_tab');
+            if (saved && document.getElementById(saved) && isTabAllowedForStore(saved, storeId)) {
+                initialTab = saved;
+            }
+        } catch (_) {}
+    }
+
+    if (!initialTab || !document.getElementById(initialTab) || !isTabAllowedForStore(initialTab, storeId)) {
+        initialTab = 'tab-dashboard';
+    }
+
+    switchAdminTab(initialTab, { updateHash: true, scrollToTop: false });
 }
 
 function populateCategoryDropdowns() {
@@ -1304,50 +1386,19 @@ function populateCategoryDropdowns() {
 
 function setupNavigation() {
     const navItems = document.querySelectorAll('.admin-nav-item');
-    const sections = document.querySelectorAll('.tab-content, .admin-section');
 
     navItems.forEach(item => {
         item.addEventListener('click', (e) => {
             e.preventDefault();
             const targetSecId = item.getAttribute('data-tab') || item.getAttribute('data-section');
             if (!targetSecId) return;
-
-            navItems.forEach(i => i.classList.remove('active'));
-            item.classList.add('active');
-
-            sections.forEach(sec => {
-                sec.style.display = sec.id === targetSecId ? 'block' : 'none';
-            });
-
-            // Close mobile sidebar drawer if open
-            const sidebar = document.querySelector('.admin-sidebar');
-            const backdrop = document.getElementById('admin-sidebar-backdrop');
-            if (sidebar && sidebar.classList.contains('open')) {
-                sidebar.classList.remove('open');
-                if (backdrop) backdrop.style.display = 'none';
-            }
-
-            if (targetSecId === 'tab-logs' || targetSecId === 'tab-audit') {
-                refreshAuditLogsFromAPI();
-                refreshActiveSessionsFromAPI();
-            } else if (targetSecId === 'tab-team') {
-                refreshTeamFromAPI();
-                refreshActiveSessionsFromAPI();
-            } else if (targetSecId === 'tab-dashboard') {
-                renderSalesChart();
-                refreshActiveSessionsFromAPI();
-            } else if (targetSecId === 'tab-homepage' || targetSecId === 'tab-store-builder') {
-                renderStoreBuilder();
-            } else if (targetSecId === 'tab-settings') {
-                refreshAuditLogsFromAPI();
-            } else if (targetSecId === 'tab-chipakk-inventory') {
-                refreshChipakkMaterialsFromAPI();
-            } else if (targetSecId === 'tab-custom-forge') {
-                refreshCustomForgeOrdersFromAPI();
-            }
-
-            window.scrollTo({ top: 0, behavior: 'smooth' });
+            switchAdminTab(targetSecId);
         });
+    });
+
+    // Cross-tab direct navigation from callouts (e.g. from Regular Orders terminal to Custom Forge)
+    document.getElementById('btn-goto-custom-forge')?.addEventListener('click', () => {
+        switchAdminTab('tab-custom-forge');
     });
 }
 
@@ -6843,7 +6894,11 @@ function setupEventListeners() {
     // MULTI-STORE CONTEXT SWITCHER HANDLERS
     // =========================================================================
 
-    function updateStoreSwitcherUI(storeId) {
+    function updateStoreSwitcherUI(storeId, options = {}) {
+        const switchTab = options.switchTab !== false;
+        const currentActiveNav = document.querySelector('.admin-nav-item.active');
+        const currentActiveTabId = currentActiveNav ? (currentActiveNav.getAttribute('data-tab') || currentActiveNav.getAttribute('data-section')) : null;
+
         const btnChipakk = document.getElementById('switch-store-chipakk');
         const btnMarshans = document.getElementById('switch-store-marshans');
         const badge = document.getElementById('active-store-badge');
@@ -6906,9 +6961,7 @@ function setupEventListeners() {
             // Show THE MARSHANS active V1 modules (Materials)
             document.querySelectorAll('.store-module-marshans').forEach(el => {
                 if (el.classList.contains('tab-content')) {
-                    const activeNav = document.querySelector('.admin-nav-item.active');
-                    const activeTabId = activeNav ? (activeNav.getAttribute('data-tab') || activeNav.getAttribute('data-section')) : null;
-                    el.style.display = (el.id === activeTabId) ? 'block' : 'none';
+                    // Handled by tab switcher below
                 } else if (el.tagName === 'LI') {
                     el.style.display = 'list-item';
                 } else {
@@ -6916,11 +6969,21 @@ function setupEventListeners() {
                 }
             });
 
-            // If user was viewing a tab that is now hidden, auto-switch to tab-dashboard
-            const currentTabSec = document.querySelector('.tab-content:not([style*="display: none"])');
-            if (currentTabSec && (currentTabSec.classList.contains('store-module-chipakk') || currentTabSec.classList.contains('store-module-marshans-future'))) {
-                const navDashboard = document.querySelector('.admin-nav-item[data-tab="tab-dashboard"]');
-                if (navDashboard) navDashboard.click();
+            // Custom Forge order management module visibility for THE MARSHANS
+            const cfNavLi = document.getElementById('custom-forge-nav-item')?.closest('li');
+            if (cfNavLi) cfNavLi.style.display = 'list-item';
+
+            // Callout banner in regular orders terminal
+            const cfCallout = document.getElementById('marshans-cf-callout');
+            if (cfCallout) cfCallout.style.display = 'block';
+
+            // If user was viewing a CHIPAKK-only tab, cleanly switch to tab-dashboard
+            if (switchTab) {
+                if (currentActiveTabId && CHIPAKK_ONLY_TABS.includes(currentActiveTabId)) {
+                    switchAdminTab('tab-dashboard');
+                } else if (currentActiveTabId) {
+                    switchAdminTab(currentActiveTabId, { updateHash: false, scrollToTop: false });
+                }
             }
 
         } else {
@@ -6957,19 +7020,6 @@ function setupEventListeners() {
             const navShippingLabel = document.getElementById('nav-shipping-label');
             if (navShippingLabel) navShippingLabel.textContent = '🚚 Shipping Management';
 
-            // Show CHIPAKK modules
-            document.querySelectorAll('.store-module-chipakk').forEach(el => {
-                if (el.classList.contains('tab-content')) {
-                    const activeNav = document.querySelector('.admin-nav-item.active');
-                    const activeTabId = activeNav ? (activeNav.getAttribute('data-tab') || activeNav.getAttribute('data-section')) : null;
-                    el.style.display = (el.id === activeTabId) ? 'block' : 'none';
-                } else if (el.tagName === 'LI') {
-                    el.style.display = 'list-item';
-                } else {
-                    el.style.display = '';
-                }
-            });
-
             // Hide MARSHANS modules
             document.querySelectorAll('.store-module-marshans').forEach(el => {
                 el.style.display = 'none';
@@ -6978,11 +7028,28 @@ function setupEventListeners() {
                 el.style.display = 'none';
             });
 
-            // If user was viewing a MARSHANS-only tab, auto-switch to tab-dashboard
-            const currentTabSec = document.querySelector('.tab-content:not([style*="display: none"])');
-            if (currentTabSec && (currentTabSec.classList.contains('store-module-marshans') || currentTabSec.classList.contains('store-module-marshans-future'))) {
-                const navDashboard = document.querySelector('.admin-nav-item[data-tab="tab-dashboard"]');
-                if (navDashboard) navDashboard.click();
+            // Callout banner in regular orders terminal
+            const cfCallout = document.getElementById('marshans-cf-callout');
+            if (cfCallout) cfCallout.style.display = 'none';
+
+            // Show CHIPAKK modules
+            document.querySelectorAll('.store-module-chipakk').forEach(el => {
+                if (el.classList.contains('tab-content')) {
+                    // Handled by tab switcher below
+                } else if (el.tagName === 'LI') {
+                    el.style.display = 'list-item';
+                } else {
+                    el.style.display = '';
+                }
+            });
+
+            // If user was viewing a MARSHANS-only tab, cleanly switch to tab-dashboard
+            if (switchTab) {
+                if (currentActiveTabId && MARSHANS_ONLY_TABS.includes(currentActiveTabId)) {
+                    switchAdminTab('tab-dashboard');
+                } else if (currentActiveTabId) {
+                    switchAdminTab(currentActiveTabId, { updateHash: false, scrollToTop: false });
+                }
             }
         }
         updateLumoProductSectionVisibility();
@@ -6991,7 +7058,7 @@ function setupEventListeners() {
     async function switchActiveStore(targetStoreId) {
         const numericId = parseInt(targetStoreId, 10) === 2 ? 2 : 1;
         apiClient.setActiveStoreId(numericId);
-        updateStoreSwitcherUI(numericId);
+        updateStoreSwitcherUI(numericId, { switchTab: true });
 
         // Close every open edit form / detail modal and clear its editing-id BEFORE loading the new store's data.
         // Without this, a form opened against the OLD store (e.g. editing product #42 on CHIPAKK) stayed open and
@@ -7037,6 +7104,7 @@ function setupEventListeners() {
         // Clear in-memory data to prevent stale UI flash
         products = [];
         categories = [];
+        customForgeOrders = [];
         heroConfig = null;
         announcementBarConfig = null;
         heroGroups = [];
@@ -7045,6 +7113,7 @@ function setupEventListeners() {
         delete siteSettings.announcement_active;
         delete siteSettings.announcement_text;
         renderProductsTable();
+        renderCustomForgeTable();
         populateCategoryDropdowns();
 
         // Re-load settings and data for the newly active store
@@ -7079,9 +7148,7 @@ function setupEventListeners() {
     document.getElementById('switch-store-chipakk')?.addEventListener('click', () => switchActiveStore(1));
     document.getElementById('switch-store-marshans')?.addEventListener('click', () => switchActiveStore(2));
 
-    // Initialize switcher UI on startup
-    const initialStoreId = apiClient.getActiveStoreId ? apiClient.getActiveStoreId() : 1;
-    updateStoreSwitcherUI(initialStoreId);
+
 
     // Category Image Live Preview and Upload Listener
     document.getElementById('cat-image')?.addEventListener('input', (e) => {
