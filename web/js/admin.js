@@ -14,6 +14,8 @@ const passwordInput = document.getElementById('admin-password');
 // API Base URL
 const API_BASE_URL = apiClient.getBaseUrl();
 
+const ADMIN_IMAGE_PLACEHOLDER = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='10' y='10' width='44' height='44' rx='9' fill='%23fff' stroke='%23111' stroke-width='3'/%3E%3Cpath d='M54 36 44 54 36 44z' fill='%23ffd400' stroke='%23111' stroke-width='3' stroke-linejoin='round'/%3E%3Cpath d='M33 20 25 34h7l-2 10 9-15h-7z' fill='%23111'/%3E%3C/svg%3E";
+
 function resolveAdminImageUrl(url) {
     if (!url) return '';
     let target = url;
@@ -22,10 +24,19 @@ function resolveAdminImageUrl(url) {
     }
     const cleanUrl = String(target).trim();
     if (!cleanUrl || cleanUrl === '[object Object]') return '';
-    if (cleanUrl.startsWith('http://') || cleanUrl.startsWith('https://') || cleanUrl.startsWith('data:') || cleanUrl.startsWith('blob:')) {
+    if (cleanUrl.startsWith('data:') || cleanUrl.startsWith('blob:')) {
         return cleanUrl;
     }
     const apiHost = apiClient.baseUrl ? apiClient.baseUrl.replace(/\/api\/?$/, '') : 'https://api.chipakk.shop';
+    if (cleanUrl.startsWith('http://') || cleanUrl.startsWith('https://')) {
+        try {
+            const u = new URL(cleanUrl);
+            if (/^\/uploads\//i.test(u.pathname) && /^(www\.)?(chipakk\.shop|themarshans\.shop|localhost|127\.0\.0\.1)$/i.test(u.hostname)) {
+                return `${apiHost}${u.pathname}${u.search || ''}`;
+            }
+        } catch (_) {}
+        return cleanUrl;
+    }
     return cleanUrl.startsWith('/') ? `${apiHost}${cleanUrl}` : `${apiHost}/${cleanUrl}`;
 }
 
@@ -268,7 +279,7 @@ function normalizeProduct(p) {
         rating: p.average_rating || 4.7,
         review_count: p.review_count || 0,
         rating_tier: p.rating_tier || 'RARE',
-        images: imagesList.length > 0 ? imagesList : ["https://img.icons8.com/color/150/000000/sticker.png"],
+        images: imagesList.length > 0 ? imagesList : [ADMIN_IMAGE_PLACEHOLDER],
         gallery_images: explicitGalleryImages,
         tags: Array.isArray(p.tags) ? p.tags : [],
         scheduled_drop_time: p.scheduled_drop_time ? new Date(p.scheduled_drop_time).toISOString().slice(0, 16) : '',
@@ -335,7 +346,7 @@ function normalizeOrder(o) {
             unit_price_rupees: unitRupees,
             total: itemTotalRupees,
             total_price_rupees: itemTotalRupees,
-            img: item.img || "https://img.icons8.com/color/150/000000/sticker.png",
+            img: item.img || ADMIN_IMAGE_PLACEHOLDER,
             production_status: BACKEND_TO_UI_PROD_STATUS[item.production_status] || item.production_status || 'Ready to Print'
         };
     });
@@ -502,6 +513,27 @@ async function loadAllAdminData() {
             apiClient.get('/admin/active-sessions'),
             apiClient.get('/admin/dashboard')
         ]);
+
+        // Security Guard: Check if protected admin endpoints rejected with 401/403
+        const authRejection = [dashRes, ordRes, custRes, prodQueueRes].find(
+            r => r.status === 'rejected' && (r.reason?.status === 401 || r.reason?.status === 403)
+        );
+        if (authRejection) {
+            console.warn("[loadAllAdminData] Protected admin endpoint rejected:", authRejection.reason?.status);
+            stopInactivityTracker();
+            clearAdminSession();
+            if (adminWorkspace) adminWorkspace.style.display = 'none';
+            if (loginSection) loginSection.style.display = 'block';
+            if (authRejection.reason?.status === 403) {
+                await signOut(auth).catch(() => {});
+            }
+            const msg = authRejection.reason?.status === 403
+                ? "Access Denied: Administrative privileges required."
+                : "Admin session expired or invalid. Please log in again.";
+            if (loginError) loginError.textContent = msg;
+            showToast(msg, "error");
+            return;
+        }
 
         if (catRes.status === 'fulfilled' && catRes.value) {
             const rawCats = catRes.value.data?.categories || catRes.value.categories || (Array.isArray(catRes.value.data) ? catRes.value.data : []) || (Array.isArray(catRes.value) ? catRes.value : []);
@@ -1049,19 +1081,53 @@ function saveState() {
 
 // =============================================================================
 /**
- * Get or create persistent client-side admin session ID for multi-device/session management
+ * Persistent client-side admin session ID management for multi-device/session control
  */
-function getOrCreateAdminSessionId() {
+const STORAGE_SESSION_ID_KEY = 'chipakk_admin_session_id';
+
+function getAdminSessionId() {
     try {
-        let sid = localStorage.getItem('chipakk_admin_session_id');
-        if (!sid) {
-            sid = `sess_${Math.random().toString(36).substring(2, 11)}_${Date.now()}`;
-            localStorage.setItem('chipakk_admin_session_id', sid);
-        }
-        return sid;
+        return localStorage.getItem(STORAGE_SESSION_ID_KEY) || null;
     } catch (_) {
-        return `sess_${Date.now()}`;
+        return null;
     }
+}
+
+function setAdminSessionId(id) {
+    try {
+        if (id) {
+            localStorage.setItem(STORAGE_SESSION_ID_KEY, id);
+        }
+    } catch (_) {}
+}
+
+function createNewAdminSessionId() {
+    let randHex = '';
+    if (typeof window !== 'undefined' && window.crypto && window.crypto.getRandomValues) {
+        const bytes = new Uint8Array(16);
+        window.crypto.getRandomValues(bytes);
+        randHex = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+    } else {
+        randHex = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+    }
+    const sid = `sess_${randHex}_${Date.now()}`;
+    setAdminSessionId(sid);
+    return sid;
+}
+
+function clearAdminSession() {
+    try {
+        localStorage.removeItem(STORAGE_SESSION_ID_KEY);
+        localStorage.removeItem(STORAGE_ACTIVITY_KEY);
+    } catch (_) {}
+}
+
+function getOrCreateAdminSessionId() {
+    let sid = getAdminSessionId();
+    if (!sid) {
+        sid = createNewAdminSessionId();
+    }
+    return sid;
 }
 
 // INACTIVITY AUTO-LOGOUT TRACKER (60 MINUTES PERSISTED)
@@ -1102,19 +1168,20 @@ async function checkInactivityState() {
 
     if (elapsed >= INACTIVITY_TIMEOUT_MS) {
         console.warn(`[Inactivity Tracker] Session expired after ${Math.round(elapsed / 1000)}s of inactivity.`);
-        const sessionId = getOrCreateAdminSessionId();
+        const sessionId = getAdminSessionId();
         stopInactivityTracker();
-        localStorage.removeItem(STORAGE_ACTIVITY_KEY);
-        try {
-            await apiClient.post('/admin/auth/logout-event', { session_id: sessionId, reason: 'inactivity_timeout' });
-        } catch (e) {}
+        clearAdminSession();
+        if (sessionId) {
+            try {
+                await apiClient.post('/admin/auth/logout-event', { session_id: sessionId, reason: 'inactivity_timeout' });
+            } catch (e) {}
+        }
         try {
             await signOut(auth);
-        } catch (err) {
-            console.error("[Inactivity Logout Error]", err);
-        }
+        } catch (_) {}
         showToast("SESSION EXPIRED (1-HOUR INACTIVITY) — PLEASE LOG IN AGAIN", "error");
-        if (loginSection) loginSection.style.display = 'flex';
+        if (loginError) loginError.textContent = "Admin session expired due to inactivity. Please log in again.";
+        if (loginSection) loginSection.style.display = 'block';
         if (adminWorkspace) adminWorkspace.style.display = 'none';
     }
 }
@@ -1174,20 +1241,6 @@ window.__simulateInactivityTimeout__ = function() {
     checkInactivityState();
 };
 
-// Send beacon on tab close / reload
-window.addEventListener('beforeunload', () => {
-    if (auth && auth.currentUser) {
-        try {
-            const payload = JSON.stringify({
-                uid: auth.currentUser.uid,
-                email: auth.currentUser.email,
-                reason: 'browser_unload'
-            });
-            navigator.sendBeacon('/api/admin/auth/logout-event', new Blob([payload], { type: 'application/json' }));
-        } catch (e) {}
-    }
-});
-
 // =============================================================================
 // INITIALIZER & NAVIGATION CONTROLLER
 // =============================================================================
@@ -1198,35 +1251,86 @@ document.addEventListener('DOMContentLoaded', () => {
     // Auth Listener
     onAuthStateChanged(auth, async (user) => {
         if (user) {
-            // Immediate check: Has more than 1 hour passed since last recorded activity?
-            const stored = localStorage.getItem(STORAGE_ACTIVITY_KEY);
-            if (stored) {
-                const elapsed = Date.now() - parseInt(stored, 10);
+            const existingSessionId = getAdminSessionId();
+
+            // If there is no existing admin session ID in localStorage, this is a customer or
+            // an admin who hasn't completed administrative login on this terminal.
+            if (!existingSessionId) {
+                console.log("[Auth State] User detected in Firebase but no active admin session:", user.email);
+                stopInactivityTracker();
+                if (adminWorkspace) adminWorkspace.style.display = 'none';
+                if (loginSection) loginSection.style.display = 'block';
+                if (emailInput && !emailInput.value) emailInput.value = user.email || '';
+                return;
+            }
+
+            // An admin session token exists: check offline inactivity first
+            const storedActivity = localStorage.getItem(STORAGE_ACTIVITY_KEY);
+            if (storedActivity) {
+                const elapsed = Date.now() - parseInt(storedActivity, 10);
                 if (elapsed >= INACTIVITY_TIMEOUT_MS) {
-                    console.warn("[Auth State] Session expired during offline period (>1 hour).");
-                    localStorage.removeItem(STORAGE_ACTIVITY_KEY);
-                    await signOut(auth);
-                    showToast("SESSION EXPIRED (1-HOUR INACTIVITY) — PLEASE LOG IN AGAIN", "error");
-                    if (loginSection) loginSection.style.display = 'flex';
+                    console.warn("[Auth State] Admin session expired during offline period (>1 hour).");
+                    clearAdminSession();
+                    try {
+                        await apiClient.post('/admin/auth/logout-event', { session_id: existingSessionId, reason: 'inactivity_timeout' });
+                    } catch (_) {}
+                    stopInactivityTracker();
+                    try {
+                        await signOut(auth);
+                    } catch (_) {}
+                    if (loginSection) loginSection.style.display = 'block';
                     if (adminWorkspace) adminWorkspace.style.display = 'none';
+                    if (loginError) loginError.textContent = "Admin session expired due to inactivity. Please log in again.";
+                    showToast("SESSION EXPIRED (1-HOUR INACTIVITY) — PLEASE LOG IN AGAIN", "error");
                     return;
                 }
             }
 
-            const sessionId = getOrCreateAdminSessionId();
-            console.log("[Auth State] User signed in:", user.email, "Session ID:", sessionId);
-            if (loginSection) loginSection.style.display = 'none';
-            if (adminWorkspace) adminWorkspace.style.display = 'flex';
-            startInactivityTracker();
-            initDashboard();
+            // Server-side verification of administrator authorization and active session
             try {
-                await apiClient.post('/admin/auth/login-event', { session_id: sessionId });
-            } catch (_) {}
-            await loadAllAdminData();
+                const verifyRes = await apiClient.get('/admin/auth/verify');
+                if (!verifyRes || !verifyRes.success) {
+                    throw new Error("Admin verification failed.");
+                }
+
+                console.log("[Auth State] Admin session verified:", user.email, "Session ID:", existingSessionId);
+                if (loginError) loginError.textContent = '';
+                if (loginSection) loginSection.style.display = 'none';
+                if (adminWorkspace) adminWorkspace.style.display = 'flex';
+                startInactivityTracker();
+                initDashboard();
+                await loadAllAdminData();
+            } catch (err) {
+                console.warn("[Auth State] Admin verification rejected:", err.message, "status:", err.status);
+                stopInactivityTracker();
+                if (adminWorkspace) adminWorkspace.style.display = 'none';
+                if (loginSection) loginSection.style.display = 'block';
+
+                if (err.status === 403) {
+                    // Definitively rejected as non-admin: clear custom session and sign out Firebase
+                    clearAdminSession();
+                    await signOut(auth).catch(() => {});
+                    const msg = `Access Denied: Account (${user.email}) does not have administrative privileges.`;
+                    if (loginError) loginError.textContent = msg;
+                    showToast(msg, "error");
+                } else if (err.status === 401) {
+                    // Session expired or invalid
+                    clearAdminSession();
+                    const msg = "Admin session invalid or expired. Please authenticate as administrator.";
+                    if (loginError) loginError.textContent = msg;
+                    showToast(msg, "warning");
+                } else {
+                    // Transient network or server failure (e.g. 5xx, offline, timeout)
+                    // Do not wipe admin session or sign out Firebase for temporary connectivity issues
+                    const msg = "Temporary verification failure: Unable to reach verification server. Please check your network and retry.";
+                    if (loginError) loginError.textContent = msg;
+                    showToast(msg, "warning");
+                }
+            }
         } else {
             console.log("[Auth State] No active user.");
             stopInactivityTracker();
-            localStorage.removeItem(STORAGE_ACTIVITY_KEY);
+            clearAdminSession();
             if (loginSection) loginSection.style.display = 'block';
             if (adminWorkspace) adminWorkspace.style.display = 'none';
         }
@@ -1242,16 +1346,80 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             loginBtn.disabled = true;
             loginBtn.textContent = "VERIFYING...";
+            if (loginError) loginError.textContent = '';
+
             try {
+                // 1. Authenticate with Firebase credentials
                 await signInWithEmailAndPassword(auth, email, password);
+
+                // 2. Generate a fresh, unique session ID or reuse pending session ID from retry
+                const sessionId = getAdminSessionId() || createNewAdminSessionId();
+
+                // 3. Register the admin session on the backend (enforces requireAdmin role check)
+                const loginRes = await apiClient.post('/admin/auth/login-event', { session_id: sessionId });
+                if (!loginRes || !loginRes.success || (loginRes.data && !loginRes.data.logged)) {
+                    throw new Error("Admin session registration failed.");
+                }
+
+                // 4. Read & persist the server-returned session ID (handles server-assigned replacement on collision)
+                const confirmedSessionId = loginRes.data?.session_id || loginRes.session_id || sessionId;
+                setAdminSessionId(confirmedSessionId);
+
+                // 5. Verify admin status & session validity
+                const verifyRes = await apiClient.get('/admin/auth/verify');
+                if (!verifyRes || !verifyRes.success) {
+                    throw new Error("Admin session validation failed.");
+                }
+
                 recordAdminActivity(true);
                 showToast("Admin authenticated successfully!");
+
+                // 5. Reveal workspace and initialize
+                if (loginSection) loginSection.style.display = 'none';
+                if (adminWorkspace) adminWorkspace.style.display = 'flex';
+                startInactivityTracker();
+                initDashboard();
+                await loadAllAdminData();
             } catch (err) {
                 console.error("[Login Error]", err);
-                showToast(`Authentication failed: ${err.message}`, "error");
+                stopInactivityTracker();
+                if (adminWorkspace) adminWorkspace.style.display = 'none';
+                if (loginSection) loginSection.style.display = 'block';
+
+                let errorMsg = "Authentication failed.";
+                if (err.status === 403) {
+                    // Definitively rejected as non-admin: clear custom session and sign out Firebase
+                    clearAdminSession();
+                    await signOut(auth).catch(() => {});
+                    errorMsg = "Access Denied: This account does not have administrative privileges.";
+                    if (loginError) loginError.textContent = errorMsg;
+                    showToast(errorMsg, "error");
+                } else if (err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password' || err.code === 'auth/user-not-found') {
+                    clearAdminSession();
+                    errorMsg = "Invalid email or password.";
+                    if (loginError) loginError.textContent = errorMsg;
+                    showToast(errorMsg, "error");
+                } else if (err.status === 401) {
+                    clearAdminSession();
+                    errorMsg = "Admin session invalid or expired. Please log in again.";
+                    if (loginError) loginError.textContent = errorMsg;
+                    showToast(errorMsg, "warning");
+                } else if ((err.status && err.status >= 500) || (!err.status && !err.code)) {
+                    // Transient network or server failure during verification/login-event
+                    // Preserve the pending session ID in localStorage so the user can retry verification
+                    // without wiping the session or creating duplicate active sessions on the server.
+                    errorMsg = "Temporary verification failure: Server or network error. Please check your connection and retry.";
+                    if (loginError) loginError.textContent = errorMsg;
+                    showToast(errorMsg, "warning");
+                } else {
+                    clearAdminSession();
+                    errorMsg = err.message || "Authentication failed.";
+                    if (loginError) loginError.textContent = errorMsg;
+                    showToast(errorMsg, "error");
+                }
             } finally {
                 loginBtn.disabled = false;
-                loginBtn.textContent = "ENTER WORKSPACE →";
+                loginBtn.textContent = "ACCESS TERMINAL";
             }
         });
     }
@@ -1260,14 +1428,15 @@ document.addEventListener('DOMContentLoaded', () => {
     if (logoutBtn) {
         logoutBtn.addEventListener('click', async () => {
             try {
-                const sessionId = localStorage.getItem('chipakk_admin_session_id');
+                const sessionId = getAdminSessionId();
                 stopInactivityTracker();
-                localStorage.removeItem(STORAGE_ACTIVITY_KEY);
-                localStorage.removeItem('chipakk_admin_session_id');
-                await apiClient.post('/admin/auth/logout-event', { session_id: sessionId, reason: 'user_action' }).catch(() => {});
+                clearAdminSession();
+                if (sessionId) {
+                    await apiClient.post('/admin/auth/logout-event', { session_id: sessionId, reason: 'user_action' }).catch(() => {});
+                }
                 await signOut(auth);
                 showToast("Signed out of Admin Workspace.");
-                if (loginSection) loginSection.style.display = 'flex';
+                if (loginSection) loginSection.style.display = 'block';
                 if (adminWorkspace) adminWorkspace.style.display = 'none';
             } catch (err) {
                 console.error("[Sign Out Error]", err);
@@ -1309,36 +1478,78 @@ function switchAdminTab(targetSecId, options = {}) {
     if (!isTabAllowedForStore(finalTabId, storeId)) {
         finalTabId = 'tab-dashboard';
     }
-    const targetNav = document.querySelector(`.admin-nav-item[data-tab="${finalTabId}"]`)
-        || document.querySelector(`.admin-nav-item[data-section="${finalTabId}"]`);
-    const targetSec = document.getElementById(finalTabId);
-    if (targetNav && targetSec) {
-        document.querySelectorAll('.admin-nav-item').forEach(el => el.classList.remove('active'));
-        document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
-        targetNav.classList.add('active');
-        targetSec.style.display = 'block';
-        if (options.updateHash !== false) {
-            history.replaceState(null, '', `#${finalTabId}`);
+
+    const navItems = document.querySelectorAll('.admin-nav-item');
+    const sections = document.querySelectorAll('.tab-content, .admin-section');
+
+    navItems.forEach(item => {
+        const itemTabId = item.getAttribute('data-tab') || item.getAttribute('data-section');
+        if (itemTabId === finalTabId) {
+            item.classList.add('active');
+        } else {
+            item.classList.remove('active');
         }
-        if (options.scrollToTop !== false) {
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-        }
+    });
+
+    sections.forEach(sec => {
+        sec.style.display = sec.id === finalTabId ? 'block' : 'none';
+    });
+
+    try {
+        localStorage.setItem('admin_active_tab', finalTabId);
+    } catch (_) {}
+
+    if (options.updateHash !== false) {
+        try {
+            if (window.location.hash !== `#${finalTabId}`) {
+                history.replaceState(null, '', `#${finalTabId}`);
+            }
+        } catch (_) {}
+    }
+
+    // Close mobile sidebar drawer if open
+    const sidebar = document.querySelector('.admin-sidebar');
+    const backdrop = document.getElementById('admin-sidebar-backdrop');
+    if (sidebar && sidebar.classList.contains('open')) {
+        sidebar.classList.remove('open');
+        if (backdrop) backdrop.style.display = 'none';
+    }
+
+    if (finalTabId === 'tab-logs' || finalTabId === 'tab-audit') {
+        refreshAuditLogsFromAPI();
+        refreshActiveSessionsFromAPI();
+    } else if (finalTabId === 'tab-team') {
+        refreshTeamFromAPI();
+        refreshActiveSessionsFromAPI();
+    } else if (finalTabId === 'tab-dashboard') {
+        renderSalesChart();
+        refreshActiveSessionsFromAPI();
+    } else if (finalTabId === 'tab-homepage' || finalTabId === 'tab-store-builder') {
+        renderStoreBuilder();
+    } else if (finalTabId === 'tab-settings') {
+        refreshAuditLogsFromAPI();
+    } else if (finalTabId === 'tab-chipakk-inventory') {
+        refreshChipakkMaterialsFromAPI();
+    } else if (finalTabId === 'tab-custom-forge') {
+        refreshCustomForgeOrdersFromAPI();
+    } else if (finalTabId === 'tab-orders') {
+        refreshOrdersFromAPI();
+    }
+
+    if (options.scrollToTop !== false) {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 }
 
 function restoreInitialTab() {
     const storeId = apiClient.getActiveStoreId ? apiClient.getActiveStoreId() : 1;
-    const hash = window.location.hash ? window.location.hash.substring(1) : '';
-    let initialTab = '';
-
-    if (hash && document.getElementById(hash) && isTabAllowedForStore(hash, storeId)) {
+    let initialTab = null;
+    const hash = window.location.hash.replace(/^#/, '');
+    if (hash && document.getElementById(hash)) {
         initialTab = hash;
     } else {
         try {
-            const saved = localStorage.getItem('chipakk_admin_active_tab');
-            if (saved && document.getElementById(saved) && isTabAllowedForStore(saved, storeId)) {
-                initialTab = saved;
-            }
+            initialTab = localStorage.getItem('admin_active_tab');
         } catch (_) {}
     }
 
@@ -1347,52 +1558,6 @@ function restoreInitialTab() {
     }
 
     switchAdminTab(initialTab, { updateHash: true, scrollToTop: false });
-}
-
-function populateCategoryDropdowns() {
-    const prodCatSelect = document.getElementById('prod-category');
-    const filterCatSelect = document.getElementById('prod-filter-category');
-    const evtCatSelect = document.getElementById('evt-filter-cat');
-
-    const currentProdVal = prodCatSelect?.value;
-    const currentFilterVal = filterCatSelect?.value;
-    const currentEvtVal = evtCatSelect?.value;
-
-    const catOptions = categories.map(c => `<option value="${escapeHtml(c.name)}" data-id="${c.id}" data-slug="${escapeHtml(c.slug)}">${escapeHtml(c.name)}</option>`).join('');
-
-    if (prodCatSelect) {
-        prodCatSelect.innerHTML = catOptions;
-        if (currentProdVal) {
-            const matchedOpt = Array.from(prodCatSelect.options).find(o =>
-                o.value.toLowerCase() === currentProdVal.toLowerCase() ||
-                o.getAttribute('data-slug')?.toLowerCase() === currentProdVal.toLowerCase() ||
-                o.getAttribute('data-id') === String(currentProdVal)
-            );
-            if (matchedOpt) prodCatSelect.value = matchedOpt.value;
-        }
-    }
-    if (filterCatSelect) {
-        filterCatSelect.innerHTML = `<option value="">All Categories</option>${catOptions}`;
-        if (currentFilterVal) {
-            const matchedOpt = Array.from(filterCatSelect.options).find(o =>
-                o.value.toLowerCase() === currentFilterVal.toLowerCase() ||
-                o.getAttribute('data-slug')?.toLowerCase() === currentFilterVal.toLowerCase() ||
-                o.getAttribute('data-id') === String(currentFilterVal)
-            );
-            if (matchedOpt) filterCatSelect.value = matchedOpt.value;
-        }
-    }
-    if (evtCatSelect) {
-        evtCatSelect.innerHTML = `<option value="">All Categories</option>${catOptions}`;
-        if (currentEvtVal) {
-            const matchedOpt = Array.from(evtCatSelect.options).find(o =>
-                o.value.toLowerCase() === currentEvtVal.toLowerCase() ||
-                o.getAttribute('data-slug')?.toLowerCase() === currentEvtVal.toLowerCase() ||
-                o.getAttribute('data-id') === String(currentEvtVal)
-            );
-            if (matchedOpt) evtCatSelect.value = matchedOpt.value;
-        }
-    }
 }
 
 function setupNavigation() {
@@ -1407,8 +1572,15 @@ function setupNavigation() {
         });
     });
 
-    // Cross-tab direct navigation from callouts (e.g. from Regular Orders terminal to Custom Forge)
-    document.getElementById('btn-goto-custom-forge')?.addEventListener('click', () => {
+    window.addEventListener('hashchange', () => {
+        const hashTab = window.location.hash.replace(/^#/, '');
+        if (hashTab && document.getElementById(hashTab)) {
+            switchAdminTab(hashTab, { updateHash: false });
+        }
+    });
+
+    document.getElementById('btn-goto-custom-forge')?.addEventListener('click', (e) => {
+        e.preventDefault();
         switchAdminTab('tab-custom-forge');
     });
 }
@@ -1516,10 +1688,10 @@ function renderDashboardWidgets() {
             ? dashboardMetrics.topProducts
             : products.slice(0, 5);
         topProductsBody.innerHTML = topProds.map(p => {
-            const img = (Array.isArray(p.images) && p.images[0]) || p.image_url || 'https://img.icons8.com/color/150/000000/sticker.png';
+            const img = resolveAdminImageUrl((Array.isArray(p.images) && p.images[0]) || p.image_url) || ADMIN_IMAGE_PLACEHOLDER;
             return `
             <tr>
-                <td><img src="${img}" style="width:30px; height:30px; object-fit:cover;"></td>
+                <td><img src="${img}" onerror="if(!this.dataset.failed){this.dataset.failed='1';this.onerror=null;this.src='${ADMIN_IMAGE_PLACEHOLDER}';}" style="width:30px; height:30px; object-fit:cover;"></td>
                 <td><strong>${p.title || p.name}</strong></td>
                 <td>₹${Number(p.price || 0).toLocaleString('en-IN')}</td>
                 <td>${formatRatingDisplay(p.rating || 5)}</td>
@@ -1841,7 +2013,7 @@ function renderProductsTable() {
         return matchesSearch && matchesCat && matchesStatus;
     });
 
-    const fallbackImg = 'https://img.icons8.com/color/150/000000/sticker.png';
+    const fallbackImg = ADMIN_IMAGE_PLACEHOLDER;
 
     tbody.innerHTML = filtered.map(p => {
         const dropInfo = getProductDropStatus(p);
@@ -1855,7 +2027,7 @@ function renderProductsTable() {
             <tr>
                 <td>
                     <img src="${resolvedImg || fallbackImg}"
-                         onerror="this.onerror=null; this.src='${fallbackImg}';"
+                         onerror="if(!this.dataset.failed){this.dataset.failed='1';this.onerror=null;this.src='${fallbackImg}';}"
                          alt="${escapeHtml(p.title)}"
                          style="width:45px; height:45px; object-fit:cover; border:1px solid #000; border-radius:2px; display:block;">
                 </td>
@@ -2107,7 +2279,7 @@ function renderProdImageGallery() {
     const gallery = document.getElementById('prod-images-gallery');
     if (!gallery) return;
 
-    const fallbackImg = 'https://img.icons8.com/color/150/000000/sticker.png';
+    const fallbackImg = ADMIN_IMAGE_PLACEHOLDER;
 
     gallery.innerHTML = tempProdImages.map((imgItem, idx) => {
         const url = typeof imgItem === 'object' ? (imgItem.url || '') : String(imgItem || '');
@@ -2117,7 +2289,7 @@ function renderProdImageGallery() {
         return `
         <div class="img-thumb-card">
             ${isPrimary ? '<span class="primary-tag">PRIMARY</span>' : ''}
-            <img src="${resolved || fallbackImg}" onerror="this.onerror=null; this.src='${fallbackImg}';" alt="Product image">
+            <img src="${resolved || fallbackImg}" onerror="if(!this.dataset.failed){this.dataset.failed='1';this.onerror=null;this.src='${fallbackImg}';}" alt="Product image">
             <div class="img-thumb-actions">
                 ${!isPrimary ? `<button type="button" class="img-btn-sm set-primary-img-btn" data-idx="${idx}">PRIMARY</button>` : ''}
                 <button type="button" class="img-btn-sm rem-img-btn" data-idx="${idx}" data-id="${imgId}" style="color:#ef4444;" title="Delete image">×</button>
@@ -2579,10 +2751,10 @@ function renderCategoriesTable() {
     const visibleCategories = categories.filter(c => c && (c.name || '').toLowerCase().trim() !== 'best seller' && (c.slug || '').toLowerCase().trim() !== 'best-seller');
 
     tbody.innerHTML = visibleCategories.map(c => {
-        const fallbackImg = 'https://img.icons8.com/color/150/000000/sticker.png';
+        const fallbackImg = ADMIN_IMAGE_PLACEHOLDER;
         const resolvedCatImg = resolveAdminImageUrl(c.image_url);
         const imgThumb = resolvedCatImg
-            ? `<img src="${resolvedCatImg}" onerror="this.onerror=null; this.src='${fallbackImg}';" alt="${escapeHtml(c.name)}" style="width:28px; height:28px; object-fit:cover; border:1px solid #000; border-radius:3px; vertical-align:middle; margin-right:6px; display:inline-block;">`
+            ? `<img src="${resolvedCatImg}" onerror="if(!this.dataset.failed){this.dataset.failed='1';this.onerror=null;this.src='${fallbackImg}';}" alt="${escapeHtml(c.name)}" style="width:28px; height:28px; object-fit:cover; border:1px solid #000; border-radius:3px; vertical-align:middle; margin-right:6px; display:inline-block;">`
             : `<img src="${fallbackImg}" alt="" style="width:28px; height:28px; object-fit:cover; border:1px solid #ccc; border-radius:3px; vertical-align:middle; margin-right:6px; opacity:0.6; display:inline-block;">`;
 
         const expCode = (c.experience?.experience_code || 'normal').toLowerCase();
@@ -2680,10 +2852,10 @@ function openCategoryForm(category = null) {
 
     const prevBox = document.getElementById('cat-image-preview-box');
     const prevImg = document.getElementById('cat-image-preview-img');
-    const fallbackImg = 'https://img.icons8.com/color/150/000000/sticker.png';
+    const fallbackImg = ADMIN_IMAGE_PLACEHOLDER;
     if (category?.image_url && prevBox && prevImg) {
         const resolved = resolveAdminImageUrl(category.image_url);
-        prevImg.onerror = () => { prevImg.onerror = null; prevImg.src = fallbackImg; };
+        prevImg.onerror = () => { if (!prevImg.dataset.failed) { prevImg.dataset.failed = '1'; prevImg.onerror = null; prevImg.src = fallbackImg; } };
         prevImg.src = resolved || fallbackImg;
         prevBox.style.display = 'block';
     } else if (prevBox) {
@@ -2719,7 +2891,7 @@ function openCategoryForm(category = null) {
     const lightPrevImg = document.getElementById('hero-light-prev-img');
     if (heroLight && lightPrevBox && lightPrevImg) {
         const resLight = resolveAdminImageUrl(heroLight);
-        lightPrevImg.onerror = () => { lightPrevImg.onerror = null; lightPrevImg.src = fallbackImg; };
+        lightPrevImg.onerror = () => { if (!lightPrevImg.dataset.failed) { lightPrevImg.dataset.failed = '1'; lightPrevImg.onerror = null; lightPrevImg.src = fallbackImg; } };
         lightPrevImg.src = resLight || fallbackImg;
         lightPrevBox.style.display = 'block';
     } else if (lightPrevBox) {
@@ -2731,7 +2903,7 @@ function openCategoryForm(category = null) {
     const darkPrevImg = document.getElementById('hero-dark-prev-img');
     if (heroDark && darkPrevBox && darkPrevImg) {
         const resDark = resolveAdminImageUrl(heroDark);
-        darkPrevImg.onerror = () => { darkPrevImg.onerror = null; darkPrevImg.src = fallbackImg; };
+        darkPrevImg.onerror = () => { if (!darkPrevImg.dataset.failed) { darkPrevImg.dataset.failed = '1'; darkPrevImg.onerror = null; darkPrevImg.src = fallbackImg; } };
         darkPrevImg.src = resDark || fallbackImg;
         darkPrevBox.style.display = 'block';
     } else if (darkPrevBox) {
@@ -3137,6 +3309,9 @@ function renderOrdersTable() {
 
 async function openOrderDetailModal(orderId) {
     let o = orders.find(ord => ord.order_id === orderId || String(ord.id) === String(orderId));
+    if (String(orderId).startsWith('CF-') || (o && (o.is_custom_forge || String(o.order_id).startsWith('CF-')))) {
+        return openCustomForgeDetailModal(orderId);
+    }
     activeOrderViewing = o || { id: orderId, order_id: orderId, items: [] };
 
     const modal = document.getElementById('order-detail-modal');
@@ -3155,8 +3330,8 @@ async function openOrderDetailModal(orderId) {
             if (Array.isArray(freshOrder.items)) {
                 normalized.items = freshOrder.items.map(it => {
                     const apiHost = apiClient.baseUrl ? apiClient.baseUrl.replace(/\/api$/, '') : 'https://api.chipakk.shop';
-                    let itemImg = it.img || it.product_image || 'https://img.icons8.com/color/150/000000/sticker.png';
-                    if (itemImg && !itemImg.startsWith('http') && !itemImg.startsWith('//')) {
+                    let itemImg = it.img || it.product_image || ADMIN_IMAGE_PLACEHOLDER;
+                    if (itemImg && !itemImg.startsWith('http') && !itemImg.startsWith('//') && !itemImg.startsWith('data:')) {
                         itemImg = apiHost + itemImg;
                     }
                     let variantStr = 'Standard';
@@ -3258,7 +3433,7 @@ function renderOrderDetailModalContent(o) {
         const hasArtwork = item.custom_designs && item.custom_designs.length > 0;
         return `
             <tr>
-                <td><img src="${item.img || 'https://img.icons8.com/color/150/000000/sticker.png'}" style="width:40px; height:40px; object-fit:cover; border:1px solid #000;"></td>
+                <td><img src="${item.img || ADMIN_IMAGE_PLACEHOLDER}" onerror="if(!this.dataset.failed){this.dataset.failed='1';this.onerror=null;this.src='${ADMIN_IMAGE_PLACEHOLDER}';}" style="width:40px; height:40px; object-fit:cover; border:1px solid #000;"></td>
                 <td><span class="admin-id-highlight">${item.admin_id || 'CK-001'}</span></td>
                 <td>
                     <strong>${item.title}</strong>
@@ -4748,7 +4923,7 @@ function renderCustomForgeTable() {
 async function openCustomForgeDetailModal(orderId) {
     try {
         const res = await apiClient.get(`/admin/custom-forge/orders/${orderId}`);
-        const order = res?.data?.order || res?.order;
+        const order = res?.data?.order || (res?.data?.id ? res.data : null) || res?.order || (res?.id ? res : null);
         if (!order) {
             showToast("Custom Forge order not found", "error");
             return;
@@ -5577,7 +5752,7 @@ function saveHeroSlideForm() {
             id: `slide-${Date.now()}`,
             title,
             subtitle,
-            image_url: imgUrl || "https://img.icons8.com/color/300/000000/sticker.png",
+            image_url: imgUrl || ADMIN_IMAGE_PLACEHOLDER,
             cta_text: ctaText || "SHOP NOW",
             cta_link: ctaLink || "#catalog",
             active: true,
@@ -5596,7 +5771,7 @@ function renderPromoBannersList() {
     container.innerHTML = promoBanners.map(b => `
         <div style="display:flex; justify-content:space-between; align-items:center; background:#fff; padding:10px; border:2px solid #000; margin-bottom:10px;">
             <div style="display:flex; align-items:center; gap:12px;">
-                <img src="${b.image_url}" style="width:50px; height:50px; object-fit:cover; border:1px solid #000;">
+                <img src="${b.image_url}" onerror="if(!this.dataset.failed){this.dataset.failed='1';this.onerror=null;this.src='${ADMIN_IMAGE_PLACEHOLDER}';}" style="width:50px; height:50px; object-fit:cover; border:1px solid #000;">
                 <div>
                     <strong style="font-size:0.9rem;">${b.headline}</strong><br>
                     <small style="color:#666;">${b.subtitle} | Placement: ${b.placement}</small>
@@ -5621,7 +5796,7 @@ function savePromoBannerForm() {
         id: Date.now(),
         headline,
         subtitle: subtitle || '',
-        image_url: imgUrl || "https://img.icons8.com/color/150/000000/discount.png",
+        image_url: imgUrl || ADMIN_IMAGE_PLACEHOLDER,
         cta_text: "SHOP NOW",
         cta_link: "#catalog",
         placement: "Homepage Top",
@@ -6440,7 +6615,6 @@ function setupEventListeners() {
         if (prevImg) prevImg.src = e.target.value.trim();
     });
 
-
     document.getElementById('apply-analytics-filter-btn')?.addEventListener('click', async () => {
         const btn = document.getElementById('apply-analytics-filter-btn');
         const origText = btn ? btn.textContent : '';
@@ -6702,6 +6876,7 @@ function setupEventListeners() {
         document.getElementById('coupon-form-container').style.display = 'none';
     });
     document.getElementById('save-coupon-btn')?.addEventListener('click', saveCouponForm);
+    document.getElementById('cpn-type')?.addEventListener('change', updateCouponFormLabels);
 
     document.getElementById('new-team-btn')?.addEventListener('click', () => {
         document.getElementById('team-form-container').style.display = 'block';
@@ -6976,9 +7151,6 @@ function setupEventListeners() {
 
     function updateStoreSwitcherUI(storeId, options = {}) {
         const switchTab = options.switchTab !== false;
-        const currentActiveNav = document.querySelector('.admin-nav-item.active');
-        const currentActiveTabId = currentActiveNav ? (currentActiveNav.getAttribute('data-tab') || currentActiveNav.getAttribute('data-section')) : null;
-
         const btnChipakk = document.getElementById('switch-store-chipakk');
         const btnMarshans = document.getElementById('switch-store-marshans');
         const badge = document.getElementById('active-store-badge');
@@ -6993,6 +7165,9 @@ function setupEventListeners() {
         const prodFormBadge = document.getElementById('prod-form-header-badge');
         const prodFormTitle = document.getElementById('prod-form-title');
         const saveProdBtn = document.getElementById('save-prod-btn');
+
+        const activeNav = document.querySelector('.admin-nav-item.active');
+        const currentActiveTabId = activeNav ? (activeNav.getAttribute('data-tab') || activeNav.getAttribute('data-section')) : null;
 
         if (storeId === 2) {
             // --- THE MARSHANS MODE ---
@@ -7038,7 +7213,7 @@ function setupEventListeners() {
                 el.style.display = 'none';
             });
 
-            // Show THE MARSHANS active V1 modules (Materials)
+            // Show THE MARSHANS active V1 modules (Materials, Custom Forge)
             document.querySelectorAll('.store-module-marshans').forEach(el => {
                 if (el.classList.contains('tab-content')) {
                     // Handled by tab switcher below
@@ -7049,8 +7224,8 @@ function setupEventListeners() {
                 }
             });
 
-            // Custom Forge order management module visibility for THE MARSHANS
-            const cfNavLi = document.getElementById('custom-forge-nav-item')?.closest('li');
+            // Ensure Custom Forge nav link's parent LI is explicitly visible
+            const cfNavLi = document.getElementById('nav-custom-forge-link')?.closest('li');
             if (cfNavLi) cfNavLi.style.display = 'list-item';
 
             // Callout banner in regular orders terminal
@@ -7228,20 +7403,16 @@ function setupEventListeners() {
     document.getElementById('switch-store-chipakk')?.addEventListener('click', () => switchActiveStore(1));
     document.getElementById('switch-store-marshans')?.addEventListener('click', () => switchActiveStore(2));
 
-
-
     // Category Image Live Preview and Upload Listener
-    document.getElementById('cpn-type')?.addEventListener('change', updateCouponFormLabels);
-
     document.getElementById('cat-image')?.addEventListener('input', (e) => {
         const val = e.target.value.trim();
         const prevBox = document.getElementById('cat-image-preview-box');
         const prevImg = document.getElementById('cat-image-preview-img');
-        const fallbackImg = 'https://img.icons8.com/color/150/000000/sticker.png';
+        const fallbackImg = ADMIN_IMAGE_PLACEHOLDER;
         if (prevBox && prevImg) {
             if (val) {
                 const res = resolveAdminImageUrl(val);
-                prevImg.onerror = () => { prevImg.onerror = null; prevImg.src = fallbackImg; };
+                prevImg.onerror = () => { if (!prevImg.dataset.failed) { prevImg.dataset.failed = '1'; prevImg.onerror = null; prevImg.src = fallbackImg; } };
                 prevImg.src = res || fallbackImg;
                 prevBox.style.display = 'block';
             } else {
@@ -7271,10 +7442,10 @@ function setupEventListeners() {
                 if (catInput) catInput.value = uploadedUrl;
                 const prevBox = document.getElementById('cat-image-preview-box');
                 const prevImg = document.getElementById('cat-image-preview-img');
-                const fallbackImg = 'https://img.icons8.com/color/150/000000/sticker.png';
+                const fallbackImg = ADMIN_IMAGE_PLACEHOLDER;
                 if (prevBox && prevImg) {
                     const resolved = resolveAdminImageUrl(uploadedUrl);
-                    prevImg.onerror = () => { prevImg.onerror = null; prevImg.src = fallbackImg; };
+                    prevImg.onerror = () => { if (!prevImg.dataset.failed) { prevImg.dataset.failed = '1'; prevImg.onerror = null; prevImg.src = fallbackImg; } };
                     prevImg.src = resolved || fallbackImg;
                     prevBox.style.display = 'block';
                 }

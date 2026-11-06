@@ -1,4 +1,5 @@
 const orderService = require('../services/orderService');
+const customForgeService = require('../services/customForgeService');
 const velocityService = require('../services/velocityService');
 const { writeAuditLog } = require('../services/auditService');
 const { sendSuccess, sendError } = require('../utils/responseHandler');
@@ -38,7 +39,14 @@ const getOrderByIdHandler = async (req, res, next) => {
       return sendError(res, 'Order ID or Order Number is required.', 400);
     }
 
-    const order = await orderService.getOrderById(String(id).trim(), req.storeId);
+    let order = await orderService.getOrderById(String(id).trim(), req.storeId);
+
+    // Fallback: Check Custom Forge orders if not found in retail orders
+    if (!order && (String(id).trim().startsWith('CF-') || req.storeId === 2 || !req.storeId)) {
+      try {
+        order = await customForgeService.getAdminCustomForgeOrderById(String(id).trim());
+      } catch (_) {}
+    }
 
     if (!order) {
       return sendError(res, `Order '${id}' not found`, 404);

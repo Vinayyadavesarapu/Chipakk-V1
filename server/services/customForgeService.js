@@ -1,4 +1,5 @@
 const { pool } = require('../config/database');
+const couponService = require('./couponService');
 const shippingService = require('./shippingService');
 const taxProfileService = require('./taxProfileService');
 const taxCore = require('../utils/taxCore');
@@ -330,7 +331,9 @@ const createCustomForgeOrder = async (orderPayload, firebaseUser, requestStoreId
     items,
     shipping_address,
     customer_notes,
-    payment_method
+    payment_method,
+    coupon_code,
+    couponCode
   } = orderPayload || {};
 
   // Explicitly reject COD on the server
@@ -498,16 +501,63 @@ const createCustomForgeOrder = async (orderPayload, firebaseUser, requestStoreId
       });
     }
 
-    // 8. Calculate shipping on aggregate subtotal using existing Marshans shipping logic
+    // 8. Upsert customer in users table (linked to Firebase UID)
+    const customerId = await upsertCustomerUser({
+      uid: firebaseUser.uid,
+      email: firebaseUser.email || shipping_address.email || '',
+      name: recipientName.trim(),
+      phone: cleanPhone
+    }, connection);
+
+    // 8.1 Server-side coupon validation (Store 2 authoritative)
+    let discountPaise = 0;
+    let validatedCoupon = null;
+    const rawCoupon = coupon_code || couponCode;
+
+    if (rawCoupon && String(rawCoupon).trim()) {
+      const codeStr = String(rawCoupon).trim().toUpperCase();
+
+      const couponValidation = await couponService.validateCoupon(
+        codeStr,
+        subtotalPaise,
+        2,
+        customerId,
+        null
+      );
+
+      if (!couponValidation.valid) {
+        const err = new Error(couponValidation.message || 'Invalid coupon code.');
+        err.statusCode = 400;
+        throw err;
+      }
+
+      discountPaise = couponValidation.discount_paise !== undefined
+        ? couponValidation.discount_paise
+        : ((couponValidation.discount_amount || 0) * 100);
+
+      // Merchandise discount is strictly capped at the gross merchandise subtotal
+      if (discountPaise > subtotalPaise) {
+        discountPaise = subtotalPaise;
+      }
+      validatedCoupon = couponValidation.coupon;
+    }
+
+    // 8.2 Calculate shipping on aggregate gross subtotal using existing Marshans shipping logic
     const shippingCheck = await shippingService.calculateShippingFee({
       subtotal: subtotalPaise,
       region: state.trim(),
       storeId: 2
     });
     const shippingChargePaise = shippingCheck.shipping_fee || 0;
-    const totalPricePaise = subtotalPaise + shippingChargePaise;
 
-    // 8.1 Server-side GST (inclusive) following existing Marshans tax profile & composite shipping rules
+    // 8.3 Authoritative grand total calculation:
+    // Net merchandise = max(0, subtotal - discount)
+    // Final payable = Net merchandise + shipping
+    // Discount never covers delivery charges; shipping remains payable.
+    const netMerchandisePaise = Math.max(0, subtotalPaise - discountPaise);
+    const totalPricePaise = netMerchandisePaise + shippingChargePaise;
+
+    // 8.4 Server-side GST (inclusive) following existing Marshans tax profile & composite shipping rules
     let taxAmountPaise = 0;
     let cgstAmountPaise = 0;
     let sgstAmountPaise = 0;
@@ -523,7 +573,7 @@ const createCustomForgeOrder = async (orderPayload, firebaseUser, requestStoreId
             rate: taxProfile.default_gst_rate,
             hsn: null
           })),
-          discount: 0,
+          discount: discountPaise,
           shipping: shippingChargePaise,
           gstEnabled: true,
           defaultRate: taxProfile.default_gst_rate,
@@ -539,14 +589,6 @@ const createCustomForgeOrder = async (orderPayload, firebaseUser, requestStoreId
     } catch (taxErr) {
       console.warn('[CustomForgeService] Tax profile calculation fallback:', taxErr.message);
     }
-
-    // 9. Upsert customer in users table (linked to Firebase UID)
-    const customerId = await upsertCustomerUser({
-      uid: firebaseUser.uid,
-      email: firebaseUser.email || shipping_address.email || '',
-      name: recipientName.trim(),
-      phone: cleanPhone
-    }, connection);
 
     // 10. Generate collision-safe unique order number
     const orderNumber = await generateUniqueOrderNumber(connection);
@@ -564,28 +606,63 @@ const createCustomForgeOrder = async (orderPayload, firebaseUser, requestStoreId
     };
 
     // 12. Insert into custom_forge_orders (Aggregate Order Header)
+    // Check if optional columns (coupon_code, discount_total, discount_amount) exist in custom_forge_orders
+    let hasCfCouponCodeCol = false;
+    let hasCfDiscountTotalCol = false;
+    let discountColName = 'discount_total';
+    try {
+      const [cfCols] = await connection.execute(
+        "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'custom_forge_orders'"
+      );
+      const colNames = (cfCols || []).map(c => c.COLUMN_NAME.toLowerCase());
+      hasCfCouponCodeCol = colNames.includes('coupon_code');
+      if (colNames.includes('discount_total')) {
+        hasCfDiscountTotalCol = true;
+        discountColName = 'discount_total';
+      } else if (colNames.includes('discount_amount')) {
+        hasCfDiscountTotalCol = true;
+        discountColName = 'discount_amount';
+      }
+    } catch (_) {}
+
+    const cfColumns = [
+      'store_id', 'order_number', 'customer_id', 'customer_email', 'customer_name', 'customer_phone',
+      'shipping_address', 'shipping_charge', 'subtotal', 'tax_amount', 'cgst_amount', 'sgst_amount', 'igst_amount',
+      'total_price', 'payment_method', 'payment_status', 'production_status', 'customer_notes'
+    ];
+    const cfPlaceholders = ['2', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', "'ONLINE'", "'pending'", "'order_placed'", '?'];
+    const cfParams = [
+      orderNumber,
+      customerId,
+      shippingSnapshot.email,
+      shippingSnapshot.name,
+      shippingSnapshot.phone,
+      JSON.stringify(shippingSnapshot),
+      shippingChargePaise,
+      subtotalPaise,
+      taxAmountPaise,
+      cgstAmountPaise,
+      sgstAmountPaise,
+      igstAmountPaise,
+      totalPricePaise,
+      customer_notes ? String(customer_notes).trim() : null
+    ];
+
+    if (hasCfCouponCodeCol) {
+      cfColumns.push('coupon_code');
+      cfPlaceholders.push('?');
+      cfParams.push(validatedCoupon ? validatedCoupon.code : null);
+    }
+
+    if (hasCfDiscountTotalCol) {
+      cfColumns.push(discountColName);
+      cfPlaceholders.push('?');
+      cfParams.push(discountPaise);
+    }
+
     const [orderRes] = await connection.execute(
-      `INSERT INTO custom_forge_orders (
-         store_id, order_number, customer_id, customer_email, customer_name, customer_phone,
-         shipping_address, shipping_charge, subtotal, tax_amount, cgst_amount, sgst_amount, igst_amount,
-         total_price, payment_method, payment_status, production_status, customer_notes
-       ) VALUES (2, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ONLINE', 'pending', 'order_placed', ?)`,
-      [
-        orderNumber,
-        customerId,
-        shippingSnapshot.email,
-        shippingSnapshot.name,
-        shippingSnapshot.phone,
-        JSON.stringify(shippingSnapshot),
-        shippingChargePaise,
-        subtotalPaise,
-        taxAmountPaise,
-        cgstAmountPaise,
-        sgstAmountPaise,
-        igstAmountPaise,
-        totalPricePaise,
-        customer_notes ? String(customer_notes).trim() : null
-      ]
+      `INSERT INTO custom_forge_orders (${cfColumns.join(', ')}) VALUES (${cfPlaceholders.join(', ')})`,
+      cfParams
     );
     const orderId = orderRes.insertId;
 
@@ -623,6 +700,33 @@ const createCustomForgeOrder = async (orderPayload, firebaseUser, requestStoreId
           item.validatedCustomization.nameplate_material
         ]
       );
+    }
+
+    // 14. Record coupon usage reservation if coupon applied
+    if (validatedCoupon) {
+      let hasUsageStatusCol = false;
+      try {
+        const [usageCols] = await connection.execute(
+          "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'coupon_usage' AND COLUMN_NAME = 'status'"
+        );
+        hasUsageStatusCol = usageCols && usageCols.length > 0;
+      } catch (_) {}
+
+      try {
+        if (hasUsageStatusCol) {
+          await connection.execute(
+            'INSERT INTO coupon_usage (coupon_id, order_id, customer_id, discount_amount, status, reserved_at) VALUES (?, ?, ?, ?, "reserved", NOW())',
+            [validatedCoupon.id, orderId, customerId, discountPaise]
+          );
+        } else {
+          await connection.execute(
+            'INSERT INTO coupon_usage (coupon_id, order_id, customer_id, discount_amount) VALUES (?, ?, ?, ?)',
+            [validatedCoupon.id, orderId, customerId, discountPaise]
+          );
+        }
+      } catch (cuErr) {
+        console.warn('[Custom Forge coupon_usage reservation warning]', cuErr.message);
+      }
     }
 
     // 15. Record initial status history transition
@@ -693,8 +797,28 @@ const getCustomForgeOrderByIdInternal = async (orderId, connection = pool) => {
     } catch (_) {}
   }
 
+  let couponCode = order.coupon_code || null;
+  let discountTotal = order.discount_total !== undefined ? order.discount_total : (order.discount_amount !== undefined ? order.discount_amount : 0);
+  if (!discountTotal && order.subtotal && order.total_price) {
+    const rawDisc = (parseInt(order.subtotal, 10) + parseInt(order.shipping_charge || 0, 10)) - parseInt(order.total_price, 10);
+    if (rawDisc > 0) discountTotal = rawDisc;
+  }
+  try {
+    const [uRows] = await connection.execute(
+      'SELECT c.code, cu.discount_amount FROM coupon_usage cu JOIN coupons c ON cu.coupon_id = c.id WHERE cu.order_id = ? LIMIT 1',
+      [order.id]
+    );
+    if (uRows && uRows.length > 0) {
+      if (!couponCode) couponCode = uRows[0].code;
+      if (!discountTotal && uRows[0].discount_amount) discountTotal = uRows[0].discount_amount;
+    }
+  } catch (_) {}
+
   return {
     ...order,
+    coupon_code: couponCode,
+    discount_total: discountTotal,
+    discount_total_rupees: Math.round(Number(discountTotal || 0) / 100),
     shipping_address: parsedAddress,
     subtotal_rupees: Math.round(Number(order.subtotal) / 100),
     shipping_charge_rupees: Math.round(Number(order.shipping_charge) / 100),
@@ -1004,6 +1128,12 @@ const recordCustomForgePaymentSuccess = async ({
 
     const order = orders[0];
 
+    // Idempotent early exit: If already marked paid, avoid duplicate ledger writes or history transitions
+    if (order.payment_status === 'paid') {
+      await connection.rollback();
+      return getCustomForgeOrderByIdInternal(order.id);
+    }
+
     // Record in custom_forge_payments ledger
     await connection.execute(
       `INSERT INTO custom_forge_payments (
@@ -1024,6 +1154,26 @@ const recordCustomForgePaymentSuccess = async ({
       'UPDATE custom_forge_orders SET payment_status = "paid", gateway_order_id = ?, updated_at = NOW() WHERE id = ?',
       [gatewayOrderId, order.id]
     );
+
+    // Promote reserved coupon to consumed and increment coupon usage count
+    try {
+      const [usageRows] = await connection.execute(
+        "SELECT id, coupon_id FROM coupon_usage WHERE order_id = ? AND status = 'reserved' FOR UPDATE",
+        [order.id]
+      );
+      if (usageRows && usageRows.length > 0) {
+        await connection.execute(
+          "UPDATE coupon_usage SET status = 'consumed' WHERE order_id = ? AND status = 'reserved'",
+          [order.id]
+        );
+        for (const row of usageRows) {
+          await connection.execute(
+            'UPDATE coupons SET usage_count = usage_count + 1 WHERE id = ?',
+            [row.coupon_id]
+          );
+        }
+      }
+    } catch (_) {}
 
     // Record audit history note
     await connection.execute(

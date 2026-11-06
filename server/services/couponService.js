@@ -590,12 +590,15 @@ const validateCoupon = async (code, subtotalPaise = 0, store_id = null, customer
       );
       customerUsageCount = custRows[0]?.cnt || 0;
     } catch (err) {
-      console.warn('[Coupon Service] per-customer status query failed, using legacy count:', err.message);
-      const [custRowsLegacy] = await pool.execute(
-        "SELECT COUNT(*) AS cnt FROM coupon_usage WHERE coupon_id = ? AND customer_id = ?",
-        [coupon.id, customer_id]
-      );
-      customerUsageCount = custRowsLegacy[0]?.cnt || 0;
+      try {
+        const [custRowsLegacy] = await pool.execute(
+          "SELECT COUNT(*) AS cnt FROM coupon_usage WHERE coupon_id = ? AND customer_id = ?",
+          [coupon.id, customer_id]
+        );
+        customerUsageCount = custRowsLegacy[0]?.cnt || 0;
+      } catch (legacyErr) {
+        console.warn('[Coupon Service] per-customer usage query unavailable:', legacyErr.message);
+      }
     }
 
     if (customerUsageCount >= custLimit) {
@@ -635,6 +638,9 @@ const validateCoupon = async (code, subtotalPaise = 0, store_id = null, customer
   return {
     valid: true,
     message: 'Coupon code applied successfully.',
+    discount_amount: canonicalDiscount,
+    discount_rupees: discountRupees,
+    discount_paise: discountPaise,
     coupon: {
       id: coupon.id,
       code: coupon.code,
