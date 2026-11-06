@@ -96,27 +96,83 @@ async function getAuthToken() {
 }
 
 /**
+ * Safely resolves an endpoint or URL into a fully-qualified URL string
+ */
+function resolveFullUrl(endpoint) {
+  if (typeof endpoint !== 'string') return API_BASE_URL;
+  const trimmed = endpoint.trim();
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    return trimmed;
+  }
+  if (trimmed.startsWith('//')) {
+    const protocol = typeof window !== 'undefined' && window.location && window.location.protocol
+      ? window.location.protocol
+      : 'https:';
+    return `${protocol}${trimmed}`;
+  }
+  const sep = trimmed.startsWith('/') ? '' : '/';
+  return `${API_BASE_URL}${sep}${trimmed}`;
+}
+
+/**
+ * Checks whether the resolved request URL has the exact same origin as API_BASE_URL
+ */
+function isSameOriginAsApi(targetUrl) {
+  try {
+    const defaultOrigin = typeof window !== 'undefined' && window.location && window.location.origin
+      ? window.location.origin
+      : 'http://localhost:3000';
+    const targetObj = new URL(targetUrl, defaultOrigin);
+    const apiObj = new URL(API_BASE_URL, defaultOrigin);
+    return targetObj.origin.toLowerCase() === apiObj.origin.toLowerCase();
+  } catch (_) {
+    return false;
+  }
+}
+
+/**
  * Core Request Wrapper
  */
 async function request(endpoint, options = {}) {
-  const url = endpoint.startsWith('http://') || endpoint.startsWith('https://')
-    ? endpoint
-    : `${API_BASE_URL}${endpoint.startsWith('/') ? endpoint : '/' + endpoint}`;
+  const url = resolveFullUrl(endpoint);
   const headers = { ...(options.headers || {}) };
 
-  // Attach Firebase ID Token if user is logged in
-  const token = await getAuthToken();
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
+  // Attach Firebase ID Token and Client Session ID ONLY when target URL shares origin with API_BASE_URL
+  const isTrustedApiOrigin = isSameOriginAsApi(url);
 
-  // Attach persistent Client Session ID if available
-  try {
-    const sessionId = typeof localStorage !== 'undefined' ? localStorage.getItem('chipakk_admin_session_id') : null;
-    if (sessionId) {
-      headers['X-Session-ID'] = sessionId;
+  if (isTrustedApiOrigin) {
+    // Attach Firebase ID Token if user is logged in
+    const token = await getAuthToken();
+    if (token) {
+      Object.keys(headers).forEach(k => {
+        if (k.toLowerCase() === 'authorization' && k !== 'Authorization') {
+          delete headers[k];
+        }
+      });
+      headers['Authorization'] = `Bearer ${token}`;
     }
-  } catch (_) {}
+
+    // Attach persistent Client Session ID if available
+    try {
+      const sessionId = typeof localStorage !== 'undefined' ? localStorage.getItem('chipakk_admin_session_id') : null;
+      if (sessionId) {
+        Object.keys(headers).forEach(k => {
+          if (k.toLowerCase() === 'x-session-id' && k !== 'X-Session-ID') {
+            delete headers[k];
+          }
+        });
+        headers['X-Session-ID'] = sessionId;
+      }
+    } catch (_) {}
+  } else {
+    // Cross-origin request: strictly strip any caller-supplied Authorization or X-Session-ID headers case-insensitively
+    Object.keys(headers).forEach(k => {
+      const lower = k.toLowerCase();
+      if (lower === 'authorization' || lower === 'x-session-id') {
+        delete headers[k];
+      }
+    });
+  }
 
   // Attach active Store ID (1 for CHIPAKK, 2 for THE MARSHANS)
   try {
@@ -235,7 +291,8 @@ export const apiClient = {
     } catch (_) {}
   },
   getBaseUrl: () => API_BASE_URL,
-  baseUrl: API_BASE_URL
+  baseUrl: API_BASE_URL,
+  isSameOrigin: isSameOriginAsApi
 };
 
 export default apiClient;

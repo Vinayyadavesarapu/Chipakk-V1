@@ -593,34 +593,30 @@ const createTeamMemberHandler = async (req, res, next) => {
  * Ensure admin_sessions table exists in MySQL database
  */
 const ensureSessionTable = async () => {
-  try {
-    await pool.execute(`
-      CREATE TABLE IF NOT EXISTS \`admin_sessions\` (
-        \`id\` BIGINT NOT NULL AUTO_INCREMENT,
-        \`session_id\` VARCHAR(128) NOT NULL,
-        \`firebase_uid\` VARCHAR(128) NOT NULL,
-        \`email\` VARCHAR(255) NOT NULL,
-        \`admin_name\` VARCHAR(255) DEFAULT NULL,
-        \`role\` VARCHAR(50) NOT NULL DEFAULT 'ADMIN',
-        \`ip_address\` VARCHAR(100) DEFAULT NULL,
-        \`user_agent\` TEXT DEFAULT NULL,
-        \`login_time\` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        \`last_activity\` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        \`status\` ENUM('active', 'logged_out', 'expired') NOT NULL DEFAULT 'active',
-        \`expires_at\` DATETIME NOT NULL,
-        \`created_at\` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        \`updated_at\` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        PRIMARY KEY (\`id\`),
-        UNIQUE KEY \`uk_admin_sessions_session_id\` (\`session_id\`),
-        KEY \`idx_admin_sessions_uid\` (\`firebase_uid\`),
-        KEY \`idx_admin_sessions_status\` (\`status\`),
-        KEY \`idx_admin_sessions_last_activity\` (\`last_activity\`),
-        KEY \`idx_admin_sessions_expires_at\` (\`expires_at\`)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    `);
-  } catch (err) {
-    console.error('[ensureSessionTable Error]', err.message);
-  }
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS \`admin_sessions\` (
+      \`id\` BIGINT NOT NULL AUTO_INCREMENT,
+      \`session_id\` VARCHAR(128) NOT NULL,
+      \`firebase_uid\` VARCHAR(128) NOT NULL,
+      \`email\` VARCHAR(255) NOT NULL,
+      \`admin_name\` VARCHAR(255) DEFAULT NULL,
+      \`role\` VARCHAR(50) NOT NULL DEFAULT 'ADMIN',
+      \`ip_address\` VARCHAR(100) DEFAULT NULL,
+      \`user_agent\` TEXT DEFAULT NULL,
+      \`login_time\` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      \`last_activity\` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      \`status\` ENUM('active', 'logged_out', 'expired') NOT NULL DEFAULT 'active',
+      \`expires_at\` DATETIME NOT NULL,
+      \`created_at\` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      \`updated_at\` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (\`id\`),
+      UNIQUE KEY \`uk_admin_sessions_session_id\` (\`session_id\`),
+      KEY \`idx_admin_sessions_uid\` (\`firebase_uid\`),
+      KEY \`idx_admin_sessions_status\` (\`status\`),
+      KEY \`idx_admin_sessions_last_activity\` (\`last_activity\`),
+      KEY \`idx_admin_sessions_expires_at\` (\`expires_at\`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
 };
 
 /**
@@ -628,6 +624,7 @@ const ensureSessionTable = async () => {
  * POST /api/admin/auth/login-event
  */
 const recordAdminLoginHandler = async (req, res, next) => {
+  let clientSessionId = null;
   try {
     await ensureSessionTable();
 
@@ -642,9 +639,27 @@ const recordAdminLoginHandler = async (req, res, next) => {
       .map(part => part.charAt(0).toUpperCase() + part.slice(1))
       .join(' ') || 'Admin';
 
-    const clientSessionId = req.body?.session_id || req.headers['x-session-id'] || `sess_${actorId.slice(0, 10)}_${Date.now()}`;
+    clientSessionId = req.body?.session_id || req.headers['x-session-id'] || `sess_${actorId.slice(0, 10)}_${Date.now()}`;
     const ipAddress = req.ip || req.headers['x-forwarded-for'] || null;
     const userAgent = req.headers['user-agent'] || null;
+
+    // Guard against session hijack-by-replay: session_id is client-supplied, and the upsert below is keyed
+    // only on the UNIQUE session_id column (`ON DUPLICATE KEY UPDATE firebase_uid = VALUES(firebase_uid)`).
+    // If the id an admin presents already belongs to a DIFFERENT identity's still-active session (e.g.
+    // observed, logged, or leaked some other way), silently reassigning that row would hijack/invalidate the
+    // other administrator's real session. Issue the caller a fresh id instead; reusing one's OWN id, or one
+    // that has already expired/logged out, is unaffected.
+    const [collision] = await pool.execute(
+      'SELECT firebase_uid, status, expires_at FROM admin_sessions WHERE session_id = ? LIMIT 1',
+      [clientSessionId]
+    );
+    if (collision && collision.length > 0) {
+      const existing = collision[0];
+      const stillActive = existing.status === 'active' && new Date(existing.expires_at) > new Date();
+      if (existing.firebase_uid !== actorId && stillActive) {
+        clientSessionId = `sess_${actorId.slice(0, 10)}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      }
+    }
 
     // Upsert active session record (reuses existing session_id if supplied by persistent client)
     await pool.execute(`
@@ -668,7 +683,7 @@ const recordAdminLoginHandler = async (req, res, next) => {
       adminRole,
       ipAddress,
       userAgent
-    ]).catch(err => console.warn('[Admin Login Session Warn]', err.message));
+    ]);
 
     await writeAuditLog(
       actorId,
@@ -677,7 +692,9 @@ const recordAdminLoginHandler = async (req, res, next) => {
       'admins',
       adminId,
       {
-        session_id: clientSessionId,
+        // Truncated: audit logs are readable by every admin (GET /api/admin/audit-logs), and the full value
+        // is a usable session credential -- a short, non-reusable prefix is enough for correlation.
+        session_id_prefix: clientSessionId.slice(0, 10),
         ip: ipAddress,
         userAgent: userAgent,
         timestamp: new Date().toISOString()
@@ -686,7 +703,10 @@ const recordAdminLoginHandler = async (req, res, next) => {
 
     return sendSuccess(res, { logged: true, session_id: clientSessionId }, 'Admin login audit event and session recorded');
   } catch (error) {
-    return next(error);
+    const rawMsg = error && error.message ? String(error.message) : 'Database error';
+    const safeErrorMsg = rawMsg.replace(/sess_[a-zA-Z0-9_-]+/g, '[REDACTED_SESSION]');
+    console.error('[recordAdminLogin Error]', safeErrorMsg);
+    return sendError(res, 'Failed to register admin session.', 500);
   }
 };
 
@@ -698,45 +718,81 @@ const recordAdminLogoutHandler = async (req, res, next) => {
   try {
     await ensureSessionTable();
 
-    const actorId = req.admin ? req.admin.firebase_uid : (req.body?.uid || (req.user ? req.user.uid : null));
-    const actorEmail = req.admin ? req.admin.email : (req.body?.email || (req.user ? req.user.email : null));
-    const adminId = req.admin ? req.admin.id : null;
-    const reason = req.body?.reason || 'user_action';
-    const sessionId = req.body?.session_id || req.headers['x-session-id'];
+    // 1. Resolve authenticated identity (either from req.admin/req.user, or by verifying Authorization header)
+    let authenticatedUid = req.admin?.firebase_uid || req.user?.uid || null;
+    let authenticatedEmail = req.admin?.email || req.user?.email || null;
+    let adminId = req.admin?.id || null;
 
-    const newStatus = reason === 'inactivity_timeout' ? 'expired' : 'logged_out';
-
-    if (sessionId && actorId) {
-      await pool.execute(
-        'UPDATE admin_sessions SET status = ?, updated_at = NOW() WHERE session_id = ? AND firebase_uid = ?',
-        [newStatus, sessionId, actorId]
-      ).catch(() => {});
-    } else if (sessionId) {
-      await pool.execute(
-        'UPDATE admin_sessions SET status = ?, updated_at = NOW() WHERE session_id = ?',
-        [newStatus, sessionId]
-      ).catch(() => {});
-    } else if (actorId) {
-      await pool.execute(
-        'UPDATE admin_sessions SET status = ?, updated_at = NOW() WHERE firebase_uid = ? AND status = "active"',
-        [newStatus, actorId]
-      ).catch(() => {});
+    if (!authenticatedUid && req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
+      try {
+        const idToken = req.headers.authorization.split('Bearer ')[1].trim();
+        if (idToken) {
+          const auth = getAuth();
+          const decoded = await auth.verifyIdToken(idToken);
+          authenticatedUid = decoded.uid;
+          authenticatedEmail = decoded.email || null;
+        }
+      } catch (_) {
+        // Token invalid or expired - proceed to session_id validation
+      }
     }
 
-    if (actorId) {
+    const sessionId = (req.body?.session_id || req.headers['x-session-id'] || req.headers['X-Session-ID'] || '').trim();
+    const reason = req.body?.reason || 'user_action';
+
+    // Disallow unauthenticated blanket termination by uid
+    // Unauthenticated callers CANNOT supply a body.uid to terminate someone else's sessions
+    if (!authenticatedUid && !sessionId) {
+      return sendError(res, 'Session ID or authenticated administrator token required for logout', 400);
+    }
+
+    const newStatus = reason === 'inactivity_timeout' ? 'expired' : 'logged_out';
+    let affected = 0;
+
+    if (sessionId) {
+      if (authenticatedUid) {
+        // Authenticated: ensure session belongs to this administrator
+        const [r] = await pool.execute(
+          'UPDATE admin_sessions SET status = ?, updated_at = NOW() WHERE session_id = ? AND firebase_uid = ?',
+          [newStatus, sessionId, authenticatedUid]
+        ).catch(() => [{ affectedRows: 0 }]);
+        affected = r.affectedRows || 0;
+      } else {
+        // Unauthenticated beacon: only invalidate the exact unguessable session ID
+        const [r] = await pool.execute(
+          'UPDATE admin_sessions SET status = ?, updated_at = NOW() WHERE session_id = ?',
+          [newStatus, sessionId]
+        ).catch(() => [{ affectedRows: 0 }]);
+        affected = r.affectedRows || 0;
+      }
+    } else if (authenticatedUid) {
+      // Authenticated administrator explicitly requesting termination of their own active sessions
+      const [r] = await pool.execute(
+        'UPDATE admin_sessions SET status = ?, updated_at = NOW() WHERE firebase_uid = ? AND status = "active"',
+        [newStatus, authenticatedUid]
+      ).catch(() => [{ affectedRows: 0 }]);
+      affected = r.affectedRows || 0;
+    }
+
+    // Write an audit log entry only when a verified identity made the call, or an unauthenticated beacon
+    // actually matched and terminated a real session. Without the `affected` check, an unauthenticated caller
+    // could POST any made-up, non-matching session_id and generate an unlimited number of audit_logs rows
+    // (write-amplification / audit-trail pollution) for zero real effect.
+    if (authenticatedUid || affected > 0) {
+      const auditActorId = authenticatedUid || `session:${sessionId.slice(0, 10)}`;
       await writeAuditLog(
-        actorId,
-        actorEmail,
+        auditActorId,
+        authenticatedEmail,
         reason === 'inactivity_timeout' ? 'admin.session_expired' : 'admin.logout',
         'admins',
         adminId,
         {
           reason,
-          session_id: sessionId || null,
+          session_id_prefix: sessionId ? sessionId.slice(0, 10) : null,
           ip: req.ip || req.headers['x-forwarded-for'] || null,
           timestamp: new Date().toISOString()
         }
-      );
+      ).catch(() => {});
     }
 
     return sendSuccess(res, { logged: true }, 'Admin logout audit event recorded');
@@ -767,7 +823,9 @@ const getActiveSessionsHandler = async (req, res, next) => {
       const currentRole = req.admin ? (req.admin.role === 'super_admin' ? 'SUPER ADMIN' : 'ADMIN') : 'ADMIN';
       const namePrefix = currentEmail.split('@')[0];
       const currentName = namePrefix.split(/[._-]/).map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ') || 'Admin';
-      const callerSessionId = req.headers['x-session-id'] || req.query?.session_id;
+      // Header only: a session credential must never be accepted from a URL query string (query strings end
+      // up in server access logs, browser history and the Referer header sent to third-party resources).
+      const callerSessionId = req.headers['x-session-id'];
 
       if (callerSessionId) {
         const [updated] = await pool.execute(
@@ -819,19 +877,36 @@ const getActiveSessionsHandler = async (req, res, next) => {
       }
     }
 
-    // Query all active database sessions
-    const [rows] = await pool.execute(`
-      SELECT
-        id, session_id, firebase_uid, email, admin_name, role, ip_address, user_agent,
-        login_time, last_activity, status, expires_at, created_at
-      FROM admin_sessions
-      WHERE status = 'active' AND expires_at > NOW()
-      ORDER BY last_activity DESC
-    `);
+    // Query active database sessions. This "Active Sessions" view is an oversight/force-logout tool
+    // (see web/js/admin.js renderActiveSessionsTable's "FORCE LOGOUT" action) -- only a super_admin gets the
+    // full roster of every administrator's sessions; any other admin only ever sees their own, using the same
+    // existing `admins.role` field requireAdmin already verified (no new permission model, no users.role
+    // dependency).
+    const isSuperAdmin = req.admin && req.admin.role === 'super_admin';
+    const [rows] = isSuperAdmin
+      ? await pool.execute(`
+        SELECT
+          id, session_id, firebase_uid, email, admin_name, role, ip_address, user_agent,
+          login_time, last_activity, status, expires_at, created_at
+        FROM admin_sessions
+        WHERE status = 'active' AND expires_at > NOW()
+        ORDER BY last_activity DESC
+      `)
+      : await pool.execute(`
+        SELECT
+          id, session_id, firebase_uid, email, admin_name, role, ip_address, user_agent,
+          login_time, last_activity, status, expires_at, created_at
+        FROM admin_sessions
+        WHERE status = 'active' AND expires_at > NOW() AND firebase_uid = ?
+        ORDER BY last_activity DESC
+      `, [req.user.uid]);
 
     const sessions = rows.map(s => ({
       id: s.id,
-      session_id: s.session_id,
+      // session_id is intentionally OMITTED: it is the exact bearer-equivalent credential requireAdminSession
+      // checks, and the admin UI only ever uses the numeric `id` to terminate a session (web/js/admin.js
+      // renderActiveSessionsTable). Returning the raw value let any admin read -- and then replay via
+      // /auth/login-event -- another administrator's live session.
       firebase_uid: s.firebase_uid,
       name: s.admin_name || s.email.split('@')[0],
       email: s.email,
@@ -861,12 +936,21 @@ const getActiveSessionsHandler = async (req, res, next) => {
 const recordAdminActivityHandler = async (req, res, next) => {
   try {
     await ensureSessionTable();
+    const sessionId = req.adminSession?.session_id || req.headers['x-session-id'] || req.headers['X-Session-ID'] || req.body?.session_id;
     if (req.user && req.user.uid) {
-      await pool.execute(`
-        UPDATE admin_sessions
-        SET last_activity = NOW(), expires_at = DATE_ADD(NOW(), INTERVAL 1 HOUR)
-        WHERE firebase_uid = ? AND status = 'active'
-      `, [req.user.uid]).catch(() => {});
+      if (sessionId) {
+        await pool.execute(`
+          UPDATE admin_sessions
+          SET last_activity = NOW(), expires_at = DATE_ADD(NOW(), INTERVAL 1 HOUR)
+          WHERE session_id = ? AND firebase_uid = ? AND status = 'active' AND expires_at > NOW()
+        `, [sessionId, req.user.uid]).catch(() => {});
+      } else {
+        await pool.execute(`
+          UPDATE admin_sessions
+          SET last_activity = NOW(), expires_at = DATE_ADD(NOW(), INTERVAL 1 HOUR)
+          WHERE firebase_uid = ? AND status = 'active' AND expires_at > NOW()
+        `, [req.user.uid]).catch(() => {});
+      }
     }
     return sendSuccess(res, { active: true }, 'Activity heartbeat recorded');
   } catch (error) {
@@ -891,6 +975,17 @@ const terminateSessionHandler = async (req, res, next) => {
       return sendError(res, 'Session not found.', 404);
     }
 
+    // Authorization: admin_sessions.id is a small sequential integer, trivially enumerable. Without this
+    // check, ANY authenticated admin could force-logout ANY OTHER administrator just by guessing a nearby
+    // id. Only a super_admin (the existing, pre-populated `admins.role` value -- no new permission model)
+    // may terminate someone ELSE's session; every admin may still terminate their own (e.g. "log out this
+    // device").
+    const isSelf = req.user && req.user.uid === rows[0].firebase_uid;
+    const isSuperAdmin = req.admin && req.admin.role === 'super_admin';
+    if (!isSelf && !isSuperAdmin) {
+      return sendError(res, 'Only a super administrator may terminate another administrator\'s session.', 403);
+    }
+
     await pool.execute(
       'UPDATE admin_sessions SET status = "logged_out", updated_at = NOW() WHERE id = ?',
       [numId]
@@ -913,6 +1008,31 @@ const terminateSessionHandler = async (req, res, next) => {
   }
 };
 
+/**
+ * Verify Admin Authentication & Active Database Session
+ * GET /api/admin/auth/verify
+ */
+const verifyAdminSessionHandler = async (req, res, next) => {
+  try {
+    return sendSuccess(res, {
+      authenticated: true,
+      admin: {
+        id: req.admin?.id,
+        firebase_uid: req.admin?.firebase_uid,
+        email: req.admin?.email,
+        role: req.admin?.role
+      },
+      session: {
+        session_id: req.adminSession?.session_id,
+        status: req.adminSession?.status,
+        expires_at: req.adminSession?.expires_at
+      }
+    }, 'Admin session verified successfully');
+  } catch (error) {
+    return next(error);
+  }
+};
+
 module.exports = {
   getAdminDashboardHandler,
   getTeamMembersHandler,
@@ -922,6 +1042,7 @@ module.exports = {
   recordAdminLogoutHandler,
   getActiveSessionsHandler,
   recordAdminActivityHandler,
-  terminateSessionHandler
+  terminateSessionHandler,
+  verifyAdminSessionHandler
 };
 

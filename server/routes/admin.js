@@ -1,7 +1,7 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
-const { verifyFirebaseToken, requireAdmin } = require('../middleware/auth');
+const { verifyFirebaseToken, requireAdmin, requireAdminSession } = require('../middleware/auth');
 const { uploadProductImage, uploadCustomArtwork, uploadDir } = require('../middleware/upload');
 const {
   getAdminDashboardHandler,
@@ -12,7 +12,8 @@ const {
   recordAdminLogoutHandler,
   getActiveSessionsHandler,
   recordAdminActivityHandler,
-  terminateSessionHandler
+  terminateSessionHandler,
+  verifyAdminSessionHandler
 } = require('../controllers/adminController');
 const {
   getCategoriesHandler,
@@ -139,6 +140,10 @@ router.post('/auth/logout-event', recordAdminLogoutHandler);
 // Apply Authentication and Admin Authorization Middleware to all protected admin routes
 router.use(verifyFirebaseToken);
 router.use(requireAdmin);
+router.use(requireAdminSession);
+
+// Admin Session Verification
+router.get('/auth/verify', verifyAdminSessionHandler);
 
 // Admin Auth Audit Events
 router.post('/auth/login-event', recordAdminLoginHandler);

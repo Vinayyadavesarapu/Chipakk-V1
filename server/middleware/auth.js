@@ -99,7 +99,101 @@ const requireAdmin = async (req, res, next) => {
   }
 };
 
+/**
+ * Middleware to enforce an active, server-verified administrator session
+ * from the admin_sessions table.
+ * Must be executed AFTER verifyFirebaseToken and requireAdmin.
+ */
+const requireAdminSession = async (req, res, next) => {
+  // Allow login event to establish or register a fresh session
+  if (req.path === '/auth/login-event') {
+    return next();
+  }
+
+  // Header (and body, for the POST endpoints that already send it there) only: a session credential must
+  // never be accepted from a URL query string, since query strings end up in server access logs, browser
+  // history and the Referer header sent to third-party resources.
+  const sessionId = req.headers['x-session-id'] || req.headers['X-Session-ID'] || req.body?.session_id;
+
+  if (!sessionId || typeof sessionId !== 'string' || !sessionId.trim()) {
+    return sendError(
+      res,
+      'Admin session ID missing. Please authenticate as administrator.',
+      401,
+      'ADMIN_SESSION_REQUIRED'
+    );
+  }
+
+  try {
+    const cleanSessionId = sessionId.trim();
+    const adminUid = req.admin?.firebase_uid || req.user?.uid;
+
+    if (!adminUid) {
+      return sendError(res, 'Authentication required before session verification', 401);
+    }
+
+    const [sessions] = await pool.execute(
+      'SELECT id, session_id, firebase_uid, email, role, status, expires_at FROM admin_sessions WHERE session_id = ? AND firebase_uid = ? LIMIT 1',
+      [cleanSessionId, adminUid]
+    );
+
+    if (!sessions || sessions.length === 0) {
+      return sendError(
+        res,
+        'Admin session invalid or not found. Please log in again.',
+        401,
+        'ADMIN_SESSION_INVALID'
+      );
+    }
+
+    const session = sessions[0];
+
+    if (session.status !== 'active') {
+      return sendError(
+        res,
+        `Admin session has ended (${session.status}). Please log in again.`,
+        401,
+        'ADMIN_SESSION_TERMINATED'
+      );
+    }
+
+    const now = new Date();
+    const expiresAt = new Date(session.expires_at);
+    if (expiresAt <= now) {
+      await pool.execute(
+        'UPDATE admin_sessions SET status = "expired", updated_at = NOW() WHERE id = ?',
+        [session.id]
+      ).catch(() => {});
+
+      return sendError(
+        res,
+        'Admin session has expired due to inactivity. Please log in again.',
+        401,
+        'ADMIN_SESSION_EXPIRED'
+      );
+    }
+
+    // Slide expiration window on active request
+    await pool.execute(
+      'UPDATE admin_sessions SET last_activity = NOW(), expires_at = DATE_ADD(NOW(), INTERVAL 1 HOUR) WHERE id = ?',
+      [session.id]
+    ).catch(() => {});
+
+    req.adminSession = session;
+    return next();
+  } catch (error) {
+    console.error('[Admin Session Middleware Error]:', error.message);
+    return sendError(
+      res,
+      'Admin session verification failed',
+      500,
+      process.env.NODE_ENV === 'production' ? null : error.message
+    );
+  }
+};
+
 module.exports = {
   verifyFirebaseToken,
-  requireAdmin
+  requireAdmin,
+  requireAdminSession
 };
