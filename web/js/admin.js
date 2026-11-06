@@ -767,15 +767,26 @@ async function refreshCouponsFromAPI() {
         const res = await apiClient.get('/admin/coupons');
         const rawCoupons = res?.data?.coupons || res?.coupons || (Array.isArray(res?.data) ? res.data : []) || (Array.isArray(res) ? res : []);
         if (Array.isArray(rawCoupons)) {
-            coupons = rawCoupons.map(c => ({
-                ...c,
-                id: c.id,
-                code: (c.code || '').toUpperCase(),
-                discount_type: c.discount_type || 'percent',
-                discount_value: c.discount_value || 0,
-                min_spend: c.min_order_value_rupees !== undefined ? c.min_order_value_rupees : (parseInt(c.min_order_value || c.min_spend, 10) || 0),
-                active: c.active === 1 || c.active === true || c.is_active === 1 || c.is_active === true
-            }));
+            coupons = rawCoupons.map(c => {
+                const isFixed = (c.discount_type || '').toLowerCase() === 'fixed';
+                const discountVal = (isFixed && c.discount_value_rupees !== undefined && c.discount_value_rupees !== null)
+                    ? c.discount_value_rupees
+                    : (c.discount_value || 0);
+                const minSpend = (c.min_order_value_rupees !== undefined && c.min_order_value_rupees !== null)
+                    ? c.min_order_value_rupees
+                    : (parseInt(c.min_order_value || c.min_spend, 10) || 0);
+                return {
+                    ...c,
+                    id: c.id,
+                    code: (c.code || '').toUpperCase(),
+                    discount_type: c.discount_type || 'percent',
+                    discount_value: discountVal,
+                    discount_value_rupees: c.discount_value_rupees,
+                    min_spend: minSpend,
+                    min_order_value_rupees: c.min_order_value_rupees,
+                    active: c.active === 1 || c.active === true || c.is_active === 1 || c.is_active === true
+                };
+            });
             renderCouponsTable();
         }
     } catch (err) {
@@ -3642,12 +3653,19 @@ function renderCouponsTable() {
     const tbody = document.getElementById('coupons-tbody');
     if (!tbody) return;
 
-    tbody.innerHTML = coupons.map(c => `
+    tbody.innerHTML = coupons.map(c => {
+        const isPercent = c.discount_type === 'percent';
+        const displayVal = isPercent
+            ? `${c.discount_value}% OFF`
+            : `₹${Number(c.discount_value).toLocaleString('en-IN')} OFF`;
+        const minSpendFormatted = `₹${Number(c.min_spend || 0).toLocaleString('en-IN')}`;
+
+        return `
         <tr>
             <td><strong style="font-family:monospace; font-size:0.95rem; background:#fef08a; padding:2px 6px; border:1px solid #000;">${c.code}</strong></td>
-            <td>${c.discount_type === 'percent' ? 'Percentage (%)' : 'Fixed Amount (₹)'}</td>
-            <td><strong style="color:#059669;">${c.discount_value}${c.discount_type === 'percent' ? '%' : '₹'} OFF</strong></td>
-            <td>₹${c.min_spend || 0}</td>
+            <td>${isPercent ? 'Percentage (%)' : 'Fixed Amount (₹)'}</td>
+            <td><strong style="color:#059669;">${displayVal}</strong></td>
+            <td>${minSpendFormatted}</td>
             <td><span class="status-badge ${c.active ? 'status-live' : 'status-inactive'}">${c.active ? 'ACTIVE' : 'INACTIVE'}</span></td>
             <td>
                 <div style="display:flex; gap:4px;">
@@ -3657,7 +3675,8 @@ function renderCouponsTable() {
                 </div>
             </td>
         </tr>
-    `).join('') || '<tr><td colspan="6">No coupons created.</td></tr>';
+    `;
+    }).join('') || '<tr><td colspan="6">No coupons created.</td></tr>';
 
     tbody.querySelectorAll('.edit-cpn-btn').forEach(btn => {
         btn.addEventListener('click', () => {
@@ -3686,6 +3705,35 @@ function renderCouponsTable() {
     });
 }
 
+function updateCouponFormLabels() {
+    const typeSelect = document.getElementById('cpn-type');
+    const amountLabel = document.getElementById('cpn-amount-label');
+    const amountHint = document.getElementById('cpn-amount-hint');
+    const amountInput = document.getElementById('cpn-amount');
+    if (!typeSelect || !amountInput) return;
+
+    const isFixed = typeSelect.value === 'fixed';
+    if (amountLabel) {
+        amountLabel.innerHTML = isFixed
+            ? 'Discount Amount (₹) <span style="color:red;">*</span>'
+            : 'Discount Percentage (%) <span style="color:red;">*</span>';
+    }
+    if (amountHint) {
+        amountHint.textContent = isFixed
+            ? 'The exact rupee amount (₹) deducted from the eligible order.'
+            : 'Percentage (1% - 100%) deducted from the eligible order.';
+    }
+    if (isFixed) {
+        amountInput.min = '1';
+        amountInput.removeAttribute('max');
+        amountInput.step = 'any';
+    } else {
+        amountInput.min = '1';
+        amountInput.max = '100';
+        amountInput.step = '1';
+    }
+}
+
 function openCouponForm(cpn = null) {
     const container = document.getElementById('coupon-form-container');
     if (!container) return;
@@ -3697,7 +3745,14 @@ function openCouponForm(cpn = null) {
     }
     document.getElementById('cpn-code').value = cpn ? cpn.code : '';
     document.getElementById('cpn-type').value = cpn ? cpn.discount_type : 'percent';
-    document.getElementById('cpn-amount').value = cpn ? cpn.discount_value : 10;
+    updateCouponFormLabels();
+
+    document.getElementById('cpn-amount').value = cpn
+        ? (cpn.discount_type === 'fixed' && cpn.discount_value_rupees !== undefined && cpn.discount_value_rupees !== null
+            ? cpn.discount_value_rupees
+            : cpn.discount_value)
+        : (document.getElementById('cpn-type').value === 'percent' ? 10 : 500);
+
     const minSpend = cpn ? (cpn.min_spend !== undefined ? cpn.min_spend : (cpn.min_order_value_rupees !== undefined ? cpn.min_order_value_rupees : (cpn.min_order_value !== undefined ? cpn.min_order_value : 200))) : 200;
     document.getElementById('cpn-min').value = minSpend;
     document.getElementById('cpn-active').value = cpn ? String(cpn.active !== undefined ? (cpn.active === 1 || cpn.active === true) : true) : 'true';
@@ -3711,11 +3766,37 @@ function openCouponForm(cpn = null) {
 }
 
 async function saveCouponForm() {
-    const code = document.getElementById('cpn-code').value.trim().toUpperCase();
+    const codeInput = document.getElementById('cpn-code');
+    const code = (codeInput ? codeInput.value : '').trim().toUpperCase();
+    const type = document.getElementById('cpn-type').value;
     const value = Number(document.getElementById('cpn-amount').value);
+    const minSpendInput = Number(document.getElementById('cpn-min').value);
+    const custLimitEl = document.getElementById('cpn-per-customer-limit');
+    const perCustomerLimit = custLimitEl ? (parseInt(custLimitEl.value, 10) || 1) : 1;
 
-    if (!code || isNaN(value)) {
-        showToast("Coupon code and discount value are required!", "error");
+    // Strict validation
+    if (!code) {
+        showToast("Coupon code is required!", "error");
+        return;
+    }
+    if (!/^[A-Z0-9_-]+$/.test(code)) {
+        showToast("Coupon code must contain only uppercase letters, numbers, and dashes with no spaces.", "error");
+        return;
+    }
+    if (isNaN(value) || value <= 0) {
+        showToast("Discount value must be a positive number greater than 0.", "error");
+        return;
+    }
+    if (type === 'percent' && (value < 1 || value > 100)) {
+        showToast("Percentage discount must be between 1% and 100%.", "error");
+        return;
+    }
+    if (isNaN(minSpendInput) || minSpendInput < 0) {
+        showToast("Minimum order required cannot be negative.", "error");
+        return;
+    }
+    if (perCustomerLimit < 1) {
+        showToast("Per-customer limit must be at least 1.", "error");
         return;
     }
 
@@ -3724,14 +3805,13 @@ async function saveCouponForm() {
     if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = "SAVING..."; }
 
     const activeStoreId = apiClient.getActiveStoreId ? apiClient.getActiveStoreId() : 1;
-    const minSpendInput = Number(document.getElementById('cpn-min').value) || 0;
     const minOrderVal = activeStoreId === 1 ? Math.round(minSpendInput) : Math.round(minSpendInput * 100);
-    const custLimitEl = document.getElementById('cpn-per-customer-limit');
-    const perCustomerLimit = custLimitEl ? (parseInt(custLimitEl.value, 10) || 1) : 1;
+
     const payload = {
         code,
-        discount_type: document.getElementById('cpn-type').value,
+        discount_type: type,
         discount_value: value,
+        discount_value_rupees: type === 'fixed' ? value : undefined,
         min_order_value: minOrderVal,
         per_customer_limit: perCustomerLimit,
         active: document.getElementById('cpn-active').value === 'true' ? 1 : 0
@@ -7151,6 +7231,8 @@ function setupEventListeners() {
 
 
     // Category Image Live Preview and Upload Listener
+    document.getElementById('cpn-type')?.addEventListener('change', updateCouponFormLabels);
+
     document.getElementById('cat-image')?.addEventListener('input', (e) => {
         const val = e.target.value.trim();
         const prevBox = document.getElementById('cat-image-preview-box');

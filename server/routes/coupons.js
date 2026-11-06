@@ -11,7 +11,7 @@ const router = express.Router();
  */
 router.post('/validate', async (req, res) => {
   try {
-    const { code, subtotal, subtotal_in_rupees } = req.body || {};
+    const { code, subtotal, subtotal_in_rupees, subtotal_in_paise, customer_id } = req.body || {};
 
     if (!code || typeof code !== 'string' || !code.trim()) {
       return sendError(res, 'Please enter a coupon code.', 400);
@@ -25,11 +25,22 @@ router.post('/validate', async (req, res) => {
     if (subtotal_in_rupees !== undefined) {
       const rupees = Math.max(0, Math.round(Number(subtotal_in_rupees)) || 0);
       subtotalAmount = activeStoreId === 2 ? (rupees * 100) : rupees;
+    } else if (subtotal_in_paise !== undefined) {
+      subtotalAmount = parseInt(subtotal_in_paise, 10) || 0;
     } else if (subtotal !== undefined) {
-      subtotalAmount = parseInt(subtotal, 10) || 0;
+      const numSubtotal = Number(subtotal) || 0;
+      if (activeStoreId === 2) {
+        if (req.body && req.body.is_paise === true) {
+          subtotalAmount = Math.round(numSubtotal);
+        } else {
+          subtotalAmount = Math.round(numSubtotal * 100);
+        }
+      } else {
+        subtotalAmount = Math.round(numSubtotal);
+      }
     }
 
-    const result = await couponService.validateCoupon(code, subtotalAmount, activeStoreId);
+    const result = await couponService.validateCoupon(code, subtotalAmount, activeStoreId, customer_id || null);
 
     // Business rejections (invalid / expired / not started / minimum order / usage limit) carry
     // customer-safe messages written in couponService.

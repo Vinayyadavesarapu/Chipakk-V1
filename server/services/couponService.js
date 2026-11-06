@@ -640,6 +640,9 @@ const validateCoupon = async (code, subtotalPaise = 0, store_id = null, customer
       code: coupon.code,
       discount_type: coupon.discount_type,
       discount_value: coupon.discount_value,
+      discount_value_rupees: coupon.discount_type === 'fixed'
+        ? (isStore2 ? Math.round((parseInt(coupon.discount_value, 10) || 0) / 100) : (parseInt(coupon.discount_value, 10) || 0))
+        : null,
       min_order_value: minOrderRequired,
       min_order_value_rupees: isStore2 ? Math.round(minOrderRequired / 100) : minOrderRequired,
       max_discount_amount: maxDiscount,
