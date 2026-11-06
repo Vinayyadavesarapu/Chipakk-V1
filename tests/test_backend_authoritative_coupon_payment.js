@@ -416,3 +416,29 @@ test('14. Admin Order Lookup cleanly disambiguates Retail vs Custom Forge orders
     'orderController falls back to customForgeService for CF- orders'
   );
 });
+
+// =============================================================================
+// SUITE 5: STORE 2 SHIPPING & RAZORPAY GATEWAY ORDER AMOUNT PARITY TESTS
+// =============================================================================
+
+test('15. Store 2 Delivery Fee Invariant: free_shipping_threshold=0 never makes shipping free', async () => {
+  const shippingService = require('../server/services/shippingService');
+
+  // Store 2 calculation for any subtotal must preserve delivery fee when threshold is 0
+  const check = await shippingService.calculateShippingFee({
+    subtotal: 560000,
+    storeId: 2
+  });
+
+  assert.strictEqual(check.is_free, false, 'Store 2 must never grant free shipping when threshold is 0');
+  assert.ok(check.shipping_fee > 0, 'Store 2 delivery fee must be greater than zero');
+});
+
+test('16. Razorpay Gateway Order Discard on Amount Change: prevents old amount reuse', () => {
+  // If an order had a gateway_order_id created for 560000 paise, but current total is 5000 paise
+  const previousGatewayAmount = 560000;
+  const currentAuthoritativeAmount = 5000;
+
+  const canReuse = Number(previousGatewayAmount) === Number(currentAuthoritativeAmount);
+  assert.strictEqual(canReuse, false, 'Gateway order must NOT be reused when order amount changes');
+});

@@ -429,9 +429,10 @@ const calculateShippingFee = async ({ subtotal, region, rule_id, storeId = 1 } =
     }
   }
 
-  const isFree = parsedSubtotal >= effectiveThreshold;
-  const shippingFee = isFree ? 0 : effectiveStandardFee;
   const isStore2 = activeStoreId === 2;
+  // Free shipping requires an explicit positive threshold and is strictly prohibited for Store 2 (THE MARSHANS)
+  const isFree = !isStore2 && effectiveThreshold > 0 && parsedSubtotal >= effectiveThreshold;
+  const shippingFee = isFree ? 0 : effectiveStandardFee;
 
   return {
     subtotal: parsedSubtotal,
@@ -439,8 +440,8 @@ const calculateShippingFee = async ({ subtotal, region, rule_id, storeId = 1 } =
     shipping_fee: shippingFee,
     shipping_fee_rupees: isStore2 ? Math.round(shippingFee / 100) : shippingFee,
     is_free: isFree,
-    free_shipping_threshold: effectiveThreshold,
-    free_shipping_threshold_rupees: isStore2 ? Math.round(effectiveThreshold / 100) : effectiveThreshold,
+    free_shipping_threshold: isStore2 ? 0 : effectiveThreshold,
+    free_shipping_threshold_rupees: isStore2 ? 0 : effectiveThreshold,
     applied_rule: {
       id: rule.id || null,
       name: rule.name || 'Standard Shipping',

@@ -241,14 +241,30 @@ const createPaymentOrder = async (orderId, firebaseUser, reqStoreId) => {
   const amountPaiseForGateway = isStore2 ? rawTotalPrice : (rawTotalPrice * 100);
 
   let gatewayOrder;
+  let canReuseGatewayOrder = false;
+
   if (order.gateway_order_id) {
-    // Reuse existing gateway order for this pending order to avoid orphan orders at gateway
+    const paymentTable = isCustomForge ? 'custom_forge_payments' : 'payments';
+    try {
+      const [existingPay] = await pool.execute(
+        `SELECT amount FROM ${paymentTable} WHERE gateway_order_id = ? AND order_id = ? ORDER BY id DESC LIMIT 1`,
+        [order.gateway_order_id, order.id]
+      );
+      if (existingPay && existingPay.length > 0 && Number(existingPay[0].amount) === Number(amountPaiseForGateway)) {
+        canReuseGatewayOrder = true;
+      }
+    } catch (_) {}
+  }
+
+  if (canReuseGatewayOrder) {
+    // Reuse existing gateway order ONLY when the gateway order amount matches the current authoritative order total
     gatewayOrder = {
       gateway_order_id: order.gateway_order_id,
       amount: amountPaiseForGateway,
       currency: 'INR'
     };
   } else {
+    // Create fresh Razorpay order server-to-server with exact authoritative amount
     gatewayOrder = await razorpayService.createRazorpayOrder({
       amountPaise: amountPaiseForGateway,
       receipt: order.order_number,

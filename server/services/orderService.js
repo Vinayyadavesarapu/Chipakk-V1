@@ -1075,6 +1075,11 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
 
       validatedCoupon = couponCheck.coupon;
       discountPaise = activeStoreId === 2 ? (validatedCoupon.discount_paise || 0) : (validatedCoupon.discount_rupees !== undefined ? validatedCoupon.discount_rupees : (validatedCoupon.discount_value || 0));
+
+      // Merchandise discount is strictly capped at the gross merchandise subtotal
+      if (discountPaise > subtotalPaise) {
+        discountPaise = subtotalPaise;
+      }
     }
 
     // 6. Server-side shipping fee calculation (store-scoped)
