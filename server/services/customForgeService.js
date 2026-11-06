@@ -11,6 +11,27 @@ const ALLOWED_NAMEPLATE_MATERIALS = ['Plastic', 'MDF'];
 const MAX_CUSTOMER_NAME_LENGTH = 35;
 const MAX_DESIGNATION_LENGTH = 50;
 
+const VARIANT_SLUG_TO_ID = {
+  'cf-lj-6in': 1,
+  'cf-lj-1ft': 2,
+  'cf-lj-2ft': 3,
+  'mrsh-cf-lj-6in': 1,
+  'mrsh-cf-lj-1ft': 2,
+  'mrsh-cf-lj-2ft': 3,
+  '1': 1,
+  '2': 2,
+  '3': 3
+};
+
+function normalizeVariantId(val) {
+  if (val === undefined || val === null) return null;
+  if (typeof val === 'number' && Number.isInteger(val) && val > 0) return val;
+  const key = String(val).trim().toLowerCase();
+  if (VARIANT_SLUG_TO_ID[key]) return VARIANT_SLUG_TO_ID[key];
+  const parsed = parseInt(val, 10);
+  return (!isNaN(parsed) && parsed > 0) ? parsed : null;
+}
+
 const ALLOWED_PRODUCTION_STATUSES = [
   'order_placed',
   '3d_printing',
@@ -230,15 +251,17 @@ const validateCustomization = (variant, customMode, customization) => {
     throw err;
   }
 
-  const { name, designation, material } = customization;
+  const rawName = customization.name !== undefined ? customization.name : customization.customer_name;
+  const rawDesignation = customization.designation !== undefined ? customization.designation : customization.customer_designation;
+  const rawMaterial = customization.material !== undefined ? customization.material : customization.nameplate_material;
 
   // Name validation: required, non-empty, max 35 chars
-  if (!name || typeof name !== 'string' || !name.trim()) {
+  if (!rawName || typeof rawName !== 'string' || !rawName.trim()) {
     const err = new Error('Name on custom nameplate is required.');
     err.statusCode = 400;
     throw err;
   }
-  const cleanName = name.trim();
+  const cleanName = rawName.trim();
   if (cleanName.length > MAX_CUSTOMER_NAME_LENGTH) {
     const err = new Error(`Customer name on nameplate cannot exceed ${MAX_CUSTOMER_NAME_LENGTH} characters.`);
     err.statusCode = 400;
@@ -246,12 +269,12 @@ const validateCustomization = (variant, customMode, customization) => {
   }
 
   // Designation validation: required, max 50 chars; literal 'NIL' accepted
-  if (designation === undefined || designation === null || typeof designation !== 'string') {
+  if (rawDesignation === undefined || rawDesignation === null || typeof rawDesignation !== 'string') {
     const err = new Error('Designation on custom nameplate is required (or "NIL").');
     err.statusCode = 400;
     throw err;
   }
-  const cleanDesignation = designation.trim();
+  const cleanDesignation = rawDesignation.trim();
   if (!cleanDesignation) {
     const err = new Error('Designation on custom nameplate cannot be empty (enter "NIL" if none).');
     err.statusCode = 400;
@@ -265,12 +288,12 @@ const validateCustomization = (variant, customMode, customization) => {
   const normalizedDesignation = cleanDesignation.toUpperCase() === 'NIL' ? 'NIL' : cleanDesignation;
 
   // Nameplate material validation: exactly 'Plastic' or 'MDF'
-  if (!material || typeof material !== 'string' || !ALLOWED_NAMEPLATE_MATERIALS.includes(material.trim())) {
-    const err = new Error(`Nameplate material must be exactly 'Plastic' or 'MDF'. Received: '${material}'.`);
+  if (!rawMaterial || typeof rawMaterial !== 'string' || !ALLOWED_NAMEPLATE_MATERIALS.includes(rawMaterial.trim())) {
+    const err = new Error(`Nameplate material must be exactly 'Plastic' or 'MDF'. Received: '${rawMaterial}'.`);
     err.statusCode = 400;
     throw err;
   }
-  const cleanMaterial = material.trim();
+  const cleanMaterial = rawMaterial.trim();
 
   return {
     custom_mode_enabled: 1,
@@ -304,6 +327,7 @@ const createCustomForgeOrder = async (orderPayload, firebaseUser, requestStoreId
     variant_id,
     custom_mode,
     customization,
+    items,
     shipping_address,
     customer_notes,
     payment_method
@@ -321,12 +345,42 @@ const createCustomForgeOrder = async (orderPayload, firebaseUser, requestStoreId
     throw err;
   }
 
-  // 3. Validate variant ID
-  const numVariantId = parseInt(variant_id, 10);
-  if (isNaN(numVariantId) || numVariantId <= 0) {
-    const err = new Error('Valid Custom Forge product variant ID is required.');
-    err.statusCode = 400;
-    throw err;
+  // 3. Normalize and validate items array (supports both multi-item and backward-compatible single variant)
+  let rawItems = [];
+  if (Array.isArray(items) && items.length > 0) {
+    rawItems = items;
+  } else {
+    const singleVariantId = normalizeVariantId(variant_id !== undefined && variant_id !== null ? variant_id : orderPayload?.variant_key);
+    if (singleVariantId) {
+      rawItems = [{
+        variant_id: singleVariantId,
+        quantity: orderPayload.quantity || 1,
+        custom_mode,
+        customization
+      }];
+    } else {
+      const err = new Error('Valid Custom Forge product variant ID is required.');
+      err.statusCode = 400;
+      throw err;
+    }
+  }
+
+  // Pre-validate every item's structure
+  for (let idx = 0; idx < rawItems.length; idx++) {
+    const it = rawItems[idx];
+    const numVariantId = normalizeVariantId(it?.variant_id || it?.variant_numeric_id || it?.variant_key);
+    if (!numVariantId) {
+      const err = new Error('Valid Custom Forge product variant ID is required.');
+      err.statusCode = 400;
+      throw err;
+    }
+    it.variant_id = numVariantId;
+    const qty = parseInt(it?.quantity !== undefined && it?.quantity !== null ? it.quantity : 1, 10);
+    if (isNaN(qty) || qty <= 0 || qty > 100) {
+      const err = new Error(`Invalid quantity '${it?.quantity}'. Must be an integer between 1 and 100.`);
+      err.statusCode = 400;
+      throw err;
+    }
   }
 
   // 4. Validate shipping address
@@ -398,42 +452,59 @@ const createCustomForgeOrder = async (orderPayload, firebaseUser, requestStoreId
       throw err;
     }
 
-    // 6. Authoritative Variant Lookup from Database (Ignore any client-submitted prices)
-    const [variantRows] = await connection.execute(
-      `SELECT v.id, v.product_id, v.variant_sku, v.size_label, v.height_mm, v.price, v.custom_mode_allowed, v.active,
-              p.name AS product_name, p.store_id
-       FROM custom_forge_product_variants v
-       JOIN custom_forge_products p ON v.product_id = p.id
-       WHERE v.id = ? AND v.active = 1 AND p.active = 1 AND p.store_id = 2
-       LIMIT 1`,
-      [numVariantId]
-    );
+    // 6. Authoritative Variant Lookup & Item Validation (Ignore any client-submitted prices)
+    const preparedItems = [];
+    let subtotalPaise = 0;
 
-    if (!variantRows || variantRows.length === 0) {
-      const err = new Error(`Variant #${numVariantId} is invalid or no longer available for Custom Forge.`);
-      err.statusCode = 400;
-      throw err;
+    for (const it of rawItems) {
+      const numVariantId = parseInt(it.variant_id, 10);
+      const qty = parseInt(it.quantity !== undefined && it.quantity !== null ? it.quantity : 1, 10);
+
+      const [variantRows] = await connection.execute(
+        `SELECT v.id, v.product_id, v.variant_sku, v.size_label, v.height_mm, v.price, v.custom_mode_allowed, v.active,
+                p.name AS product_name, p.store_id
+         FROM custom_forge_product_variants v
+         JOIN custom_forge_products p ON v.product_id = p.id
+         WHERE v.id = ? AND v.active = 1 AND p.active = 1 AND p.store_id = 2
+         LIMIT 1`,
+        [numVariantId]
+      );
+
+      if (!variantRows || variantRows.length === 0) {
+        const err = new Error(`Variant #${numVariantId} is invalid or no longer available for Custom Forge.`);
+        err.statusCode = 400;
+        throw err;
+      }
+
+      const variant = variantRows[0];
+      const authoritativePricePaise = parseInt(variant.price, 10);
+      if (isNaN(authoritativePricePaise) || authoritativePricePaise <= 0) {
+        const err = new Error(`Variant #${numVariantId} has an invalid configured price.`);
+        err.statusCode = 500;
+        throw err;
+      }
+
+      // 7. Validate Custom Mode and Customization details for this line item
+      const validatedCustomization = validateCustomization(variant, it.custom_mode, it.customization);
+      const lineTotalPaise = authoritativePricePaise * qty;
+      subtotalPaise += lineTotalPaise;
+
+      preparedItems.push({
+        variant,
+        quantity: qty,
+        unitPricePaise: authoritativePricePaise,
+        lineTotalPaise,
+        validatedCustomization
+      });
     }
 
-    const variant = variantRows[0];
-    const authoritativePricePaise = parseInt(variant.price, 10);
-    if (isNaN(authoritativePricePaise) || authoritativePricePaise <= 0) {
-      const err = new Error(`Variant #${numVariantId} has an invalid configured price.`);
-      err.statusCode = 500;
-      throw err;
-    }
-
-    // 7. Validate Custom Mode and Customization details
-    const validatedCustomization = validateCustomization(variant, custom_mode, customization);
-
-    // 8. Calculate shipping using existing Marshans shipping logic
+    // 8. Calculate shipping on aggregate subtotal using existing Marshans shipping logic
     const shippingCheck = await shippingService.calculateShippingFee({
-      subtotal: authoritativePricePaise,
+      subtotal: subtotalPaise,
       region: state.trim(),
       storeId: 2
     });
     const shippingChargePaise = shippingCheck.shipping_fee || 0;
-    const subtotalPaise = authoritativePricePaise;
     const totalPricePaise = subtotalPaise + shippingChargePaise;
 
     // 8.1 Server-side GST (inclusive) following existing Marshans tax profile & composite shipping rules
@@ -446,12 +517,12 @@ const createCustomForgeOrder = async (orderPayload, firebaseUser, requestStoreId
       const taxProfile = await taxProfileService.getTaxProfile(2, { db: connection });
       if (taxProfile && taxProfile.gst_enabled && taxProfile.default_gst_rate > 0) {
         const orderTax = taxCore.computeOrderTax({
-          lines: [{
-            key: 0,
-            gross: subtotalPaise,
+          lines: preparedItems.map((item, idx) => ({
+            key: idx,
+            gross: item.lineTotalPaise,
             rate: taxProfile.default_gst_rate,
             hsn: null
-          }],
+          })),
           discount: 0,
           shipping: shippingChargePaise,
           gstEnabled: true,
@@ -492,7 +563,7 @@ const createCustomForgeOrder = async (orderPayload, firebaseUser, requestStoreId
       country: country ? country.trim() : 'India'
     };
 
-    // 12. Insert into custom_forge_orders
+    // 12. Insert into custom_forge_orders (Aggregate Order Header)
     const [orderRes] = await connection.execute(
       `INSERT INTO custom_forge_orders (
          store_id, order_number, customer_id, customer_email, customer_name, customer_phone,
@@ -518,39 +589,41 @@ const createCustomForgeOrder = async (orderPayload, firebaseUser, requestStoreId
     );
     const orderId = orderRes.insertId;
 
-    // 13. Insert into custom_forge_order_items (immutable variant & price snapshots)
-    const [itemRes] = await connection.execute(
-      `INSERT INTO custom_forge_order_items (
-         order_id, product_id, variant_id, product_name_snapshot, variant_sku_snapshot,
-         size_label_snapshot, height_mm_snapshot, unit_price, quantity, total_price
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
-      [
-        orderId,
-        variant.product_id,
-        variant.id,
-        variant.product_name,
-        variant.variant_sku,
-        variant.size_label,
-        variant.height_mm,
-        authoritativePricePaise,
-        authoritativePricePaise
-      ]
-    );
-    const orderItemId = itemRes.insertId;
+    // 13. Insert all items into custom_forge_order_items and customizations
+    for (const item of preparedItems) {
+      const [itemRes] = await connection.execute(
+        `INSERT INTO custom_forge_order_items (
+           order_id, product_id, variant_id, product_name_snapshot, variant_sku_snapshot,
+           size_label_snapshot, height_mm_snapshot, unit_price, quantity, total_price
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          orderId,
+          item.variant.product_id,
+          item.variant.id,
+          item.variant.product_name,
+          item.variant.variant_sku,
+          item.variant.size_label,
+          item.variant.height_mm,
+          item.unitPricePaise,
+          item.quantity,
+          item.lineTotalPaise
+        ]
+      );
+      const orderItemId = itemRes.insertId;
 
-    // 14. Insert into custom_forge_order_customizations
-    await connection.execute(
-      `INSERT INTO custom_forge_order_customizations (
-         order_item_id, custom_mode_enabled, customer_name, customer_designation, nameplate_material, verification_status
-       ) VALUES (?, ?, ?, ?, ?, 'pending')`,
-      [
-        orderItemId,
-        validatedCustomization.custom_mode_enabled,
-        validatedCustomization.customer_name,
-        validatedCustomization.customer_designation,
-        validatedCustomization.nameplate_material
-      ]
-    );
+      await connection.execute(
+        `INSERT INTO custom_forge_order_customizations (
+           order_item_id, custom_mode_enabled, customer_name, customer_designation, nameplate_material, verification_status
+         ) VALUES (?, ?, ?, ?, ?, 'pending')`,
+        [
+          orderItemId,
+          item.validatedCustomization.custom_mode_enabled,
+          item.validatedCustomization.customer_name,
+          item.validatedCustomization.customer_designation,
+          item.validatedCustomization.nameplate_material
+        ]
+      );
+    }
 
     // 15. Record initial status history transition
     await connection.execute(
