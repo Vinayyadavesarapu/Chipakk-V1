@@ -1,5 +1,6 @@
 const { pool } = require('../config/database');
 const razorpayService = require('./razorpayService');
+const customForgeService = require('./customForgeService');
 
 /**
  * CHIPAKK — Payment Service Layer
@@ -86,31 +87,93 @@ const releaseCouponReservation = async (orderId, connection = pool) => {
  */
 const createPaymentOrder = async (orderId, firebaseUser, reqStoreId) => {
   const numId = parseInt(orderId, 10);
-  if (isNaN(numId) || numId <= 0) {
+  const isNumeric = !isNaN(numId) && numId > 0;
+  if (!isNumeric && (!orderId || typeof orderId !== 'string' || !orderId.trim())) {
     const err = new Error('Invalid order ID provided.');
     err.status = 400;
     throw err;
   }
 
-  // 1. Load order from MySQL
-  const [orderRows] = await pool.execute(
-    `SELECT id, order_number, customer_id, customer_email, customer_name,
-            shipping_address, payment_method, payment_status, fulfillment_status,
-            total_price, gateway_order_id, COALESCE(store_id, 1) AS store_id
-     FROM orders
-     WHERE id = ?
-     LIMIT 1`,
-    [numId]
-  );
+  let order = null;
+  let orderStoreId = 1;
+  let isCustomForge = false;
 
-  if (!orderRows || orderRows.length === 0) {
+  const cleanIdStr = String(orderId).trim();
+  const isCfOrderNumber = cleanIdStr.startsWith('CF-');
+  const parsedReqStoreId = reqStoreId !== undefined && reqStoreId !== null ? parseInt(reqStoreId, 10) : null;
+
+  // 1. If explicit Custom Forge order number or Store 2 active: check custom_forge_orders first
+  if (isCfOrderNumber || parsedReqStoreId === 2) {
+    try {
+      const [cfRows] = await pool.execute(
+        `SELECT id, order_number, customer_id, customer_email, customer_name, customer_phone,
+                shipping_address, payment_method, payment_status, production_status AS fulfillment_status,
+                total_price, gateway_order_id, store_id
+         FROM custom_forge_orders
+         WHERE (order_number = ? OR (id = ? AND store_id = 2)) AND store_id = 2
+         LIMIT 1`,
+        [cleanIdStr, isNumeric ? numId : 0]
+      );
+
+      if (cfRows && cfRows.length > 0) {
+        order = cfRows[0];
+        orderStoreId = 2;
+        isCustomForge = true;
+      }
+    } catch (_) {}
+  }
+
+  // 2. Try loading order from retail orders table if numeric and not already matched
+  if (!order && isNumeric) {
+    const storeFilterSql = (parsedReqStoreId === 2)
+      ? ' AND COALESCE(store_id, 1) = 2'
+      : (parsedReqStoreId === 1 ? ' AND COALESCE(store_id, 1) = 1' : '');
+
+    const [orderRows] = await pool.execute(
+      `SELECT id, order_number, customer_id, customer_email, customer_name,
+              shipping_address, payment_method, payment_status, fulfillment_status,
+              total_price, gateway_order_id, COALESCE(store_id, 1) AS store_id
+       FROM orders
+       WHERE id = ?${storeFilterSql}
+       LIMIT 1`,
+      [numId]
+    );
+
+    if (orderRows && orderRows.length > 0) {
+      order = orderRows[0];
+      orderStoreId = parseInt(order.store_id, 10) || 1;
+      isCustomForge = false;
+    }
+  }
+
+  // 3. Fallback: If not found in retail orders, check dedicated custom_forge_orders (Store 2)
+  if (!order) {
+    try {
+      const [cfRows] = await pool.execute(
+        `SELECT id, order_number, customer_id, customer_email, customer_name, customer_phone,
+                shipping_address, payment_method, payment_status, production_status AS fulfillment_status,
+                total_price, gateway_order_id, store_id
+         FROM custom_forge_orders
+         WHERE (id = ? OR order_number = ?) AND store_id = 2
+         LIMIT 1`,
+        [isNumeric ? numId : 0, cleanIdStr]
+      );
+
+      if (cfRows && cfRows.length > 0) {
+        order = cfRows[0];
+        orderStoreId = 2;
+        isCustomForge = true;
+      }
+    } catch (_) {
+      // Custom Forge table may not exist if migration is pending
+    }
+  }
+
+  if (!order) {
     const err = new Error('Order not found.');
     err.status = 404;
     throw err;
   }
-
-  const order = orderRows[0];
-  const orderStoreId = parseInt(order.store_id, 10) || 1;
 
   // 2. Enforce supported stores: Store 1 (CHIPAKK) and Store 2 (THE MARSHANS)
   if (orderStoreId !== 1 && orderStoreId !== 2) {
@@ -130,9 +193,15 @@ const createPaymentOrder = async (orderId, firebaseUser, reqStoreId) => {
   }
 
   // 3. Verify order ownership
-  const user = await findUserByFirebaseUid(firebaseUser.uid);
+  let user = await findUserByFirebaseUid(firebaseUser.uid);
+  const emailVerified = Boolean(
+    firebaseUser.emailVerified ||
+    firebaseUser.email_verified ||
+    firebaseUser.token?.email_verified
+  );
   const isOwner = (user && order.customer_id && Number(user.id) === Number(order.customer_id)) ||
-                  (order.customer_email && firebaseUser.email && Boolean(firebaseUser.email_verified) && order.customer_email.toLowerCase() === firebaseUser.email.toLowerCase());
+                  (order.customer_email && firebaseUser.email && emailVerified && order.customer_email.toLowerCase() === firebaseUser.email.toLowerCase()) ||
+                  (order.customer_phone && firebaseUser.token?.phone_number && order.customer_phone === firebaseUser.token?.phone_number);
 
   if (!isOwner) {
     const err = new Error('Access denied. You do not have permission to pay for this order.');
@@ -168,7 +237,7 @@ const createPaymentOrder = async (orderId, firebaseUser, reqStoreId) => {
   // Razorpay REST API strictly mandates amount in paise.
   // For Store 1 (CHIPAKK), DB stores whole rupees (e.g. ₹15 = DB 15).
   // We convert to paise ONLY when calling the Razorpay gateway (15 * 100 = 1500).
-  const isStore2 = parseInt(order.store_id, 10) === 2;
+  const isStore2 = parseInt(order.store_id, 10) === 2 || isCustomForge;
   const amountPaiseForGateway = isStore2 ? rawTotalPrice : (rawTotalPrice * 100);
 
   let gatewayOrder;
@@ -186,7 +255,8 @@ const createPaymentOrder = async (orderId, firebaseUser, reqStoreId) => {
       notes: {
         order_id: String(order.id),
         order_number: order.order_number,
-        customer_id: String(order.customer_id || '')
+        customer_id: String(order.customer_id || ''),
+        ...(isCustomForge ? { custom_forge: 'true' } : {})
       },
       storeId: orderStoreId
     });
@@ -196,18 +266,32 @@ const createPaymentOrder = async (orderId, firebaseUser, reqStoreId) => {
     try {
       await connection.beginTransaction();
 
-      await connection.execute(
-        'UPDATE orders SET gateway_order_id = ?, updated_at = NOW() WHERE id = ?',
-        [gatewayOrder.gateway_order_id, order.id]
-      );
+      if (isCustomForge) {
+        await connection.execute(
+          'UPDATE custom_forge_orders SET gateway_order_id = ?, updated_at = NOW() WHERE id = ?',
+          [gatewayOrder.gateway_order_id, order.id]
+        );
 
-      // Insert payment record
-      await connection.execute(
-        `INSERT INTO payments (
-          order_id, provider, gateway_order_id, amount, currency, status, created_at
-        ) VALUES (?, 'razorpay', ?, ?, ?, 'created', NOW())`,
-        [order.id, gatewayOrder.gateway_order_id, amountPaiseForGateway, gatewayOrder.currency || 'INR']
-      );
+        await connection.execute(
+          `INSERT INTO custom_forge_payments (
+            order_id, provider, gateway_order_id, amount, currency, status, created_at
+          ) VALUES (?, 'razorpay', ?, ?, ?, 'created', NOW())`,
+          [order.id, gatewayOrder.gateway_order_id, amountPaiseForGateway, gatewayOrder.currency || 'INR']
+        );
+      } else {
+        await connection.execute(
+          'UPDATE orders SET gateway_order_id = ?, updated_at = NOW() WHERE id = ?',
+          [gatewayOrder.gateway_order_id, order.id]
+        );
+
+        // Insert payment record
+        await connection.execute(
+          `INSERT INTO payments (
+            order_id, provider, gateway_order_id, amount, currency, status, created_at
+          ) VALUES (?, 'razorpay', ?, ?, ?, 'created', NOW())`,
+          [order.id, gatewayOrder.gateway_order_id, amountPaiseForGateway, gatewayOrder.currency || 'INR']
+        );
+      }
 
       await connection.commit();
     } catch (dbErr) {
@@ -219,13 +303,15 @@ const createPaymentOrder = async (orderId, firebaseUser, reqStoreId) => {
   }
 
   // Parse phone from shipping address if available
-  let phone = '';
-  try {
-    const addr = typeof order.shipping_address === 'string'
-      ? JSON.parse(order.shipping_address)
-      : order.shipping_address;
-    phone = addr?.phone || '';
-  } catch (e) {}
+  let phone = order.customer_phone || '';
+  if (!phone) {
+    try {
+      const addr = typeof order.shipping_address === 'string'
+        ? JSON.parse(order.shipping_address)
+        : order.shipping_address;
+      phone = addr?.phone || '';
+    } catch (e) {}
+  }
 
   // 6. Return only safe public checkout configuration to browser
   return {
@@ -239,7 +325,9 @@ const createPaymentOrder = async (orderId, firebaseUser, reqStoreId) => {
     customer_name: order.customer_name || '',
     customer_email: order.customer_email || '',
     customer_phone: phone,
-    ...(process.env.RAZORPAY_CHECKOUT_CONFIG_ID ? { checkout_config_id: process.env.RAZORPAY_CHECKOUT_CONFIG_ID } : {})
+    ...(process.env.MARSHANS_RAZORPAY_CHECKOUT_CONFIG_ID || process.env.RAZORPAY_CHECKOUT_CONFIG_ID
+      ? { checkout_config_id: process.env.MARSHANS_RAZORPAY_CHECKOUT_CONFIG_ID || process.env.RAZORPAY_CHECKOUT_CONFIG_ID }
+      : {})
   };
 };
 
@@ -257,7 +345,8 @@ const verifyPayment = async (params, firebaseUser, reqStoreId) => {
   const { order_id, razorpay_order_id, razorpay_payment_id, razorpay_signature } = params;
 
   const numId = parseInt(order_id, 10);
-  if (isNaN(numId) || numId <= 0) {
+  const isNumeric = !isNaN(numId) && numId > 0;
+  if (!isNumeric && (!order_id || typeof order_id !== 'string' || !order_id.trim())) {
     const err = new Error('Invalid order ID provided.');
     err.status = 400;
     throw err;
@@ -269,24 +358,81 @@ const verifyPayment = async (params, firebaseUser, reqStoreId) => {
     throw err;
   }
 
-  // 1. Load order from MySQL
-  const [orderRows] = await pool.execute(
-    `SELECT id, order_number, customer_id, customer_email, total_price,
-            payment_status, fulfillment_status, gateway_order_id, COALESCE(store_id, 1) AS store_id
-     FROM orders
-     WHERE id = ?
-     LIMIT 1`,
-    [numId]
-  );
+  let order = null;
+  let orderStoreId = 1;
+  let isCustomForge = false;
 
-  if (!orderRows || orderRows.length === 0) {
+  const cleanIdStr = String(order_id).trim();
+  const isCfOrderNumber = cleanIdStr.startsWith('CF-');
+  const parsedReqStoreId = reqStoreId !== undefined && reqStoreId !== null ? parseInt(reqStoreId, 10) : null;
+
+  // 1. If explicit Custom Forge order number or Store 2 active: check custom_forge_orders first
+  if (isCfOrderNumber || parsedReqStoreId === 2) {
+    try {
+      const [cfRows] = await pool.execute(
+        `SELECT id, order_number, customer_id, customer_email, customer_phone, total_price,
+                payment_status, production_status AS fulfillment_status, gateway_order_id, store_id
+         FROM custom_forge_orders
+         WHERE (order_number = ? OR (id = ? AND store_id = 2)) AND store_id = 2
+         LIMIT 1`,
+        [cleanIdStr, isNumeric ? numId : 0]
+      );
+
+      if (cfRows && cfRows.length > 0) {
+        order = cfRows[0];
+        orderStoreId = 2;
+        isCustomForge = true;
+      }
+    } catch (_) {}
+  }
+
+  // 2. Try loading order from retail orders table if numeric
+  if (!order && isNumeric) {
+    const storeFilterSql = (parsedReqStoreId === 2)
+      ? ' AND COALESCE(store_id, 1) = 2'
+      : (parsedReqStoreId === 1 ? ' AND COALESCE(store_id, 1) = 1' : '');
+
+    const [orderRows] = await pool.execute(
+      `SELECT id, order_number, customer_id, customer_email, total_price,
+              payment_status, fulfillment_status, gateway_order_id, COALESCE(store_id, 1) AS store_id
+       FROM orders
+       WHERE id = ?${storeFilterSql}
+       LIMIT 1`,
+      [numId]
+    );
+
+    if (orderRows && orderRows.length > 0) {
+      order = orderRows[0];
+      orderStoreId = parseInt(order.store_id, 10) || 1;
+      isCustomForge = false;
+    }
+  }
+
+  // 3. Fallback: check custom_forge_orders (Store 2)
+  if (!order) {
+    try {
+      const [cfRows] = await pool.execute(
+        `SELECT id, order_number, customer_id, customer_email, customer_phone, total_price,
+                payment_status, production_status AS fulfillment_status, gateway_order_id, store_id
+         FROM custom_forge_orders
+         WHERE (id = ? OR order_number = ?) AND store_id = 2
+         LIMIT 1`,
+        [isNumeric ? numId : 0, cleanIdStr]
+      );
+
+      if (cfRows && cfRows.length > 0) {
+        order = cfRows[0];
+        orderStoreId = 2;
+        isCustomForge = true;
+      }
+    } catch (_) {}
+  }
+
+  if (!order) {
     const err = new Error('Order not found.');
     err.status = 404;
     throw err;
   }
-
-  const order = orderRows[0];
-  const orderStoreId = parseInt(order.store_id, 10) || 1;
 
   // 2. Enforce supported stores: Store 1 (CHIPAKK) and Store 2 (THE MARSHANS)
   if (orderStoreId !== 1 && orderStoreId !== 2) {
@@ -316,7 +462,9 @@ const verifyPayment = async (params, firebaseUser, reqStoreId) => {
     };
   }
 
-  const amountPaise = toGatewayPaise(order.total_price, order.store_id);
+  const rawTotalPrice = parseInt(order.total_price, 10) || 0;
+  const isStore2 = parseInt(order.store_id, 10) === 2 || isCustomForge;
+  const amountPaise = isStore2 ? rawTotalPrice : (rawTotalPrice * 100);
 
   // 4. Verify client amount if provided
   if (params.amount !== undefined && params.amount !== null) {
@@ -329,9 +477,15 @@ const verifyPayment = async (params, firebaseUser, reqStoreId) => {
   }
 
   // 5. Verify order ownership
-  const user = await findUserByFirebaseUid(firebaseUser.uid);
+  let user = await findUserByFirebaseUid(firebaseUser.uid);
+  const emailVerified = Boolean(
+    firebaseUser.emailVerified ||
+    firebaseUser.email_verified ||
+    firebaseUser.token?.email_verified
+  );
   const isOwner = (user && order.customer_id && Number(user.id) === Number(order.customer_id)) ||
-                  (order.customer_email && firebaseUser.email && Boolean(firebaseUser.email_verified) && order.customer_email.toLowerCase() === firebaseUser.email.toLowerCase());
+                  (order.customer_email && firebaseUser.email && emailVerified && order.customer_email.toLowerCase() === firebaseUser.email.toLowerCase()) ||
+                  (order.customer_phone && firebaseUser.token?.phone_number && order.customer_phone === firebaseUser.token?.phone_number);
 
   if (!isOwner) {
     const err = new Error('Access denied. You cannot verify payment for this order.');
@@ -353,8 +507,9 @@ const verifyPayment = async (params, firebaseUser, reqStoreId) => {
   }
 
   // 7. Prevent duplicate gateway_payment_id reuse across different orders
+  const paymentsTable = isCustomForge ? 'custom_forge_payments' : 'payments';
   const [existingPayment] = await pool.execute(
-    'SELECT id, order_id, status FROM payments WHERE gateway_payment_id = ? LIMIT 1',
+    `SELECT id, order_id, status FROM ${paymentsTable} WHERE gateway_payment_id = ? LIMIT 1`,
     [razorpay_payment_id]
   );
   if (existingPayment && existingPayment.length > 0) {
@@ -386,18 +541,27 @@ const verifyPayment = async (params, firebaseUser, reqStoreId) => {
   if (!isValid) {
     // Record failed verification attempt for security auditing
     try {
-      await pool.execute(
-        `INSERT INTO payments (
-          order_id, provider, gateway_order_id, gateway_payment_id, gateway_signature,
-          amount, currency, status, error_code, error_description, created_at
-        ) VALUES (?, 'razorpay', ?, ?, ?, ?, 'INR', 'failed', 'INVALID_SIGNATURE', 'Cryptographic signature mismatch', NOW())
-        ON DUPLICATE KEY UPDATE status = 'failed', error_code = 'INVALID_SIGNATURE', updated_at = NOW()`,
-        [order.id, razorpay_order_id, razorpay_payment_id, razorpay_signature, amountPaise]
-      );
+      if (isCustomForge) {
+        await pool.execute(
+          `INSERT INTO custom_forge_payments (
+            order_id, provider, gateway_order_id, gateway_payment_id, gateway_signature,
+            amount, currency, status, error_code, error_description, created_at
+          ) VALUES (?, 'razorpay', ?, ?, ?, ?, 'INR', 'failed', 'INVALID_SIGNATURE', 'Cryptographic signature mismatch', NOW())`,
+          [order.id, razorpay_order_id, razorpay_payment_id, razorpay_signature, amountPaise]
+        );
+      } else {
+        await pool.execute(
+          `INSERT INTO payments (
+            order_id, provider, gateway_order_id, gateway_payment_id, gateway_signature,
+            amount, currency, status, error_code, error_description, created_at
+          ) VALUES (?, 'razorpay', ?, ?, ?, ?, 'INR', 'failed', 'INVALID_SIGNATURE', 'Cryptographic signature mismatch', NOW())
+          ON DUPLICATE KEY UPDATE status = 'failed', error_code = 'INVALID_SIGNATURE', updated_at = NOW()`,
+          [order.id, razorpay_order_id, razorpay_payment_id, razorpay_signature, amountPaise]
+        );
+        // Release coupon reservation on failure
+        await releaseCouponReservation(order.id);
+      }
     } catch (e) {}
-
-    // Release coupon reservation on failure
-    await releaseCouponReservation(order.id);
 
     const err = new Error('Payment signature verification failed. The payment could not be validated.');
     err.status = 400;
@@ -405,6 +569,25 @@ const verifyPayment = async (params, firebaseUser, reqStoreId) => {
   }
 
   // 9. Update Order and Payment records atomically to PAID
+  if (isCustomForge) {
+    await customForgeService.recordCustomForgePaymentSuccess({
+      orderId: order.id,
+      gatewayOrderId: razorpay_order_id,
+      gatewayPaymentId: razorpay_payment_id,
+      gatewaySignature: razorpay_signature,
+      amountPaise,
+      method: params.method || 'card',
+      actor: 'Customer Checkout'
+    });
+
+    return {
+      success: true,
+      payment_status: 'paid',
+      order_id: order.id,
+      order_number: order.order_number
+    };
+  }
+
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
@@ -514,6 +697,7 @@ const handleWebhook = async (rawBody, signatureHeader) => {
 
     // Lookup order by gateway_order_id or notes.order_id
     let order = null;
+    let isCustomForge = false;
     const [orderRows] = await pool.execute(
       'SELECT id, order_number, store_id, total_price, payment_status, fulfillment_status FROM orders WHERE gateway_order_id = ? LIMIT 1',
       [gatewayOrderId]
@@ -529,6 +713,32 @@ const handleWebhook = async (rawBody, signatureHeader) => {
       if (orderById && orderById.length > 0) order = orderById[0];
     }
 
+    // If not found in retail orders, check custom_forge_orders
+    if (!order) {
+      try {
+        const [cfRows] = await pool.execute(
+          'SELECT id, order_number, store_id, total_price, payment_status FROM custom_forge_orders WHERE gateway_order_id = ? LIMIT 1',
+          [gatewayOrderId]
+        );
+        if (cfRows && cfRows.length > 0) {
+          order = cfRows[0];
+          isCustomForge = true;
+        } else if (paymentEntity.notes?.order_id) {
+          const cfId = parseInt(paymentEntity.notes.order_id, 10);
+          if (!isNaN(cfId) && cfId > 0) {
+            const [cfById] = await pool.execute(
+              'SELECT id, order_number, store_id, total_price, payment_status FROM custom_forge_orders WHERE id = ? LIMIT 1',
+              [cfId]
+            );
+            if (cfById && cfById.length > 0) {
+              order = cfById[0];
+              isCustomForge = true;
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
     if (!order) {
       console.warn(`[Payment Webhook] Order not found for gateway order: ${gatewayOrderId}`);
       return { status: 'order_not_found', gateway_order_id: gatewayOrderId };
@@ -541,7 +751,7 @@ const handleWebhook = async (rawBody, signatureHeader) => {
 
     // Verify captured amount in paise matches expected gateway amount
     const rawTotalPrice = parseInt(order.total_price, 10) || 0;
-    const isStore2 = parseInt(order.store_id, 10) === 2;
+    const isStore2 = parseInt(order.store_id, 10) === 2 || isCustomForge;
     const expectedPaise = isStore2 ? rawTotalPrice : (rawTotalPrice * 100);
 
     if (amountPaise < expectedPaise) {
@@ -549,7 +759,21 @@ const handleWebhook = async (rawBody, signatureHeader) => {
       return { status: 'amount_mismatch', reason: 'underpaid', order_id: order.id };
     }
 
-    // Atomic update
+    if (isCustomForge) {
+      await customForgeService.recordCustomForgePaymentSuccess({
+        orderId: order.id,
+        gatewayOrderId,
+        gatewayPaymentId,
+        gatewaySignature: signatureHeader,
+        amountPaise,
+        method,
+        actor: 'Razorpay Webhook'
+      });
+      console.log(`[Payment Webhook] Successfully reconciled Custom Forge order #${order.order_number} to PAID.`);
+      return { status: 'reconciled', order_number: order.order_number, payment_status: 'paid' };
+    }
+
+    // Atomic update for retail orders
     const connection = await pool.getConnection();
     try {
       await connection.beginTransaction();
@@ -625,6 +849,22 @@ const handleWebhook = async (rawBody, signatureHeader) => {
 
           // Release coupon reservation on payment failure
           await releaseCouponReservation(ord.id);
+        } else {
+          // Check custom_forge_orders
+          const [cfRows] = await pool.execute(
+            'SELECT id, order_number FROM custom_forge_orders WHERE gateway_order_id = ? LIMIT 1',
+            [gatewayOrderId]
+          );
+          if (cfRows && cfRows.length > 0) {
+            const cfOrd = cfRows[0];
+            await pool.execute(
+              `INSERT INTO custom_forge_payments (
+                order_id, provider, gateway_order_id, gateway_payment_id,
+                amount, currency, status, error_code, error_description, created_at
+              ) VALUES (?, 'razorpay', ?, ?, ?, 'INR', 'failed', ?, ?, NOW())`,
+              [cfOrd.id, gatewayOrderId, gatewayPaymentId, paymentEntity.amount || 0, errorCode, errorDesc]
+            );
+          }
         }
       } catch (e) {}
     }
@@ -643,30 +883,90 @@ const handleWebhook = async (rawBody, signatureHeader) => {
  */
 const getPaymentStatus = async (orderId, firebaseUser, reqStoreId) => {
   const numId = parseInt(orderId, 10);
-  if (isNaN(numId) || numId <= 0) {
+  const isNumeric = !isNaN(numId) && numId > 0;
+  if (!isNumeric && (!orderId || typeof orderId !== 'string' || !orderId.trim())) {
     const err = new Error('Invalid order ID.');
     err.status = 400;
     throw err;
   }
 
-  const [rows] = await pool.execute(
-    `SELECT id, order_number, customer_id, customer_email, payment_method,
-            payment_status, fulfillment_status, total_price, gateway_order_id,
-            COALESCE(store_id, 1) AS store_id
-     FROM orders
-     WHERE id = ?
-     LIMIT 1`,
-    [numId]
-  );
+  let order = null;
+  let orderStoreId = 1;
+  let isCustomForge = false;
 
-  if (!rows || rows.length === 0) {
+  const cleanIdStr = String(orderId).trim();
+  const isCfOrderNumber = cleanIdStr.startsWith('CF-');
+  const parsedReqStoreId = reqStoreId !== undefined && reqStoreId !== null ? parseInt(reqStoreId, 10) : null;
+
+  // 1. If explicit Custom Forge order number or Store 2 active: check custom_forge_orders first
+  if (isCfOrderNumber || parsedReqStoreId === 2) {
+    try {
+      const [cfRows] = await pool.execute(
+        `SELECT id, order_number, customer_id, customer_email, customer_phone, payment_method,
+                payment_status, production_status AS fulfillment_status, total_price, gateway_order_id,
+                store_id
+         FROM custom_forge_orders
+         WHERE (order_number = ? OR (id = ? AND store_id = 2)) AND store_id = 2
+         LIMIT 1`,
+        [cleanIdStr, isNumeric ? numId : 0]
+      );
+
+      if (cfRows && cfRows.length > 0) {
+        order = cfRows[0];
+        orderStoreId = 2;
+        isCustomForge = true;
+      }
+    } catch (_) {}
+  }
+
+  // 2. Try loading order from retail orders table if numeric
+  if (!order && isNumeric) {
+    const storeFilterSql = (parsedReqStoreId === 2)
+      ? ' AND COALESCE(store_id, 1) = 2'
+      : (parsedReqStoreId === 1 ? ' AND COALESCE(store_id, 1) = 1' : '');
+
+    const [rows] = await pool.execute(
+      `SELECT id, order_number, customer_id, customer_email, payment_method,
+              payment_status, fulfillment_status, total_price, gateway_order_id,
+              COALESCE(store_id, 1) AS store_id
+       FROM orders
+       WHERE id = ?${storeFilterSql}
+       LIMIT 1`,
+      [numId]
+    );
+
+    if (rows && rows.length > 0) {
+      order = rows[0];
+      orderStoreId = parseInt(order.store_id, 10) || 1;
+    }
+  }
+
+  // 3. Fallback: check custom_forge_orders (Store 2)
+  if (!order) {
+    try {
+      const [cfRows] = await pool.execute(
+        `SELECT id, order_number, customer_id, customer_email, customer_phone, payment_method,
+                payment_status, production_status AS fulfillment_status, total_price, gateway_order_id,
+                store_id
+         FROM custom_forge_orders
+         WHERE (id = ? OR order_number = ?) AND store_id = 2
+         LIMIT 1`,
+        [isNumeric ? numId : 0, cleanIdStr]
+      );
+
+      if (cfRows && cfRows.length > 0) {
+        order = cfRows[0];
+        orderStoreId = 2;
+        isCustomForge = true;
+      }
+    } catch (_) {}
+  }
+
+  if (!order) {
     const err = new Error('Order not found.');
     err.status = 404;
     throw err;
   }
-
-  const order = rows[0];
-  const orderStoreId = parseInt(order.store_id, 10) || 1;
 
   // Enforce supported stores: Store 1 (CHIPAKK) and Store 2 (THE MARSHANS)
   if (orderStoreId !== 1 && orderStoreId !== 2) {
@@ -686,8 +986,14 @@ const getPaymentStatus = async (orderId, firebaseUser, reqStoreId) => {
   }
 
   const user = await findUserByFirebaseUid(firebaseUser.uid);
+  const emailVerified = Boolean(
+    firebaseUser.emailVerified ||
+    firebaseUser.email_verified ||
+    firebaseUser.token?.email_verified
+  );
   const isOwner = (user && order.customer_id && Number(user.id) === Number(order.customer_id)) ||
-                  (order.customer_email && firebaseUser.email && Boolean(firebaseUser.email_verified) && order.customer_email.toLowerCase() === firebaseUser.email.toLowerCase());
+                  (order.customer_email && firebaseUser.email && emailVerified && order.customer_email.toLowerCase() === firebaseUser.email.toLowerCase()) ||
+                  (order.customer_phone && firebaseUser.token?.phone_number && order.customer_phone === firebaseUser.token?.phone_number);
 
   if (!isOwner) {
     const err = new Error('Access denied.');
@@ -702,7 +1008,8 @@ const getPaymentStatus = async (orderId, firebaseUser, reqStoreId) => {
     fulfillment_status: order.fulfillment_status,
     payment_method: order.payment_method,
     total_price: order.total_price,
-    gateway_order_id: order.gateway_order_id
+    gateway_order_id: order.gateway_order_id,
+    ...(isCustomForge ? { is_custom_forge: true } : {})
   };
 };
 
