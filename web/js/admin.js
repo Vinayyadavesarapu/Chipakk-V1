@@ -1304,8 +1304,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (loginSection) loginSection.style.display = 'none';
                 if (adminWorkspace) adminWorkspace.style.display = 'flex';
                 startInactivityTracker();
-                initDashboard();
-                await loadAllAdminData();
+                try {
+                    initDashboard();
+                    await loadAllAdminData();
+                } catch (initErr) {
+                    console.error("[Dashboard Initialization Error]", initErr);
+                    showToast(`Dashboard initialization warning: ${initErr.message}`, "warning");
+                }
             } catch (err) {
                 console.warn("[Auth State] Admin verification rejected:", err.message, "status:", err.status);
                 stopInactivityTracker();
@@ -1330,6 +1335,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 } else if (err.status === 404) {
                     clearAdminSession();
                     const msg = `Admin verification endpoint not found (HTTP 404): ${detailMessage}`;
+                    if (loginError) loginError.textContent = msg;
+                    showToast(msg, "error");
+                } else if (err instanceof ReferenceError || err instanceof SyntaxError) {
+                    // Client-side JavaScript execution error - do NOT misclassify as network/server error
+                    const msg = `Application error (${err.name}): ${err.message}`;
                     if (loginError) loginError.textContent = msg;
                     showToast(msg, "error");
                 } else {
@@ -1394,8 +1404,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (loginSection) loginSection.style.display = 'none';
                 if (adminWorkspace) adminWorkspace.style.display = 'flex';
                 startInactivityTracker();
-                initDashboard();
-                await loadAllAdminData();
+                try {
+                    initDashboard();
+                    await loadAllAdminData();
+                } catch (initErr) {
+                    console.error("[Dashboard Initialization Error]", initErr);
+                    showToast(`Dashboard initialization warning: ${initErr.message}`, "warning");
+                }
             } catch (err) {
                 console.error("[Login Error]", err);
                 stopInactivityTracker();
@@ -1428,6 +1443,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     showToast(errorMsg, "warning");
                 } else if (err.status === 404) {
                     errorMsg = `Admin endpoint not found (HTTP 404): ${detailMessage || 'The requested verification route does not exist.'}`;
+                    if (loginError) loginError.textContent = errorMsg;
+                    showToast(errorMsg, "error");
+                } else if (err instanceof ReferenceError || err instanceof SyntaxError) {
+                    errorMsg = `Application error (${err.name}): ${err.message}. Please reload the terminal.`;
                     if (loginError) loginError.textContent = errorMsg;
                     showToast(errorMsg, "error");
                 } else if (err.status === 504 || (err.message && err.message.includes('timeout'))) {
@@ -1594,6 +1613,256 @@ function restoreInitialTab() {
     }
 
     switchAdminTab(initialTab, { updateHash: true, scrollToTop: false });
+}
+
+// =========================================================================
+// MULTI-STORE CONTEXT SWITCHER HANDLERS
+// =========================================================================
+
+function updateStoreSwitcherUI(storeId, options = {}) {
+    const switchTab = options.switchTab !== false;
+    const btnChipakk = document.getElementById('switch-store-chipakk');
+    const btnMarshans = document.getElementById('switch-store-marshans');
+    const badge = document.getElementById('active-store-badge');
+    const domain = document.getElementById('active-store-domain');
+    const shipStoreLabel = document.getElementById('shipping-store-label');
+
+    // Dynamic element labels & headings
+    const navProdLabel = document.getElementById('nav-products-label');
+    const prodTabHeading = document.getElementById('products-tab-heading');
+    const prodTabSubheading = document.getElementById('products-tab-subheading');
+    const newProdBtn = document.getElementById('new-prod-btn');
+    const prodFormBadge = document.getElementById('prod-form-header-badge');
+    const prodFormTitle = document.getElementById('prod-form-title');
+    const saveProdBtn = document.getElementById('save-prod-btn');
+
+    const activeNav = document.querySelector('.admin-nav-item.active');
+    const currentActiveTabId = activeNav ? (activeNav.getAttribute('data-tab') || activeNav.getAttribute('data-section')) : null;
+
+    if (storeId === 2) {
+        // --- THE MARSHANS MODE ---
+        if (btnChipakk) {
+            btnChipakk.style.background = '#fff';
+            btnChipakk.style.color = '#000';
+        }
+        if (btnMarshans) {
+            btnMarshans.style.background = '#ff0055';
+            btnMarshans.style.color = '#fff';
+        }
+        if (badge) {
+            badge.textContent = 'THE MARSHANS ACTIVE';
+            badge.style.background = '#0ea5e9';
+        }
+        if (domain) domain.textContent = 'themarshans.shop';
+        if (shipStoreLabel) shipStoreLabel.textContent = 'THE MARSHANS (themarshans.shop)';
+        const annBadgeMarshans = document.getElementById('announcement-store-badge');
+        if (annBadgeMarshans) annBadgeMarshans.textContent = 'THE MARSHANS';
+
+        // Update product labels to 3D Products
+        if (navProdLabel) navProdLabel.textContent = '🏷️ 3D Products';
+        if (prodTabHeading) prodTabHeading.textContent = '3D Products Catalog';
+        if (prodTabSubheading) prodTabSubheading.textContent = 'Manage 3D printed models, filament specifications, pricing, and manufacturing assets';
+        if (newProdBtn) newProdBtn.textContent = '+ CREATE NEW 3D PRODUCT';
+        if (prodFormBadge) prodFormBadge.textContent = '⚙️ 3D PRINT PRODUCT CONFIGURATION';
+        if (prodFormTitle) prodFormTitle.textContent = '[ADD NEW 3D PRODUCT]';
+        if (saveProdBtn) saveProdBtn.textContent = 'SAVE 3D PRODUCT';
+
+        // Scoped navigation labels for Marshans V1
+        const navReviewsLabel = document.getElementById('nav-reviews-label');
+        if (navReviewsLabel) navReviewsLabel.textContent = '⭐ Ratings';
+        const navShippingLabel = document.getElementById('nav-shipping-label');
+        if (navShippingLabel) navShippingLabel.textContent = '🚚 Shipping Rules';
+
+        // Hide CHIPAKK-only modules (POD Queue, Events, Audit Logs, Team, Settings)
+        document.querySelectorAll('.store-module-chipakk').forEach(el => {
+            el.style.display = 'none';
+        });
+
+        // Hide future Marshans modules (Inventory, Finishing Options, Custom Requests, Production Jobs)
+        document.querySelectorAll('.store-module-marshans-future').forEach(el => {
+            el.style.display = 'none';
+        });
+
+        // Show THE MARSHANS active V1 modules (Materials, Custom Forge)
+        document.querySelectorAll('.store-module-marshans').forEach(el => {
+            if (el.classList.contains('tab-content')) {
+                // Handled by tab switcher below
+            } else if (el.tagName === 'LI') {
+                el.style.display = 'list-item';
+            } else {
+                el.style.display = '';
+            }
+        });
+
+        // Ensure Custom Forge nav link's parent LI is explicitly visible
+        const cfNavLi = document.getElementById('nav-custom-forge-link')?.closest('li');
+        if (cfNavLi) cfNavLi.style.display = 'list-item';
+
+        // Callout banner in regular orders terminal
+        const cfCallout = document.getElementById('marshans-cf-callout');
+        if (cfCallout) cfCallout.style.display = 'block';
+
+        // If user was viewing a CHIPAKK-only tab, cleanly switch to tab-dashboard
+        if (switchTab) {
+            if (currentActiveTabId && CHIPAKK_ONLY_TABS.includes(currentActiveTabId)) {
+                switchAdminTab('tab-dashboard');
+            } else if (currentActiveTabId) {
+                switchAdminTab(currentActiveTabId, { updateHash: false, scrollToTop: false });
+            }
+        }
+
+    } else {
+        // --- CHIPAKK MODE ---
+        if (btnChipakk) {
+            btnChipakk.style.background = '#ff0055';
+            btnChipakk.style.color = '#fff';
+        }
+        if (btnMarshans) {
+            btnMarshans.style.background = '#fff';
+            btnMarshans.style.color = '#000';
+        }
+        if (badge) {
+            badge.textContent = 'CHIPAKK ACTIVE';
+            badge.style.background = '#ff0055';
+        }
+        if (domain) domain.textContent = 'chipakk.shop';
+        if (shipStoreLabel) shipStoreLabel.textContent = 'CHIPAKK (chipakk.shop)';
+        const annBadgeChipakk = document.getElementById('announcement-store-badge');
+        if (annBadgeChipakk) annBadgeChipakk.textContent = 'CHIPAKK';
+
+        // Restore product labels to Sticker Drops
+        if (navProdLabel) navProdLabel.textContent = '🏷️ Products & Drops';
+        if (prodTabHeading) prodTabHeading.textContent = 'Product & Drop Catalog';
+        if (prodTabSubheading) prodTabSubheading.textContent = 'Manage print-on-demand sticker designs, pricing, images, and release schedules';
+        if (newProdBtn) newProdBtn.textContent = '+ CREATE NEW STICKER DROP';
+        if (prodFormBadge) prodFormBadge.textContent = '🖨️ PRINT-ON-DEMAND PRODUCT CONFIGURATION';
+        if (prodFormTitle) prodFormTitle.textContent = '[ADD NEW PRODUCT DROP]';
+        if (saveProdBtn) saveProdBtn.textContent = 'SAVE PRODUCT DROP';
+
+        // Restore standard labels for CHIPAKK
+        const navReviewsLabel = document.getElementById('nav-reviews-label');
+        if (navReviewsLabel) navReviewsLabel.textContent = '⭐ Reviews';
+        const navShippingLabel = document.getElementById('nav-shipping-label');
+        if (navShippingLabel) navShippingLabel.textContent = '🚚 Shipping Management';
+
+        // Hide MARSHANS modules
+        document.querySelectorAll('.store-module-marshans').forEach(el => {
+            el.style.display = 'none';
+        });
+        document.querySelectorAll('.store-module-marshans-future').forEach(el => {
+            el.style.display = 'none';
+        });
+
+        // Callout banner in regular orders terminal
+        const cfCallout = document.getElementById('marshans-cf-callout');
+        if (cfCallout) cfCallout.style.display = 'none';
+
+        // Show CHIPAKK modules
+        document.querySelectorAll('.store-module-chipakk').forEach(el => {
+            if (el.classList.contains('tab-content')) {
+                // Handled by tab switcher below
+            } else if (el.tagName === 'LI') {
+                el.style.display = 'list-item';
+            } else {
+                el.style.display = '';
+            }
+        });
+
+        // If user was viewing a MARSHANS-only tab, cleanly switch to tab-dashboard
+        if (switchTab) {
+            if (currentActiveTabId && MARSHANS_ONLY_TABS.includes(currentActiveTabId)) {
+                switchAdminTab('tab-dashboard');
+            } else if (currentActiveTabId) {
+                switchAdminTab(currentActiveTabId, { updateHash: false, scrollToTop: false });
+            }
+        }
+    }
+    updateLumoProductSectionVisibility();
+}
+
+async function switchActiveStore(targetStoreId) {
+    const numericId = parseInt(targetStoreId, 10) === 2 ? 2 : 1;
+    apiClient.setActiveStoreId(numericId);
+    updateStoreSwitcherUI(numericId, { switchTab: true });
+
+    // Close every open edit form / detail modal and clear its editing-id BEFORE loading the new store's data.
+    ['product-form-container', 'category-form-container', 'coupon-form-container', 'shipping-form-container',
+     'event-form-container', 'material-form-container', 'finishing-form-container', 'inventory-form-container',
+     'hero-slide-form-container', 'banner-form-container', 'team-form-container'].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = 'none';
+    });
+        editingProductId = null;
+        currentEditingProduct = null;
+        editingCategoryId = null;
+    editingEventId = null;
+    editingCouponId = null;
+    editingShippingId = null;
+    editingMaterialId = null;
+    editingFinishingId = null;
+    editingHeroSlideId = null;
+    editingBannerId = null;
+    const orderDetailModal = document.getElementById('order-detail-modal');
+    if (orderDetailModal) orderDetailModal.style.display = 'none';
+    activeOrderViewing = null;
+    const cfOrderModal = document.getElementById('custom-forge-order-modal');
+    if (cfOrderModal) cfOrderModal.style.display = 'none';
+    activeCfOrderViewing = null;
+    const custDetailModal = document.getElementById('customer-detail-modal');
+    if (custDetailModal) custDetailModal.style.display = 'none';
+
+    showToast(`Switched active store context to ${numericId === 2 ? 'THE MARSHANS (3D Printing)' : 'CHIPAKK (Stickers & Merch)'}`);
+
+    // Reset product search and filters to prevent cross-store filter carryover
+    const prodSearch = document.getElementById('prod-search-input');
+    if (prodSearch) prodSearch.value = '';
+    const prodCat = document.getElementById('prod-filter-category');
+    if (prodCat) prodCat.value = '';
+    const prodDrop = document.getElementById('prod-filter-drop-status');
+    if (prodDrop) prodDrop.value = '';
+
+    // Clear in-memory data to prevent stale UI flash
+    products = [];
+    categories = [];
+    customForgeOrders = [];
+    heroConfig = null;
+    announcementBarConfig = null;
+    heroGroups = [];
+    promoBanners = [];
+    storeSections = [];
+    delete siteSettings.announcement_active;
+    delete siteSettings.announcement_text;
+    renderProductsTable();
+    renderCustomForgeTable();
+    populateCategoryDropdowns();
+
+    // Re-load settings and data for the newly active store
+    await refreshSettingsFromAPI();
+
+    try {
+        // First refresh categories so products normalize with active store categories
+        await refreshCategoriesFromAPI();
+
+        await Promise.allSettled([
+            refreshDashboardFromAPI(),
+            refreshOrdersFromAPI(),
+            numericId === 2 ? refreshCustomForgeOrdersFromAPI() : Promise.resolve(),
+            refreshProductsFromAPI(),
+            numericId === 1 ? refreshChipakkMaterialsFromAPI() : refreshMaterialsFromAPI(),
+            numericId === 2 ? refreshFinishingFromAPI() : Promise.resolve(),
+            refreshReviewsFromAPI(),
+            refreshShippingRulesFromAPI(),
+            refreshStoreBuilderFromAPI(),
+            refreshEventsFromAPI(),
+            refreshCouponsFromAPI()
+        ]);
+    } catch (_) {}
+
+    if (numericId === 2) {
+        checkCustomForgeUnreadCount();
+    } else {
+        updateCustomForgeNavBadge(0);
+    }
 }
 
 function setupNavigation() {
@@ -7184,257 +7453,6 @@ function setupEventListeners() {
     // =========================================================================
     // MULTI-STORE CONTEXT SWITCHER HANDLERS
     // =========================================================================
-
-    function updateStoreSwitcherUI(storeId, options = {}) {
-        const switchTab = options.switchTab !== false;
-        const btnChipakk = document.getElementById('switch-store-chipakk');
-        const btnMarshans = document.getElementById('switch-store-marshans');
-        const badge = document.getElementById('active-store-badge');
-        const domain = document.getElementById('active-store-domain');
-        const shipStoreLabel = document.getElementById('shipping-store-label');
-
-        // Dynamic element labels & headings
-        const navProdLabel = document.getElementById('nav-products-label');
-        const prodTabHeading = document.getElementById('products-tab-heading');
-        const prodTabSubheading = document.getElementById('products-tab-subheading');
-        const newProdBtn = document.getElementById('new-prod-btn');
-        const prodFormBadge = document.getElementById('prod-form-header-badge');
-        const prodFormTitle = document.getElementById('prod-form-title');
-        const saveProdBtn = document.getElementById('save-prod-btn');
-
-        const activeNav = document.querySelector('.admin-nav-item.active');
-        const currentActiveTabId = activeNav ? (activeNav.getAttribute('data-tab') || activeNav.getAttribute('data-section')) : null;
-
-        if (storeId === 2) {
-            // --- THE MARSHANS MODE ---
-            if (btnChipakk) {
-                btnChipakk.style.background = '#fff';
-                btnChipakk.style.color = '#000';
-            }
-            if (btnMarshans) {
-                btnMarshans.style.background = '#ff0055';
-                btnMarshans.style.color = '#fff';
-            }
-            if (badge) {
-                badge.textContent = 'THE MARSHANS ACTIVE';
-                badge.style.background = '#0ea5e9';
-            }
-            if (domain) domain.textContent = 'themarshans.shop';
-            if (shipStoreLabel) shipStoreLabel.textContent = 'THE MARSHANS (themarshans.shop)';
-            const annBadgeMarshans = document.getElementById('announcement-store-badge');
-            if (annBadgeMarshans) annBadgeMarshans.textContent = 'THE MARSHANS';
-
-            // Update product labels to 3D Products
-            if (navProdLabel) navProdLabel.textContent = '🏷️ 3D Products';
-            if (prodTabHeading) prodTabHeading.textContent = '3D Products Catalog';
-            if (prodTabSubheading) prodTabSubheading.textContent = 'Manage 3D printed models, filament specifications, pricing, and manufacturing assets';
-            if (newProdBtn) newProdBtn.textContent = '+ CREATE NEW 3D PRODUCT';
-            if (prodFormBadge) prodFormBadge.textContent = '⚙️ 3D PRINT PRODUCT CONFIGURATION';
-            if (prodFormTitle) prodFormTitle.textContent = '[ADD NEW 3D PRODUCT]';
-            if (saveProdBtn) saveProdBtn.textContent = 'SAVE 3D PRODUCT';
-
-            // Scoped navigation labels for Marshans V1
-            const navReviewsLabel = document.getElementById('nav-reviews-label');
-            if (navReviewsLabel) navReviewsLabel.textContent = '⭐ Ratings';
-            const navShippingLabel = document.getElementById('nav-shipping-label');
-            if (navShippingLabel) navShippingLabel.textContent = '🚚 Shipping Rules';
-
-            // Hide CHIPAKK-only modules (POD Queue, Events, Audit Logs, Team, Settings)
-            document.querySelectorAll('.store-module-chipakk').forEach(el => {
-                el.style.display = 'none';
-            });
-
-            // Hide future Marshans modules (Inventory, Finishing Options, Custom Requests, Production Jobs)
-            document.querySelectorAll('.store-module-marshans-future').forEach(el => {
-                el.style.display = 'none';
-            });
-
-            // Show THE MARSHANS active V1 modules (Materials, Custom Forge)
-            document.querySelectorAll('.store-module-marshans').forEach(el => {
-                if (el.classList.contains('tab-content')) {
-                    // Handled by tab switcher below
-                } else if (el.tagName === 'LI') {
-                    el.style.display = 'list-item';
-                } else {
-                    el.style.display = '';
-                }
-            });
-
-            // Ensure Custom Forge nav link's parent LI is explicitly visible
-            const cfNavLi = document.getElementById('nav-custom-forge-link')?.closest('li');
-            if (cfNavLi) cfNavLi.style.display = 'list-item';
-
-            // Callout banner in regular orders terminal
-            const cfCallout = document.getElementById('marshans-cf-callout');
-            if (cfCallout) cfCallout.style.display = 'block';
-
-            // If user was viewing a CHIPAKK-only tab, cleanly switch to tab-dashboard
-            if (switchTab) {
-                if (currentActiveTabId && CHIPAKK_ONLY_TABS.includes(currentActiveTabId)) {
-                    switchAdminTab('tab-dashboard');
-                } else if (currentActiveTabId) {
-                    switchAdminTab(currentActiveTabId, { updateHash: false, scrollToTop: false });
-                }
-            }
-
-        } else {
-            // --- CHIPAKK MODE ---
-            if (btnChipakk) {
-                btnChipakk.style.background = '#ff0055';
-                btnChipakk.style.color = '#fff';
-            }
-            if (btnMarshans) {
-                btnMarshans.style.background = '#fff';
-                btnMarshans.style.color = '#000';
-            }
-            if (badge) {
-                badge.textContent = 'CHIPAKK ACTIVE';
-                badge.style.background = '#ff0055';
-            }
-            if (domain) domain.textContent = 'chipakk.shop';
-            if (shipStoreLabel) shipStoreLabel.textContent = 'CHIPAKK (chipakk.shop)';
-            const annBadgeChipakk = document.getElementById('announcement-store-badge');
-            if (annBadgeChipakk) annBadgeChipakk.textContent = 'CHIPAKK';
-
-            // Restore product labels to Sticker Drops
-            if (navProdLabel) navProdLabel.textContent = '🏷️ Products & Drops';
-            if (prodTabHeading) prodTabHeading.textContent = 'Product & Drop Catalog';
-            if (prodTabSubheading) prodTabSubheading.textContent = 'Manage print-on-demand sticker designs, pricing, images, and release schedules';
-            if (newProdBtn) newProdBtn.textContent = '+ CREATE NEW STICKER DROP';
-            if (prodFormBadge) prodFormBadge.textContent = '🖨️ PRINT-ON-DEMAND PRODUCT CONFIGURATION';
-            if (prodFormTitle) prodFormTitle.textContent = '[ADD NEW PRODUCT DROP]';
-            if (saveProdBtn) saveProdBtn.textContent = 'SAVE PRODUCT DROP';
-
-            // Restore standard labels for CHIPAKK
-            const navReviewsLabel = document.getElementById('nav-reviews-label');
-            if (navReviewsLabel) navReviewsLabel.textContent = '⭐ Reviews';
-            const navShippingLabel = document.getElementById('nav-shipping-label');
-            if (navShippingLabel) navShippingLabel.textContent = '🚚 Shipping Management';
-
-            // Hide MARSHANS modules
-            document.querySelectorAll('.store-module-marshans').forEach(el => {
-                el.style.display = 'none';
-            });
-            document.querySelectorAll('.store-module-marshans-future').forEach(el => {
-                el.style.display = 'none';
-            });
-
-            // Callout banner in regular orders terminal
-            const cfCallout = document.getElementById('marshans-cf-callout');
-            if (cfCallout) cfCallout.style.display = 'none';
-
-            // Show CHIPAKK modules
-            document.querySelectorAll('.store-module-chipakk').forEach(el => {
-                if (el.classList.contains('tab-content')) {
-                    // Handled by tab switcher below
-                } else if (el.tagName === 'LI') {
-                    el.style.display = 'list-item';
-                } else {
-                    el.style.display = '';
-                }
-            });
-
-            // If user was viewing a MARSHANS-only tab, cleanly switch to tab-dashboard
-            if (switchTab) {
-                if (currentActiveTabId && MARSHANS_ONLY_TABS.includes(currentActiveTabId)) {
-                    switchAdminTab('tab-dashboard');
-                } else if (currentActiveTabId) {
-                    switchAdminTab(currentActiveTabId, { updateHash: false, scrollToTop: false });
-                }
-            }
-        }
-        updateLumoProductSectionVisibility();
-    }
-
-    async function switchActiveStore(targetStoreId) {
-        const numericId = parseInt(targetStoreId, 10) === 2 ? 2 : 1;
-        apiClient.setActiveStoreId(numericId);
-        updateStoreSwitcherUI(numericId, { switchTab: true });
-
-        // Close every open edit form / detail modal and clear its editing-id BEFORE loading the new store's data.
-        // Without this, a form opened against the OLD store (e.g. editing product #42 on CHIPAKK) stayed open and
-        // populated with the old store's values across the switch; clicking Save then sent a PUT for the old
-        // store's id under the newly-active store's X-Store-ID header -- a cross-store write. Same risk for the
-        // order-detail modal's Update Status / Save Courier Details actions. This resets ALL of them defensively,
-        // not just the two confirmed during audit, since any open form + a store switch is the same risk class.
-        ['product-form-container', 'category-form-container', 'coupon-form-container', 'shipping-form-container',
-         'event-form-container', 'material-form-container', 'finishing-form-container', 'inventory-form-container',
-         'hero-slide-form-container', 'banner-form-container', 'team-form-container'].forEach((id) => {
-            const el = document.getElementById(id);
-            if (el) el.style.display = 'none';
-        });
-        editingProductId = null;
-        currentEditingProduct = null;
-        editingCategoryId = null;
-        editingEventId = null;
-        editingCouponId = null;
-        editingShippingId = null;
-        editingMaterialId = null;
-        editingFinishingId = null;
-        editingHeroSlideId = null;
-        editingBannerId = null;
-        const orderDetailModal = document.getElementById('order-detail-modal');
-        if (orderDetailModal) orderDetailModal.style.display = 'none';
-        activeOrderViewing = null;
-        const cfOrderModal = document.getElementById('custom-forge-order-modal');
-        if (cfOrderModal) cfOrderModal.style.display = 'none';
-        activeCfOrderViewing = null;
-        const custDetailModal = document.getElementById('customer-detail-modal');
-        if (custDetailModal) custDetailModal.style.display = 'none';
-
-        showToast(`Switched active store context to ${numericId === 2 ? 'THE MARSHANS (3D Printing)' : 'CHIPAKK (Stickers & Merch)'}`);
-
-        // Reset product search and filters to prevent cross-store filter carryover
-        const prodSearch = document.getElementById('prod-search-input');
-        if (prodSearch) prodSearch.value = '';
-        const prodCat = document.getElementById('prod-filter-category');
-        if (prodCat) prodCat.value = '';
-        const prodDrop = document.getElementById('prod-filter-drop-status');
-        if (prodDrop) prodDrop.value = '';
-
-        // Clear in-memory data to prevent stale UI flash
-        products = [];
-        categories = [];
-        customForgeOrders = [];
-        heroConfig = null;
-        announcementBarConfig = null;
-        heroGroups = [];
-        promoBanners = [];
-        storeSections = [];
-        delete siteSettings.announcement_active;
-        delete siteSettings.announcement_text;
-        renderProductsTable();
-        renderCustomForgeTable();
-        populateCategoryDropdowns();
-
-        // Re-load settings and data for the newly active store
-        await refreshSettingsFromAPI();
-
-        try {
-            // First refresh categories so products normalize with active store categories
-            await refreshCategoriesFromAPI();
-
-            await Promise.allSettled([
-                refreshDashboardFromAPI(),
-                refreshOrdersFromAPI(),
-                numericId === 2 ? refreshCustomForgeOrdersFromAPI() : Promise.resolve(),
-                refreshProductsFromAPI(),
-                numericId === 1 ? refreshChipakkMaterialsFromAPI() : refreshMaterialsFromAPI(),
-                numericId === 2 ? refreshFinishingFromAPI() : Promise.resolve(),
-                refreshReviewsFromAPI(),
-                refreshShippingRulesFromAPI(),
-                refreshStoreBuilderFromAPI(),
-                refreshEventsFromAPI(),
-                refreshCouponsFromAPI()
-            ]);
-        } catch (_) {}
-
-        if (numericId === 2) {
-            checkCustomForgeUnreadCount();
-        } else {
-            updateCustomForgeNavBadge(0);
-        }
-    }
 
     document.getElementById('switch-store-chipakk')?.addEventListener('click', () => switchActiveStore(1));
     document.getElementById('switch-store-marshans')?.addEventListener('click', () => switchActiveStore(2));
