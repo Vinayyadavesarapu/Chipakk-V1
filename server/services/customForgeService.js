@@ -12,6 +12,18 @@ const ALLOWED_NAMEPLATE_MATERIALS = ['Plastic', 'MDF'];
 const MAX_CUSTOMER_NAME_LENGTH = 35;
 const MAX_DESIGNATION_LENGTH = 50;
 
+/**
+ * Lady Justice Customization Pricing (Authoritative Server-Side Constants)
+ * - Personalized Nameplate: +₹29 (2,900 paise)
+ * - Organic Wood / MDF Material: +₹50 (5,000 paise)
+ * - Precision Polymer: +₹0
+ * Formula: unitPrice = variantPrice + nameplateCharge + materialCharge
+ */
+const LADY_JUSTICE_CUSTOMIZATION_PRICING = {
+  NAMEPLATE_PAISE: 2900,
+  WOOD_MDF_PAISE: 5000
+};
+
 const VARIANT_SLUG_TO_ID = {
   'cf-lj-6in': 1,
   'cf-lj-1ft': 2,
@@ -224,37 +236,68 @@ const getLadyJusticeProduct = async () => {
 
 /**
  * Validate Custom Mode & Personalization Specifications
+ * Computes authoritative server-side customization charges:
+ * - Personalized Nameplate: +₹29 (2,900 paise)
+ * - Organic Wood / MDF: +₹50 (5,000 paise)
+ * - Precision Polymer: +₹0
+ * Formula: unitPrice = variantPrice + nameplateCharge + materialCharge
  */
 const validateCustomization = (variant, customMode, customization) => {
   const isCustomModeEnabled = Boolean(customMode);
 
   // 1. Variant rule: 6-inch cannot be customized
-  if (variant.custom_mode_allowed === 0 && isCustomModeEnabled) {
-    const err = new Error('Customization is not available for the 6-inch variant.');
-    err.statusCode = 400;
-    throw err;
-  }
-
-  // 2. Custom mode disabled: customization fields are not required
-  if (!isCustomModeEnabled) {
+  if (variant.custom_mode_allowed === 0) {
+    if (isCustomModeEnabled) {
+      const err = new Error('Customization is not available for the 6-inch variant.');
+      err.statusCode = 400;
+      throw err;
+    }
     return {
       custom_mode_enabled: 0,
       customer_name: null,
       customer_designation: null,
-      nameplate_material: null
+      nameplate_material: null,
+      nameplateChargePaise: 0,
+      materialChargePaise: 0,
+      customizationChargePaise: 0
     };
   }
 
-  // 3. Custom mode enabled on 1-foot or 2-feet: enforce strict field rules
+  // 2. Extract inputs for 1-foot or 2-feet variants
+  const rawName = customization ? (customization.name !== undefined ? customization.name : customization.customer_name) : null;
+  const rawDesignation = customization ? (customization.designation !== undefined ? customization.designation : customization.customer_designation) : null;
+  const rawMaterial = customization ? (customization.material !== undefined ? customization.material : customization.nameplate_material) : null;
+
+  // 3. Dependency rule:
+  // Personalized Nameplate (+₹29) is the master toggle for custom nameplate & material upgrades.
+  // Wooden engraving (+₹50) is NOT an independent purchase option. It is available only when
+  // Personalized Nameplate is enabled.
+  if (!isCustomModeEnabled) {
+    if (rawMaterial !== undefined && rawMaterial !== null && String(rawMaterial).trim() !== '') {
+      const matStr = String(rawMaterial).trim();
+      if (matStr === 'MDF' || /wood/i.test(matStr) || /mdf/i.test(matStr)) {
+        const err = new Error('Wooden engraving (+₹50) is only available when Personalized Nameplate is enabled.');
+        err.statusCode = 400;
+        throw err;
+      }
+    }
+    return {
+      custom_mode_enabled: 0,
+      customer_name: null,
+      customer_designation: null,
+      nameplate_material: 'Plastic',
+      nameplateChargePaise: 0,
+      materialChargePaise: 0,
+      customizationChargePaise: 0
+    };
+  }
+
+  // 4. When Personalized Nameplate is ON:
   if (!customization || typeof customization !== 'object') {
     const err = new Error('Customization details are required when Custom Mode is enabled.');
     err.statusCode = 400;
     throw err;
   }
-
-  const rawName = customization.name !== undefined ? customization.name : customization.customer_name;
-  const rawDesignation = customization.designation !== undefined ? customization.designation : customization.customer_designation;
-  const rawMaterial = customization.material !== undefined ? customization.material : customization.nameplate_material;
 
   // Name validation: required, non-empty, max 35 chars
   if (!rawName || typeof rawName !== 'string' || !rawName.trim()) {
@@ -269,38 +312,51 @@ const validateCustomization = (variant, customMode, customization) => {
     throw err;
   }
 
-  // Designation validation: required, max 50 chars; literal 'NIL' accepted
-  if (rawDesignation === undefined || rawDesignation === null || typeof rawDesignation !== 'string') {
-    const err = new Error('Designation on custom nameplate is required (or "NIL").');
-    err.statusCode = 400;
-    throw err;
+  // Designation validation: optional, max 50 chars; literal 'NIL' or empty accepted
+  let normalizedDesignation = 'NIL';
+  if (rawDesignation !== undefined && rawDesignation !== null && typeof rawDesignation === 'string') {
+    const cleanDesignation = rawDesignation.trim();
+    if (cleanDesignation.length > MAX_DESIGNATION_LENGTH) {
+      const err = new Error(`Designation on nameplate cannot exceed ${MAX_DESIGNATION_LENGTH} characters.`);
+      err.statusCode = 400;
+      throw err;
+    }
+    if (cleanDesignation && cleanDesignation.toUpperCase() !== 'NIL') {
+      normalizedDesignation = cleanDesignation;
+    }
   }
-  const cleanDesignation = rawDesignation.trim();
-  if (!cleanDesignation) {
-    const err = new Error('Designation on custom nameplate cannot be empty (enter "NIL" if none).');
-    err.statusCode = 400;
-    throw err;
-  }
-  if (cleanDesignation.length > MAX_DESIGNATION_LENGTH) {
-    const err = new Error(`Designation on nameplate cannot exceed ${MAX_DESIGNATION_LENGTH} characters.`);
-    err.statusCode = 400;
-    throw err;
-  }
-  const normalizedDesignation = cleanDesignation.toUpperCase() === 'NIL' ? 'NIL' : cleanDesignation;
 
-  // Nameplate material validation: exactly 'Plastic' or 'MDF'
-  if (!rawMaterial || typeof rawMaterial !== 'string' || !ALLOWED_NAMEPLATE_MATERIALS.includes(rawMaterial.trim())) {
-    const err = new Error(`Nameplate material must be exactly 'Plastic' or 'MDF'. Received: '${rawMaterial}'.`);
-    err.statusCode = 400;
-    throw err;
+  const nameplateChargePaise = LADY_JUSTICE_CUSTOMIZATION_PRICING.NAMEPLATE_PAISE; // 2900 paise
+
+  // 5. Nameplate Material (+₹50 for Organic Wood / MDF, +₹0 for Precision Polymer)
+  let cleanMaterial = 'Plastic';
+  let materialChargePaise = 0;
+
+  if (rawMaterial !== undefined && rawMaterial !== null && String(rawMaterial).trim() !== '') {
+    const matStr = String(rawMaterial).trim();
+    if (matStr === 'MDF' || /wood/i.test(matStr) || /mdf/i.test(matStr)) {
+      cleanMaterial = 'MDF';
+      materialChargePaise = LADY_JUSTICE_CUSTOMIZATION_PRICING.WOOD_MDF_PAISE; // 5000 paise
+    } else if (matStr === 'Plastic' || /polymer/i.test(matStr) || /plastic/i.test(matStr)) {
+      cleanMaterial = 'Plastic';
+      materialChargePaise = 0;
+    } else {
+      const err = new Error(`Nameplate material must be exactly 'Plastic' or 'MDF'. Received: '${rawMaterial}'.`);
+      err.statusCode = 400;
+      throw err;
+    }
   }
-  const cleanMaterial = rawMaterial.trim();
+
+  const customizationChargePaise = nameplateChargePaise + materialChargePaise;
 
   return {
     custom_mode_enabled: 1,
     customer_name: cleanName,
     customer_designation: normalizedDesignation,
-    nameplate_material: cleanMaterial
+    nameplate_material: cleanMaterial,
+    nameplateChargePaise,
+    materialChargePaise,
+    customizationChargePaise
   };
 };
 
@@ -489,13 +545,16 @@ const createCustomForgeOrder = async (orderPayload, firebaseUser, requestStoreId
 
       // 7. Validate Custom Mode and Customization details for this line item
       const validatedCustomization = validateCustomization(variant, it.custom_mode, it.customization);
-      const lineTotalPaise = authoritativePricePaise * qty;
+      const effectiveUnitPricePaise = authoritativePricePaise + validatedCustomization.customizationChargePaise;
+      const lineTotalPaise = effectiveUnitPricePaise * qty;
       subtotalPaise += lineTotalPaise;
 
       preparedItems.push({
         variant,
         quantity: qty,
-        unitPricePaise: authoritativePricePaise,
+        unitPricePaise: effectiveUnitPricePaise,
+        baseUnitPricePaise: authoritativePricePaise,
+        customizationChargePaise: validatedCustomization.customizationChargePaise,
         lineTotalPaise,
         validatedCustomization
       });
@@ -1316,6 +1375,7 @@ const acknowledgeCustomForgeOrders = async (orderIds = [], adminActor = {}, requ
 };
 
 module.exports = {
+  LADY_JUSTICE_CUSTOMIZATION_PRICING,
   ALLOWED_NAMEPLATE_MATERIALS,
   ALLOWED_PRODUCTION_STATUSES,
   FALLBACK_LADY_JUSTICE,
@@ -1329,6 +1389,7 @@ module.exports = {
   updateCustomForgeOrderStatus,
   recordCustomForgePaymentSuccess,
   checkCustomForgeTablesExist,
+  getCustomForgeOrderByIdInternal,
   getUnreadCustomForgeOrdersCount,
   acknowledgeCustomForgeOrders
 };

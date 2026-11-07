@@ -7,6 +7,7 @@ const { normalizeIndianPhoneNumber } = require('../utils/phoneUtils');
 const core = require('../utils/taxCore');
 const taxUtils = require('../utils/taxUtils');
 const taxProfileService = require('./taxProfileService');
+const customForgeService = require('./customForgeService');
 
 let hasTaxColsCached = null;
 const checkHasTaxCols = async () => {
@@ -1375,13 +1376,105 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
 };
 
 /**
+ * Normalize a Custom Forge order into the unified customer order schema
+ */
+const normalizeCustomForgeOrder = (cfOrder) => {
+  if (!cfOrder) return null;
+  const fulfillmentStatus = cfOrder.production_status || cfOrder.fulfillment_status || 'order_placed';
+  const shippingAddr = typeof cfOrder.shipping_address === 'string'
+    ? safeJsonParse(cfOrder.shipping_address, null)
+    : (cfOrder.shipping_address || null);
+
+  const rawSubtotal = parseInt(cfOrder.subtotal, 10) || 0;
+  const rawShipping = parseInt(cfOrder.shipping_charge, 10) || 0;
+  const rawTotal = parseInt(cfOrder.total_price, 10) || 0;
+  let rawDiscount = parseInt(cfOrder.discount_total, 10);
+  if (isNaN(rawDiscount)) {
+    rawDiscount = Math.max(0, (rawSubtotal + rawShipping) - rawTotal);
+  }
+
+  return {
+    id: cfOrder.id,
+    order_number: cfOrder.order_number,
+    store_id: 2,
+    customer_id: cfOrder.customer_id,
+    customer_name: cfOrder.customer_name,
+    customer_email: cfOrder.customer_email,
+    customer_phone: cfOrder.customer_phone || (shippingAddr?.phone || ''),
+    shipping_address: shippingAddr,
+    payment_method: cfOrder.payment_method || 'ONLINE',
+    payment_status: cfOrder.payment_status || 'pending',
+    fulfillment_status: fulfillmentStatus,
+    production_status: cfOrder.production_status || fulfillmentStatus,
+    status: cfOrder.production_status || fulfillmentStatus,
+    subtotal: rawSubtotal,
+    subtotal_rupees: cfOrder.subtotal_rupees !== undefined ? cfOrder.subtotal_rupees : Math.round(rawSubtotal / 100),
+    discount_total: rawDiscount,
+    discount_total_rupees: cfOrder.discount_total_rupees !== undefined ? cfOrder.discount_total_rupees : Math.round(rawDiscount / 100),
+    shipping_charge: rawShipping,
+    shipping_charge_rupees: cfOrder.shipping_charge_rupees !== undefined ? cfOrder.shipping_charge_rupees : Math.round(rawShipping / 100),
+    total_price: rawTotal,
+    total_price_rupees: cfOrder.total_price_rupees !== undefined ? cfOrder.total_price_rupees : Math.round(rawTotal / 100),
+    coupon_code: cfOrder.coupon_code || null,
+    courier: cfOrder.courier || null,
+    tracking_no: cfOrder.tracking_no || null,
+    ship_date: cfOrder.ship_date || null,
+    created_at: cfOrder.created_at,
+    updated_at: cfOrder.updated_at,
+    is_custom_forge: true,
+    item_count: Array.isArray(cfOrder.items) ? cfOrder.items.length : 1,
+    items: (cfOrder.items || []).map(it => {
+      const prodName = it.product_name_snapshot || it.product_name || 'Lady Justice Statue';
+      const sku = it.variant_sku_snapshot || it.sku || '';
+      const sizeLabel = it.size_label_snapshot || it.size_label || it.finishing || '';
+      const customData = it.customization || (it.custom_mode_enabled ? {
+        name: it.engraved_name,
+        designation: it.engraved_designation,
+        material: it.nameplate_material,
+        status: it.verification_status
+      } : null);
+      const mat = it.nameplate_material || (customData ? customData.material : null) || (it.custom_mode_enabled ? 'Custom Nameplate' : null);
+
+      return {
+        id: it.id,
+        order_id: it.order_id || cfOrder.id,
+        product_id: it.product_id,
+        variant_id: it.variant_id,
+        product_name: prodName,
+        name: prodName,
+        sku,
+        size_label: sizeLabel,
+        finishing: sizeLabel,
+        height_mm: it.height_mm_snapshot || it.height_mm || null,
+        unit_price: parseInt(it.unit_price, 10) || 0,
+        quantity: parseInt(it.quantity, 10) || 1,
+        total_price: parseInt(it.total_price, 10) || 0,
+        unit_price_rupees: it.unit_price_rupees !== undefined ? it.unit_price_rupees : Math.round((parseInt(it.unit_price, 10) || 0) / 100),
+        total_price_rupees: it.total_price_rupees !== undefined ? it.total_price_rupees : Math.round((parseInt(it.total_price, 10) || 0) / 100),
+        img: it.hero_image_url || it.img || it.product_image || '/assets/placeholders/product-placeholder.svg',
+        product_image: it.hero_image_url || it.product_image || it.img || '/assets/placeholders/product-placeholder.svg',
+        material: mat,
+        nameplate_material: it.nameplate_material || (customData ? customData.material : null),
+        customization: customData,
+        variant_options: {
+          size: sizeLabel,
+          height_mm: it.height_mm_snapshot || it.height_mm || null,
+          nameplate: customData
+        }
+      };
+    }),
+    status_history: cfOrder.status_history || []
+  };
+};
+
+/**
  * Fetch orders for a specific authenticated customer
  */
 const getCustomerOrders = async (firebaseUid, { limit = 20, offset = 0, store_id = 1 } = {}) => {
   if (!firebaseUid) return { total: 0, limit, offset, orders: [] };
 
   const [userRows] = await pool.execute(
-    'SELECT id FROM users WHERE firebase_uid = ? LIMIT 1',
+    'SELECT id, email FROM users WHERE firebase_uid = ? LIMIT 1',
     [firebaseUid]
   );
 
@@ -1394,119 +1487,428 @@ const getCustomerOrders = async (firebaseUid, { limit = 20, offset = 0, store_id
   const parsedOffset = Math.max(parseInt(offset, 10) || 0, 0);
   const targetStoreId = parseInt(store_id, 10) === 2 ? 2 : 1;
 
-  const storeCondition = targetStoreId === 1 ? '(store_id = 1 OR store_id IS NULL)' : 'store_id = ?';
-  const countParams = targetStoreId === 1 ? [customerId] : [customerId, targetStoreId];
+  // -------------------------------------------------------------
+  // STORE 1 (CHIPAKK): 100% UNTOUCHED LEGACY PATH
+  // -------------------------------------------------------------
+  if (targetStoreId === 1) {
+    const storeCondition = '(store_id = 1 OR store_id IS NULL)';
+    const countQuery = `SELECT COUNT(*) AS total FROM orders WHERE customer_id = ? AND ${storeCondition}`;
+    const [countRows] = await pool.execute(countQuery, [customerId]);
+    const total = countRows[0]?.total || 0;
 
-  const countQuery = `SELECT COUNT(*) AS total FROM orders WHERE customer_id = ? AND ${storeCondition}`;
-  const [countRows] = await pool.execute(countQuery, countParams);
-  const total = countRows[0]?.total || 0;
+    const oStoreCondition = '(o.store_id = 1 OR o.store_id IS NULL)';
+    const queryParams = [customerId, parsedLimit, parsedOffset];
 
-  const oStoreCondition = targetStoreId === 1 ? '(o.store_id = 1 OR o.store_id IS NULL)' : 'o.store_id = ?';
-  const queryParams = targetStoreId === 1 ? [customerId, parsedLimit, parsedOffset] : [customerId, targetStoreId, parsedLimit, parsedOffset];
+    const query = `
+      SELECT
+        o.id,
+        o.order_number,
+        o.customer_id,
+        o.customer_name,
+        o.customer_email,
+        COALESCE(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, '$.phone')), '') AS customer_phone,
+        o.shipping_address,
+        o.payment_method,
+        o.payment_status,
+        o.fulfillment_status,
+        o.subtotal,
+        o.discount_total,
+        o.shipping_charge,
+        o.total_price,
+        o.coupon_code,
+        o.courier,
+        o.tracking_no,
+        o.ship_date,
+        o.created_at,
+        COALESCE(o.store_id, 1) AS store_id,
+        (SELECT COUNT(*) FROM order_items WHERE order_id = o.id) AS item_count
+      FROM orders o
+      WHERE o.customer_id = ? AND ${oStoreCondition}
+      ORDER BY o.created_at DESC, o.id DESC
+      LIMIT ? OFFSET ?
+    `;
 
-  const query = `
-    SELECT
-      o.id,
-      o.order_number,
-      o.customer_id,
-      o.customer_name,
-      o.customer_email,
-      COALESCE(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, '$.phone')), '') AS customer_phone,
-      o.shipping_address,
-      o.payment_method,
-      o.payment_status,
-      o.fulfillment_status,
-      o.subtotal,
-      o.discount_total,
-      o.shipping_charge,
-      o.total_price,
-      o.coupon_code,
-      o.courier,
-      o.tracking_no,
-      o.ship_date,
-      o.created_at,
-      COALESCE(o.store_id, 1) AS store_id,
-      (SELECT COUNT(*) FROM order_items WHERE order_id = o.id) AS item_count
-    FROM orders o
-    WHERE o.customer_id = ? AND ${oStoreCondition}
-    ORDER BY o.created_at DESC, o.id DESC
-    LIMIT ? OFFSET ?
-  `;
+    const [rows] = await pool.execute(query, queryParams);
 
-  const [rows] = await pool.execute(query, queryParams);
+    let itemsByOrderId = {};
+    if (rows.length > 0) {
+      try {
+        const hasMarshansProductCol = await checkHasMarshansOrderCol();
+        const orderIds = rows.map(r => r.id);
+        const placeholders = orderIds.map(() => '?').join(',');
+        const [allItemRows] = await pool.execute(`
+          SELECT
+            oi.id,
+            oi.order_id,
+            oi.product_id,
+            ${hasMarshansProductCol ? 'oi.marshans_product_id,' : 'NULL AS marshans_product_id,'}
+            oi.variant_id,
+            oi.product_name,
+            oi.sku,
+            oi.variant_options,
+            oi.unit_price,
+            oi.quantity,
+            oi.total_price,
+            COALESCE(
+              (SELECT image_url FROM product_images WHERE product_id = oi.product_id ORDER BY is_primary DESC, sort_order ASC, id ASC LIMIT 1),
+              ${hasMarshansProductCol ? '(SELECT image_url FROM marshans_product_images WHERE product_id = oi.marshans_product_id ORDER BY is_primary DESC, sort_order ASC, id ASC LIMIT 1),' : ''}
+              NULL
+            ) AS product_image
+          FROM order_items oi
+          WHERE oi.order_id IN (${placeholders})
+          ORDER BY oi.id ASC
+        `, orderIds);
 
-  let itemsByOrderId = {};
-  if (rows.length > 0) {
-    try {
-      const hasMarshansProductCol = await checkHasMarshansOrderCol();
-      const orderIds = rows.map(r => r.id);
-      const placeholders = orderIds.map(() => '?').join(',');
-      const [allItemRows] = await pool.execute(`
-        SELECT
-          oi.id,
-          oi.order_id,
-          oi.product_id,
-          ${hasMarshansProductCol ? 'oi.marshans_product_id,' : 'NULL AS marshans_product_id,'}
-          oi.variant_id,
-          oi.product_name,
-          oi.sku,
-          oi.variant_options,
-          oi.unit_price,
-          oi.quantity,
-          oi.total_price,
-          COALESCE(
-            (SELECT image_url FROM product_images WHERE product_id = oi.product_id ORDER BY is_primary DESC, sort_order ASC, id ASC LIMIT 1),
-            ${hasMarshansProductCol ? '(SELECT image_url FROM marshans_product_images WHERE product_id = oi.marshans_product_id ORDER BY is_primary DESC, sort_order ASC, id ASC LIMIT 1),' : ''}
-            NULL
-          ) AS product_image
-        FROM order_items oi
-        WHERE oi.order_id IN (${placeholders})
-        ORDER BY oi.id ASC
-      `, orderIds);
-
-      for (const item of allItemRows) {
-        if (!itemsByOrderId[item.order_id]) itemsByOrderId[item.order_id] = [];
-        itemsByOrderId[item.order_id].push({
-          ...item,
-          product_id: item.marshans_product_id || item.product_id,
-          marshans_product_id: item.marshans_product_id || null,
-          img: item.product_image || null,
-          variant_options: safeJsonParse(item.variant_options, null)
-        });
+        for (const item of allItemRows) {
+          if (!itemsByOrderId[item.order_id]) itemsByOrderId[item.order_id] = [];
+          itemsByOrderId[item.order_id].push({
+            ...item,
+            product_id: item.marshans_product_id || item.product_id,
+            marshans_product_id: item.marshans_product_id || null,
+            img: item.product_image || null,
+            variant_options: safeJsonParse(item.variant_options, null)
+          });
+        }
+      } catch (itemErr) {
+        console.warn('[orderService.getCustomerOrders] Could not fetch preview items:', itemErr.message);
       }
-    } catch (itemErr) {
-      console.warn('[orderService.getCustomerOrders] Could not fetch preview items:', itemErr.message);
+    }
+
+    const orders = rows.map(r => {
+      const isStore2 = false;
+      const rawTotalPrice = parseInt(r.total_price, 10) || 0;
+      const rawSubtotal = parseInt(r.subtotal, 10) || 0;
+      const rawDiscount = parseInt(r.discount_total, 10) || 0;
+      const rawShipping = parseInt(r.shipping_charge, 10) || 0;
+      const orderItems = itemsByOrderId[r.id] || [];
+
+      return {
+        ...r,
+        shipping_address: safeJsonParse(r.shipping_address, null),
+        total_price_rupees: rawTotalPrice,
+        subtotal_rupees: rawSubtotal,
+        discount_total_rupees: rawDiscount,
+        shipping_charge_rupees: rawShipping,
+        items: orderItems.map(item => ({
+          ...item,
+          unit_price_rupees: parseInt(item.unit_price, 10) || 0,
+          total_price_rupees: parseInt(item.total_price, 10) || 0
+        }))
+      };
+    });
+
+    return {
+      total,
+      limit: parsedLimit,
+      offset: parsedOffset,
+      orders
+    };
+  }
+
+  // -------------------------------------------------------------
+  // STORE 2 (THE MARSHANS): UNIFIED RETAIL + CUSTOM FORGE RETRIEVAL
+  // -------------------------------------------------------------
+  let cfTablesExist = false;
+  try {
+    const [tRows] = await pool.execute(
+      "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'custom_forge_orders'"
+    );
+    cfTablesExist = tRows && tRows.length > 0;
+  } catch (_) {}
+
+  // 1. Retail orders count for Store 2
+  const [retailCountRows] = await pool.execute(
+    'SELECT COUNT(*) AS total FROM orders WHERE customer_id = ? AND store_id = 2',
+    [customerId]
+  );
+  const retailTotal = retailCountRows[0]?.total || 0;
+
+  // 2. Custom Forge orders count for Store 2
+  let cfTotal = 0;
+  if (cfTablesExist) {
+    try {
+      const [cfCountRows] = await pool.execute(
+        'SELECT COUNT(*) AS total FROM custom_forge_orders WHERE customer_id = ? AND store_id = 2',
+        [customerId]
+      );
+      cfTotal = cfCountRows[0]?.total || 0;
+    } catch (_) {}
+  }
+
+  const combinedTotal = retailTotal + cfTotal;
+  const fetchLimit = parsedOffset + parsedLimit;
+
+  // Candidate rows from retail orders
+  let retailOrdersFormatted = [];
+  if (retailTotal > 0) {
+    const [retailRows] = await pool.execute(`
+      SELECT
+        o.id,
+        o.order_number,
+        o.customer_id,
+        o.customer_name,
+        o.customer_email,
+        COALESCE(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, '$.phone')), '') AS customer_phone,
+        o.shipping_address,
+        o.payment_method,
+        o.payment_status,
+        o.fulfillment_status,
+        o.subtotal,
+        o.discount_total,
+        o.shipping_charge,
+        o.total_price,
+        o.coupon_code,
+        o.courier,
+        o.tracking_no,
+        o.ship_date,
+        o.created_at,
+        2 AS store_id,
+        (SELECT COUNT(*) FROM order_items WHERE order_id = o.id) AS item_count
+      FROM orders o
+      WHERE o.customer_id = ? AND o.store_id = 2
+      ORDER BY o.created_at DESC, o.id DESC
+      LIMIT ?
+    `, [customerId, fetchLimit]);
+
+    if (retailRows.length > 0) {
+      let itemsByOrderId = {};
+      try {
+        const hasMarshansProductCol = await checkHasMarshansOrderCol();
+        const orderIds = retailRows.map(r => r.id);
+        const placeholders = orderIds.map(() => '?').join(',');
+        const [allItemRows] = await pool.execute(`
+          SELECT
+            oi.id,
+            oi.order_id,
+            oi.product_id,
+            ${hasMarshansProductCol ? 'oi.marshans_product_id,' : 'NULL AS marshans_product_id,'}
+            oi.variant_id,
+            oi.product_name,
+            oi.sku,
+            oi.variant_options,
+            oi.unit_price,
+            oi.quantity,
+            oi.total_price,
+            COALESCE(
+              (SELECT image_url FROM marshans_product_images WHERE product_id = oi.marshans_product_id ORDER BY is_primary DESC, sort_order ASC, id ASC LIMIT 1),
+              (SELECT image_url FROM product_images WHERE product_id = oi.product_id ORDER BY is_primary DESC, sort_order ASC, id ASC LIMIT 1),
+              NULL
+            ) AS product_image
+          FROM order_items oi
+          WHERE oi.order_id IN (${placeholders})
+          ORDER BY oi.id ASC
+        `, orderIds);
+
+        for (const item of allItemRows) {
+          if (!itemsByOrderId[item.order_id]) itemsByOrderId[item.order_id] = [];
+          itemsByOrderId[item.order_id].push({
+            ...item,
+            product_id: item.marshans_product_id || item.product_id,
+            marshans_product_id: item.marshans_product_id || null,
+            img: item.product_image || null,
+            variant_options: safeJsonParse(item.variant_options, null)
+          });
+        }
+      } catch (itemErr) {
+        console.warn('[orderService.getCustomerOrders] Could not fetch preview items for Store 2 retail:', itemErr.message);
+      }
+
+      retailOrdersFormatted = retailRows.map(r => {
+        const rawTotalPrice = parseInt(r.total_price, 10) || 0;
+        const rawSubtotal = parseInt(r.subtotal, 10) || 0;
+        const rawDiscount = parseInt(r.discount_total, 10) || 0;
+        const rawShipping = parseInt(r.shipping_charge, 10) || 0;
+        const orderItems = itemsByOrderId[r.id] || [];
+
+        return {
+          ...r,
+          shipping_address: safeJsonParse(r.shipping_address, null),
+          total_price_rupees: Math.round(rawTotalPrice / 100),
+          subtotal_rupees: Math.round(rawSubtotal / 100),
+          discount_total_rupees: Math.round(rawDiscount / 100),
+          shipping_charge_rupees: Math.round(rawShipping / 100),
+          is_custom_forge: false,
+          items: orderItems.map(item => ({
+            ...item,
+            unit_price_rupees: Math.round((parseInt(item.unit_price, 10) || 0) / 100),
+            total_price_rupees: Math.round((parseInt(item.total_price, 10) || 0) / 100)
+          }))
+        };
+      });
     }
   }
 
-  const orders = rows.map(r => {
-    const isStore2 = parseInt(r.store_id, 10) === 2;
-    const rawTotalPrice = parseInt(r.total_price, 10) || 0;
-    const rawSubtotal = parseInt(r.subtotal, 10) || 0;
-    const rawDiscount = parseInt(r.discount_total, 10) || 0;
-    const rawShipping = parseInt(r.shipping_charge, 10) || 0;
-    const orderItems = itemsByOrderId[r.id] || [];
+  // Candidate rows from Custom Forge orders
+  let cfOrdersFormatted = [];
+  if (cfTablesExist && cfTotal > 0) {
+    try {
+      const [cfRows] = await pool.execute(`
+        SELECT
+          o.id,
+          o.order_number,
+          o.customer_id,
+          o.customer_name,
+          o.customer_email,
+          o.customer_phone,
+          o.shipping_address,
+          o.payment_method,
+          o.payment_status,
+          o.production_status,
+          o.subtotal,
+          o.shipping_charge,
+          o.total_price,
+          o.created_at,
+          2 AS store_id
+        FROM custom_forge_orders o
+        WHERE o.customer_id = ? AND o.store_id = 2
+        ORDER BY o.created_at DESC, o.id DESC
+        LIMIT ?
+      `, [customerId, fetchLimit]);
 
-    return {
-      ...r,
-      shipping_address: safeJsonParse(r.shipping_address, null),
-      total_price_rupees: isStore2 ? Math.round(rawTotalPrice / 100) : rawTotalPrice,
-      subtotal_rupees: isStore2 ? Math.round(rawSubtotal / 100) : rawSubtotal,
-      discount_total_rupees: isStore2 ? Math.round(rawDiscount / 100) : rawDiscount,
-      shipping_charge_rupees: isStore2 ? Math.round(rawShipping / 100) : rawShipping,
-      items: orderItems.map(item => ({
-        ...item,
-        unit_price_rupees: isStore2 ? Math.round((parseInt(item.unit_price, 10) || 0) / 100) : (parseInt(item.unit_price, 10) || 0),
-        total_price_rupees: isStore2 ? Math.round((parseInt(item.total_price, 10) || 0) / 100) : (parseInt(item.total_price, 10) || 0)
-      }))
-    };
-  });
+      if (cfRows.length > 0) {
+        const cfOrderIds = cfRows.map(r => r.id);
+        const placeholders = cfOrderIds.map(() => '?').join(',');
+
+        // 1. Fetch line items and customization snapshots
+        const [cfItemRows] = await pool.execute(`
+          SELECT
+            oi.id,
+            oi.order_id,
+            oi.product_id,
+            oi.variant_id,
+            oi.product_name_snapshot,
+            oi.variant_sku_snapshot,
+            oi.size_label_snapshot,
+            oi.height_mm_snapshot,
+            oi.unit_price,
+            oi.quantity,
+            oi.total_price,
+            oc.custom_mode_enabled,
+            oc.customer_name AS engraved_name,
+            oc.customer_designation AS engraved_designation,
+            oc.nameplate_material,
+            oc.verification_status,
+            p.hero_image_url
+          FROM custom_forge_order_items oi
+          LEFT JOIN custom_forge_order_customizations oc ON oc.order_item_id = oi.id
+          LEFT JOIN custom_forge_products p ON oi.product_id = p.id
+          WHERE oi.order_id IN (${placeholders})
+          ORDER BY oi.id ASC
+        `, cfOrderIds);
+
+        const cfItemsByOrderId = {};
+        for (const it of cfItemRows) {
+          if (!cfItemsByOrderId[it.order_id]) cfItemsByOrderId[it.order_id] = [];
+          const customData = it.custom_mode_enabled ? {
+            name: it.engraved_name,
+            designation: it.engraved_designation,
+            material: it.nameplate_material,
+            status: it.verification_status
+          } : null;
+
+          cfItemsByOrderId[it.order_id].push({
+            id: it.id,
+            order_id: it.order_id,
+            product_id: it.product_id,
+            variant_id: it.variant_id,
+            product_name: it.product_name_snapshot,
+            name: it.product_name_snapshot,
+            sku: it.variant_sku_snapshot,
+            size_label: it.size_label_snapshot,
+            finishing: it.size_label_snapshot,
+            height_mm: it.height_mm_snapshot,
+            unit_price: it.unit_price,
+            quantity: it.quantity,
+            total_price: it.total_price,
+            unit_price_rupees: Math.round(Number(it.unit_price) / 100),
+            total_price_rupees: Math.round(Number(it.total_price) / 100),
+            img: it.hero_image_url || '/assets/placeholders/product-placeholder.svg',
+            product_image: it.hero_image_url || '/assets/placeholders/product-placeholder.svg',
+            material: it.nameplate_material || (customData ? customData.material : null) || (it.custom_mode_enabled ? 'Custom Nameplate' : null),
+            nameplate_material: it.nameplate_material || (customData ? customData.material : null),
+            customization: customData,
+            variant_options: {
+              size: it.size_label_snapshot,
+              height_mm: it.height_mm_snapshot,
+              nameplate: customData
+            }
+          });
+        }
+
+        // 2. Fetch coupon reservations / applied coupons if any
+        let couponsByOrderId = {};
+        try {
+          const [cuRows] = await pool.execute(`
+            SELECT cu.order_id, cu.discount_amount, c.code
+            FROM coupon_usage cu
+            JOIN coupons c ON cu.coupon_id = c.id
+            WHERE cu.order_id IN (${placeholders})
+          `, cfOrderIds);
+          for (const cu of cuRows) {
+            couponsByOrderId[cu.order_id] = {
+              code: cu.code,
+              discount: cu.discount_amount
+            };
+          }
+        } catch (_) {}
+
+        cfOrdersFormatted = cfRows.map(r => {
+          const rawTotalPrice = parseInt(r.total_price, 10) || 0;
+          const rawSubtotal = parseInt(r.subtotal, 10) || 0;
+          const rawShipping = parseInt(r.shipping_charge, 10) || 0;
+          const couponInfo = couponsByOrderId[r.id];
+          const rawDiscount = couponInfo?.discount || Math.max(0, (rawSubtotal + rawShipping) - rawTotalPrice);
+          const couponCode = couponInfo?.code || r.coupon_code || null;
+          const cfItems = cfItemsByOrderId[r.id] || [];
+
+          return {
+            id: r.id,
+            order_number: r.order_number,
+            customer_id: r.customer_id,
+            customer_name: r.customer_name,
+            customer_email: r.customer_email,
+            customer_phone: r.customer_phone || '',
+            shipping_address: safeJsonParse(r.shipping_address, null),
+            payment_method: r.payment_method,
+            payment_status: r.payment_status,
+            fulfillment_status: r.production_status || 'order_placed',
+            production_status: r.production_status || 'order_placed',
+            status: r.production_status || 'order_placed',
+            subtotal: rawSubtotal,
+            discount_total: rawDiscount,
+            shipping_charge: rawShipping,
+            total_price: rawTotalPrice,
+            coupon_code: couponCode,
+            courier: r.courier || null,
+            tracking_no: r.tracking_no || null,
+            ship_date: r.ship_date || null,
+            created_at: r.created_at,
+            store_id: 2,
+            is_custom_forge: true,
+            total_price_rupees: Math.round(rawTotalPrice / 100),
+            subtotal_rupees: Math.round(rawSubtotal / 100),
+            discount_total_rupees: Math.round(rawDiscount / 100),
+            shipping_charge_rupees: Math.round(rawShipping / 100),
+            item_count: cfItems.length,
+            items: cfItems
+          };
+        });
+      }
+    } catch (cfErr) {
+      console.warn('[orderService.getCustomerOrders] Custom Forge orders lookup warning:', cfErr.message);
+    }
+  }
+
+  // 3. Merge both streams, sort newest first, and slice for exact pagination
+  const allOrders = [...retailOrdersFormatted, ...cfOrdersFormatted];
+  allOrders.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  const paginatedOrders = allOrders.slice(parsedOffset, parsedOffset + parsedLimit);
 
   return {
-    total,
+    total: combinedTotal,
     limit: parsedLimit,
     offset: parsedOffset,
-    orders
+    orders: paginatedOrders
   };
 };
 
@@ -1516,23 +1918,57 @@ const getCustomerOrders = async (firebaseUid, { limit = 20, offset = 0, store_id
 const getCustomerOrderById = async (orderIdOrNumber, firebaseUid, storeId = 1) => {
   if (!orderIdOrNumber || !firebaseUid) return null;
 
-  const order = await getOrderById(orderIdOrNumber, storeId);
-  if (!order) return null;
-
   const [userRows] = await pool.execute(
-    'SELECT id FROM users WHERE firebase_uid = ? LIMIT 1',
+    'SELECT id, email FROM users WHERE firebase_uid = ? LIMIT 1',
     [firebaseUid]
   );
 
   if (!userRows || userRows.length === 0) return null;
 
   const customerId = userRows[0].id;
+  const customerEmail = userRows[0].email;
+  const activeStoreId = parseInt(storeId, 10) === 2 ? 2 : 1;
 
-  if (order.customer_id !== customerId) {
-    return null;
+  // 1. First attempt: Look up in regular retail orders
+  const order = await getOrderById(orderIdOrNumber, activeStoreId);
+  if (order && Number(order.customer_id) === Number(customerId)) {
+    return order;
   }
 
-  return order;
+  // 2. Second attempt (Store 2 only): Check custom_forge_orders with strict customer ownership
+  if (activeStoreId === 2 || String(orderIdOrNumber).trim().startsWith('CF-')) {
+    try {
+      const cleanId = String(orderIdOrNumber).trim();
+      const numId = parseInt(cleanId, 10);
+      const isNumeric = !isNaN(numId) && numId > 0;
+
+      const [cfRows] = await pool.execute(
+        `SELECT id, customer_id, customer_email FROM custom_forge_orders
+         WHERE (id = ? OR order_number = ?) AND store_id = 2
+         LIMIT 1`,
+        [isNumeric ? numId : 0, cleanId]
+      );
+
+      if (cfRows && cfRows.length > 0) {
+        const cfMeta = cfRows[0];
+        // Enforce strict customer ownership (zero cross-customer leakage)
+        const isOwner = (Number(cfMeta.customer_id) === Number(customerId)) ||
+                        (cfMeta.customer_email && customerEmail && cfMeta.customer_email.toLowerCase() === customerEmail.toLowerCase());
+        if (!isOwner) {
+          return null; // Access denied: order belongs to another customer
+        }
+
+        const fullCf = await customForgeService.getCustomForgeOrderByIdInternal(cfMeta.id);
+        if (fullCf) {
+          return normalizeCustomForgeOrder(fullCf);
+        }
+      }
+    } catch (cfErr) {
+      console.warn('[orderService.getCustomerOrderById] Custom Forge lookup error:', cfErr.message);
+    }
+  }
+
+  return null;
 };
 
 module.exports = {
