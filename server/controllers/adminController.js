@@ -593,30 +593,38 @@ const createTeamMemberHandler = async (req, res, next) => {
  * Ensure admin_sessions table exists in MySQL database
  */
 const ensureSessionTable = async () => {
-  await pool.execute(`
-    CREATE TABLE IF NOT EXISTS \`admin_sessions\` (
-      \`id\` BIGINT NOT NULL AUTO_INCREMENT,
-      \`session_id\` VARCHAR(128) NOT NULL,
-      \`firebase_uid\` VARCHAR(128) NOT NULL,
-      \`email\` VARCHAR(255) NOT NULL,
-      \`admin_name\` VARCHAR(255) DEFAULT NULL,
-      \`role\` VARCHAR(50) NOT NULL DEFAULT 'ADMIN',
-      \`ip_address\` VARCHAR(100) DEFAULT NULL,
-      \`user_agent\` TEXT DEFAULT NULL,
-      \`login_time\` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      \`last_activity\` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      \`status\` ENUM('active', 'logged_out', 'expired') NOT NULL DEFAULT 'active',
-      \`expires_at\` DATETIME NOT NULL,
-      \`created_at\` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      \`updated_at\` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      PRIMARY KEY (\`id\`),
-      UNIQUE KEY \`uk_admin_sessions_session_id\` (\`session_id\`),
-      KEY \`idx_admin_sessions_uid\` (\`firebase_uid\`),
-      KEY \`idx_admin_sessions_status\` (\`status\`),
-      KEY \`idx_admin_sessions_last_activity\` (\`last_activity\`),
-      KEY \`idx_admin_sessions_expires_at\` (\`expires_at\`)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-  `);
+  try {
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS \`admin_sessions\` (
+        \`id\` BIGINT NOT NULL AUTO_INCREMENT,
+        \`session_id\` VARCHAR(128) NOT NULL,
+        \`firebase_uid\` VARCHAR(128) NOT NULL,
+        \`email\` VARCHAR(255) NOT NULL,
+        \`admin_name\` VARCHAR(255) DEFAULT NULL,
+        \`role\` VARCHAR(50) NOT NULL DEFAULT 'ADMIN',
+        \`ip_address\` VARCHAR(100) DEFAULT NULL,
+        \`user_agent\` TEXT DEFAULT NULL,
+        \`login_time\` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        \`last_activity\` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        \`status\` ENUM('active', 'logged_out', 'expired') NOT NULL DEFAULT 'active',
+        \`expires_at\` DATETIME NOT NULL,
+        \`created_at\` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        \`updated_at\` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        PRIMARY KEY (\`id\`),
+        UNIQUE KEY \`uk_admin_sessions_session_id\` (\`session_id\`),
+        KEY \`idx_admin_sessions_uid\` (\`firebase_uid\`),
+        KEY \`idx_admin_sessions_status\` (\`status\`),
+        KEY \`idx_admin_sessions_last_activity\` (\`last_activity\`),
+        KEY \`idx_admin_sessions_expires_at\` (\`expires_at\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+  } catch (err) {
+    if (err && (err.code === 'ER_TABLEACCESS_DENIED_ERROR' || (err.message && err.message.toLowerCase().includes('denied')))) {
+      console.warn('[ensureSessionTable Notice]: Database user lacks CREATE privilege; relying on existing schema:', err.message);
+      return;
+    }
+    throw err;
+  }
 };
 
 /**
@@ -685,28 +693,32 @@ const recordAdminLoginHandler = async (req, res, next) => {
       userAgent
     ]);
 
-    await writeAuditLog(
-      actorId,
-      actorEmail,
-      'admin.login',
-      'admins',
-      adminId,
-      {
-        // Truncated: audit logs are readable by every admin (GET /api/admin/audit-logs), and the full value
-        // is a usable session credential -- a short, non-reusable prefix is enough for correlation.
-        session_id_prefix: clientSessionId.slice(0, 10),
-        ip: ipAddress,
-        userAgent: userAgent,
-        timestamp: new Date().toISOString()
-      }
-    );
+    try {
+      await writeAuditLog(
+        actorId,
+        actorEmail,
+        'admin.login',
+        'admins',
+        adminId,
+        {
+          // Truncated: audit logs are readable by every admin (GET /api/admin/audit-logs), and the full value
+          // is a usable session credential -- a short, non-reusable prefix is enough for correlation.
+          session_id_prefix: clientSessionId.slice(0, 10),
+          ip: ipAddress,
+          userAgent: userAgent,
+          timestamp: new Date().toISOString()
+        }
+      );
+    } catch (auditErr) {
+      console.warn('[recordAdminLogin Audit Warning]: Audit log write failed:', auditErr.message);
+    }
 
     return sendSuccess(res, { logged: true, session_id: clientSessionId }, 'Admin login audit event and session recorded');
   } catch (error) {
     const rawMsg = error && error.message ? String(error.message) : 'Database error';
     const safeErrorMsg = rawMsg.replace(/sess_[a-zA-Z0-9_-]+/g, '[REDACTED_SESSION]');
     console.error('[recordAdminLogin Error]', safeErrorMsg);
-    return sendError(res, 'Failed to register admin session.', 500);
+    return sendError(res, `Failed to register admin session: ${safeErrorMsg}`, 500);
   }
 };
 

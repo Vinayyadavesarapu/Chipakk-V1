@@ -1312,6 +1312,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (adminWorkspace) adminWorkspace.style.display = 'none';
                 if (loginSection) loginSection.style.display = 'block';
 
+                const detailMessage = err?.data?.error?.message || err?.data?.message || err?.message || '';
+
                 if (err.status === 403) {
                     // Definitively rejected as non-admin: clear custom session and sign out Firebase
                     clearAdminSession();
@@ -1325,10 +1327,16 @@ document.addEventListener('DOMContentLoaded', () => {
                     const msg = "Admin session invalid or expired. Please authenticate as administrator.";
                     if (loginError) loginError.textContent = msg;
                     showToast(msg, "warning");
+                } else if (err.status === 404) {
+                    clearAdminSession();
+                    const msg = `Admin verification endpoint not found (HTTP 404): ${detailMessage}`;
+                    if (loginError) loginError.textContent = msg;
+                    showToast(msg, "error");
                 } else {
                     // Transient network or server failure (e.g. 5xx, offline, timeout)
                     // Do not wipe admin session or sign out Firebase for temporary connectivity issues
-                    const msg = "Temporary verification failure: Unable to reach verification server. Please check your network and retry.";
+                    const serverMsg = detailMessage ? ` (${detailMessage})` : '';
+                    const msg = `Temporary verification failure: Unable to reach verification server${serverMsg}. Please check your network and retry.`;
                     if (loginError) loginError.textContent = msg;
                     showToast(msg, "warning");
                 }
@@ -1394,6 +1402,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (adminWorkspace) adminWorkspace.style.display = 'none';
                 if (loginSection) loginSection.style.display = 'block';
 
+                const detailMessage = err?.data?.error?.message || err?.data?.message || err?.message || '';
+
                 let errorMsg = "Authentication failed.";
                 if (err.status === 403) {
                     // Definitively rejected as non-admin: clear custom session and sign out Firebase
@@ -1416,16 +1426,29 @@ document.addEventListener('DOMContentLoaded', () => {
                     errorMsg = "Admin session invalid or expired. Please log in again.";
                     if (loginError) loginError.textContent = errorMsg;
                     showToast(errorMsg, "warning");
+                } else if (err.status === 404) {
+                    errorMsg = `Admin endpoint not found (HTTP 404): ${detailMessage || 'The requested verification route does not exist.'}`;
+                    if (loginError) loginError.textContent = errorMsg;
+                    showToast(errorMsg, "error");
+                } else if (err.status === 504 || (err.message && err.message.includes('timeout'))) {
+                    errorMsg = "Request timed out. Please check your internet connection and retry.";
+                    if (loginError) loginError.textContent = errorMsg;
+                    showToast(errorMsg, "warning");
+                } else if (err.name === 'TypeError' && err.message && err.message.includes('fetch')) {
+                    errorMsg = "Temporary verification failure: Server or network error. Unable to reach API server. Please check your connection and retry.";
+                    if (loginError) loginError.textContent = errorMsg;
+                    showToast(errorMsg, "warning");
                 } else if ((err.status && err.status >= 500) || (!err.status && !err.code)) {
                     // Transient network or server failure during verification/login-event
+                    const suffix = detailMessage ? ` (${detailMessage})` : '';
                     errorMsg = (err.message && err.message.includes('timeout'))
                         ? "Request timed out. Please check your internet connection and retry."
-                        : "Temporary verification failure: Server or network error. Please check your connection and retry.";
+                        : `Temporary verification failure: Server or network error${suffix}. Please check your connection and retry.`;
                     if (loginError) loginError.textContent = errorMsg;
                     showToast(errorMsg, "warning");
                 } else {
                     clearAdminSession();
-                    errorMsg = err.message || "Authentication failed.";
+                    errorMsg = detailMessage || err.message || "Authentication failed.";
                     if (loginError) loginError.textContent = errorMsg;
                     showToast(errorMsg, "error");
                 }

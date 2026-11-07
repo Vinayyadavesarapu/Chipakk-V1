@@ -106,7 +106,7 @@ const requireAdmin = async (req, res, next) => {
  */
 const requireAdminSession = async (req, res, next) => {
   // Allow login event to establish or register a fresh session
-  if (req.path === '/auth/login-event') {
+  if (req.path === '/auth/login-event' || req.path === '/auth/login-event/') {
     return next();
   }
 
