@@ -10,6 +10,7 @@ const adminWorkspace = document.getElementById('admin-workspace');
 const loginBtn = document.getElementById('login-btn');
 const emailInput = document.getElementById('admin-email');
 const passwordInput = document.getElementById('admin-password');
+const loginError = document.getElementById('login-error');
 
 // API Base URL
 const API_BASE_URL = apiClient.getBaseUrl();
@@ -1246,11 +1247,16 @@ window.__simulateInactivityTimeout__ = function() {
 // =============================================================================
 
 let isDashboardInitialized = false;
+let isLoggingIn = false;
 
 document.addEventListener('DOMContentLoaded', () => {
     // Auth Listener
     onAuthStateChanged(auth, async (user) => {
         if (user) {
+            if (isLoggingIn) {
+                // If login button click handler is currently running, let it complete its sequential flow
+                return;
+            }
             const existingSessionId = getAdminSessionId();
 
             // If there is no existing admin session ID in localStorage, this is a customer or
@@ -1344,6 +1350,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 showToast("Please enter both email and password!", "error");
                 return;
             }
+
+            isLoggingIn = true;
             loginBtn.disabled = true;
             loginBtn.textContent = "VERIFYING...";
             if (loginError) loginError.textContent = '';
@@ -1374,7 +1382,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 recordAdminActivity(true);
                 showToast("Admin authenticated successfully!");
 
-                // 5. Reveal workspace and initialize
+                // 6. Reveal workspace and initialize
                 if (loginSection) loginSection.style.display = 'none';
                 if (adminWorkspace) adminWorkspace.style.display = 'flex';
                 startInactivityTracker();
@@ -1399,6 +1407,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     errorMsg = "Invalid email or password.";
                     if (loginError) loginError.textContent = errorMsg;
                     showToast(errorMsg, "error");
+                } else if (err.code === 'auth/too-many-requests') {
+                    errorMsg = "Too many failed login attempts. Please wait a moment and try again.";
+                    if (loginError) loginError.textContent = errorMsg;
+                    showToast(errorMsg, "error");
                 } else if (err.status === 401) {
                     clearAdminSession();
                     errorMsg = "Admin session invalid or expired. Please log in again.";
@@ -1406,9 +1418,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     showToast(errorMsg, "warning");
                 } else if ((err.status && err.status >= 500) || (!err.status && !err.code)) {
                     // Transient network or server failure during verification/login-event
-                    // Preserve the pending session ID in localStorage so the user can retry verification
-                    // without wiping the session or creating duplicate active sessions on the server.
-                    errorMsg = "Temporary verification failure: Server or network error. Please check your connection and retry.";
+                    errorMsg = (err.message && err.message.includes('timeout'))
+                        ? "Request timed out. Please check your internet connection and retry."
+                        : "Temporary verification failure: Server or network error. Please check your connection and retry.";
                     if (loginError) loginError.textContent = errorMsg;
                     showToast(errorMsg, "warning");
                 } else {
@@ -1418,6 +1430,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     showToast(errorMsg, "error");
                 }
             } finally {
+                isLoggingIn = false;
                 loginBtn.disabled = false;
                 loginBtn.textContent = "ACCESS TERMINAL";
             }

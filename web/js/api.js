@@ -185,9 +185,22 @@ async function request(endpoint, options = {}) {
     headers['Content-Type'] = 'application/json';
   }
 
+  // Default 30-second timeout to prevent requests from hanging indefinitely
+  const timeoutMs = typeof options.timeout === 'number' ? options.timeout : 30000;
+  let timeoutId = null;
+  let internalController = null;
+
+  if (typeof AbortController !== 'undefined' && !options.signal) {
+    internalController = new AbortController();
+    timeoutId = setTimeout(() => {
+      internalController.abort(new Error(`Request timed out after ${timeoutMs / 1000} seconds`));
+    }, timeoutMs);
+  }
+
   const config = {
     ...options,
-    headers
+    headers,
+    signal: options.signal || (internalController ? internalController.signal : undefined)
   };
 
   try {
@@ -221,8 +234,17 @@ async function request(endpoint, options = {}) {
 
     return data;
   } catch (err) {
+    if (err.name === 'AbortError' || err.message?.includes('timed out')) {
+      const timeoutErr = new Error(`Request timed out after ${timeoutMs / 1000} seconds. Please check your network and retry.`);
+      timeoutErr.status = 504;
+      throw timeoutErr;
+    }
     console.error(`[API Client Error] ${options.method || 'GET'} ${endpoint}:`, err.message);
     throw err;
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
   }
 }
 
