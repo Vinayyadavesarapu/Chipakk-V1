@@ -460,11 +460,16 @@ function fallbackCopyTextToClipboard(text, label) {
 // ASYNC API STATE LOADER
 // =============================================================================
 
-async function fetchAllAdminProducts() {
+async function fetchAllAdminProducts(expectedStoreId = null) {
+    const storeId = expectedStoreId !== null ? expectedStoreId : (apiClient.getActiveStoreId ? apiClient.getActiveStoreId() : 1);
     let offset = 0;
     const limit = 500;
     let all = [];
     while (true) {
+        const currentStore = apiClient.getActiveStoreId ? apiClient.getActiveStoreId() : 1;
+        if (currentStore !== storeId) {
+            return []; // Store switched during pagination, abort early
+        }
         const res = await apiClient.get('/admin/products', { limit, offset });
         const rawProds = res?.data?.products || res?.products || (Array.isArray(res?.data) ? res.data : []);
         const total = typeof res?.data?.total === 'number' ? res.data.total : (Array.isArray(rawProds) ? rawProds.length : 0);
@@ -688,22 +693,41 @@ async function loadAllAdminData() {
 }
 
 // API Refresh Handlers
+let currentProductFetchRequestId = 0;
 async function refreshProductsFromAPI() {
+    const fetchStoreId = apiClient.getActiveStoreId ? apiClient.getActiveStoreId() : 1;
+    const requestId = ++currentProductFetchRequestId;
     try {
-        const rawProds = await fetchAllAdminProducts();
+        const rawProds = await fetchAllAdminProducts(fetchStoreId);
+        const currentStoreId = apiClient.getActiveStoreId ? apiClient.getActiveStoreId() : 1;
+        // Strict Race-Condition Guard: Discard if store changed or newer request started
+        if (requestId !== currentProductFetchRequestId || currentStoreId !== fetchStoreId) {
+            return;
+        }
         if (Array.isArray(rawProds)) {
             products = rawProds.map(normalizeProduct);
             renderProductsTable();
             populateCategoryDropdowns();
         }
     } catch (err) {
-        console.error('[refreshProductsFromAPI]', err.message);
+        const currentStoreId = apiClient.getActiveStoreId ? apiClient.getActiveStoreId() : 1;
+        if (requestId === currentProductFetchRequestId && currentStoreId === fetchStoreId) {
+            console.error('[refreshProductsFromAPI]', err.message);
+        }
     }
 }
 
+let currentCategoryFetchRequestId = 0;
 async function refreshCategoriesFromAPI() {
+    const fetchStoreId = apiClient.getActiveStoreId ? apiClient.getActiveStoreId() : 1;
+    const requestId = ++currentCategoryFetchRequestId;
     try {
         const res = await apiClient.get('/categories');
+        const currentStoreId = apiClient.getActiveStoreId ? apiClient.getActiveStoreId() : 1;
+        // Strict Race-Condition Guard: Discard if store changed or newer request started
+        if (requestId !== currentCategoryFetchRequestId || currentStoreId !== fetchStoreId) {
+            return;
+        }
         const raw = res?.data?.categories || res?.categories || (Array.isArray(res?.data) ? res.data : []) || (Array.isArray(res) ? res : []);
         if (Array.isArray(raw)) {
             categories = raw.map(normalizeCategory).filter(c => c && (c.name || '').toLowerCase().trim() !== 'best seller' && (c.slug || '').toLowerCase().trim() !== 'best-seller');
@@ -716,7 +740,10 @@ async function refreshCategoriesFromAPI() {
             renderProductsTable();
         }
     } catch (err) {
-        console.error('[refreshCategoriesFromAPI]', err.message);
+        const currentStoreId = apiClient.getActiveStoreId ? apiClient.getActiveStoreId() : 1;
+        if (requestId === currentCategoryFetchRequestId && currentStoreId === fetchStoreId) {
+            console.error('[refreshCategoriesFromAPI]', err.message);
+        }
     }
 }
 
@@ -1033,6 +1060,46 @@ async function refreshCustomForgeOrdersFromAPI(statusFilter = activeCfStatus, se
             });
         }
         showToast(`Failed to load Custom Forge orders: ${err.message}`, 'error');
+    }
+}
+
+function populateCategoryDropdowns() {
+    const prodCatSelect = document.getElementById('prod-category');
+    const filterCatSelect = document.getElementById('prod-filter-category');
+    const evtCatSelect = document.getElementById('evt-filter-cat');
+
+    const currentProdVal = prodCatSelect?.value;
+    const currentFilterVal = filterCatSelect?.value;
+    const currentEvtVal = evtCatSelect?.value;
+
+    const visibleCategories = Array.isArray(categories)
+        ? categories.filter(c => c && (c.name || '').toLowerCase().trim() !== 'best seller' && (c.slug || '').toLowerCase().trim() !== 'best-seller')
+        : [];
+
+    const catOptions = visibleCategories.map(c => {
+        const catName = c.name || '';
+        const catId = c.id !== undefined && c.id !== null ? String(c.id) : '';
+        const catSlug = c.slug || '';
+        return `<option value="${escapeHtml(catName)}" data-id="${escapeHtml(catId)}" data-slug="${escapeHtml(catSlug)}">${escapeHtml(catName)}</option>`;
+    }).join('');
+
+    if (prodCatSelect) {
+        prodCatSelect.innerHTML = catOptions ? `<option value="">Select Category</option>${catOptions}` : '<option value="">No categories available</option>';
+        if (currentProdVal && Array.from(prodCatSelect.options).some(o => o.value === currentProdVal)) {
+            prodCatSelect.value = currentProdVal;
+        }
+    }
+    if (filterCatSelect) {
+        filterCatSelect.innerHTML = `<option value="">All Categories</option>${catOptions}`;
+        if (currentFilterVal !== undefined && Array.from(filterCatSelect.options).some(o => o.value === currentFilterVal)) {
+            filterCatSelect.value = currentFilterVal;
+        }
+    }
+    if (evtCatSelect) {
+        evtCatSelect.innerHTML = `<option value="">All Categories</option>${catOptions}`;
+        if (currentEvtVal !== undefined && Array.from(evtCatSelect.options).some(o => o.value === currentEvtVal)) {
+            evtCatSelect.value = currentEvtVal;
+        }
     }
 }
 
@@ -1589,6 +1656,10 @@ function switchAdminTab(targetSecId, options = {}) {
         refreshCustomForgeOrdersFromAPI();
     } else if (finalTabId === 'tab-orders') {
         refreshOrdersFromAPI();
+    } else if (finalTabId === 'tab-products') {
+        refreshProductsFromAPI().catch(err => console.error('[switchAdminTab tab-products]', err));
+    } else if (finalTabId === 'tab-categories') {
+        refreshCategoriesFromAPI().catch(err => console.error('[switchAdminTab tab-categories]', err));
     }
 
     if (options.scrollToTop !== false) {
@@ -7907,6 +7978,11 @@ function setupEventListeners() {
 window.updateState = updateState;
 window.saveState = saveState;
 window.showToast = showToast;
+window.populateCategoryDropdowns = populateCategoryDropdowns;
+window.refreshProductsFromAPI = refreshProductsFromAPI;
+window.refreshCategoriesFromAPI = refreshCategoriesFromAPI;
+window.updateStoreSwitcherUI = updateStoreSwitcherUI;
+window.switchActiveStore = switchActiveStore;
 
 
 /* =========================================================
