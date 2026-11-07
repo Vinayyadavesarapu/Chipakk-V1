@@ -1473,16 +1473,30 @@ const normalizeCustomForgeOrder = (cfOrder) => {
 const getCustomerOrders = async (firebaseUid, { limit = 20, offset = 0, store_id = 1 } = {}) => {
   if (!firebaseUid) return { total: 0, limit, offset, orders: [] };
 
-  const [userRows] = await pool.execute(
+  let [userRows] = await pool.execute(
     'SELECT id, email FROM users WHERE firebase_uid = ? LIMIT 1',
     [firebaseUid]
   );
 
-  if (!userRows || userRows.length === 0) {
-    return { total: 0, limit, offset, orders: [] };
+  let customerId = userRows && userRows.length > 0 ? userRows[0].id : null;
+  let customerEmail = userRows && userRows.length > 0 ? (userRows[0].email || '') : '';
+
+  if (!customerId) {
+    try {
+      const customerService = require('./customerService');
+      const resolvedCustomer = await customerService.resolveOrCreateCustomer({ uid: firebaseUid });
+      if (resolvedCustomer) {
+        customerId = resolvedCustomer.id;
+        customerEmail = resolvedCustomer.email || '';
+      }
+    } catch (resolveErr) {
+      console.warn('[orderService.getCustomerOrders] Auto-resolve customer warning:', resolveErr.message);
+    }
   }
 
-  const customerId = userRows[0].id;
+  if (!customerId) {
+    return { total: 0, limit, offset, orders: [] };
+  }
   const parsedLimit = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
   const parsedOffset = Math.max(parseInt(offset, 10) || 0, 0);
   const targetStoreId = parseInt(store_id, 10) === 2 ? 2 : 1;
@@ -1616,10 +1630,10 @@ const getCustomerOrders = async (firebaseUid, { limit = 20, offset = 0, store_id
     cfTablesExist = tRows && tRows.length > 0;
   } catch (_) {}
 
-  // 1. Retail orders count for Store 2
+  // 1. Retail orders count for Store 2 (matched by customer_id OR verified customer_email)
   const [retailCountRows] = await pool.execute(
-    'SELECT COUNT(*) AS total FROM orders WHERE customer_id = ? AND store_id = 2',
-    [customerId]
+    'SELECT COUNT(*) AS total FROM orders WHERE ((customer_id = ?) OR (? != "" AND LOWER(customer_email) = LOWER(?))) AND store_id = 2',
+    [customerId, customerEmail, customerEmail]
   );
   const retailTotal = retailCountRows[0]?.total || 0;
 
@@ -1628,8 +1642,8 @@ const getCustomerOrders = async (firebaseUid, { limit = 20, offset = 0, store_id
   if (cfTablesExist) {
     try {
       const [cfCountRows] = await pool.execute(
-        'SELECT COUNT(*) AS total FROM custom_forge_orders WHERE customer_id = ? AND store_id = 2',
-        [customerId]
+        'SELECT COUNT(*) AS total FROM custom_forge_orders WHERE ((customer_id = ?) OR (? != "" AND LOWER(customer_email) = LOWER(?))) AND store_id = 2',
+        [customerId, customerEmail, customerEmail]
       );
       cfTotal = cfCountRows[0]?.total || 0;
     } catch (_) {}
@@ -1665,10 +1679,10 @@ const getCustomerOrders = async (firebaseUid, { limit = 20, offset = 0, store_id
         2 AS store_id,
         (SELECT COUNT(*) FROM order_items WHERE order_id = o.id) AS item_count
       FROM orders o
-      WHERE o.customer_id = ? AND o.store_id = 2
+      WHERE ((o.customer_id = ?) OR (? != '' AND LOWER(o.customer_email) = LOWER(?))) AND o.store_id = 2
       ORDER BY o.created_at DESC, o.id DESC
       LIMIT ?
-    `, [customerId, fetchLimit]);
+    `, [customerId, customerEmail, customerEmail, fetchLimit]);
 
     if (retailRows.length > 0) {
       let itemsByOrderId = {};
@@ -1757,13 +1771,14 @@ const getCustomerOrders = async (firebaseUid, { limit = 20, offset = 0, store_id
           o.subtotal,
           o.shipping_charge,
           o.total_price,
+          o.gateway_order_id,
           o.created_at,
           2 AS store_id
         FROM custom_forge_orders o
-        WHERE o.customer_id = ? AND o.store_id = 2
+        WHERE ((o.customer_id = ?) OR (? != '' AND LOWER(o.customer_email) = LOWER(?))) AND o.store_id = 2
         ORDER BY o.created_at DESC, o.id DESC
         LIMIT ?
-      `, [customerId, fetchLimit]);
+      `, [customerId, customerEmail, customerEmail, fetchLimit]);
 
       if (cfRows.length > 0) {
         const cfOrderIds = cfRows.map(r => r.id);
@@ -1918,21 +1933,39 @@ const getCustomerOrders = async (firebaseUid, { limit = 20, offset = 0, store_id
 const getCustomerOrderById = async (orderIdOrNumber, firebaseUid, storeId = 1) => {
   if (!orderIdOrNumber || !firebaseUid) return null;
 
-  const [userRows] = await pool.execute(
+  let [userRows] = await pool.execute(
     'SELECT id, email FROM users WHERE firebase_uid = ? LIMIT 1',
     [firebaseUid]
   );
 
-  if (!userRows || userRows.length === 0) return null;
+  let customerId = userRows && userRows.length > 0 ? userRows[0].id : null;
+  let customerEmail = userRows && userRows.length > 0 ? (userRows[0].email || '') : '';
 
-  const customerId = userRows[0].id;
-  const customerEmail = userRows[0].email;
+  if (!customerId) {
+    try {
+      const customerService = require('./customerService');
+      const resolvedCustomer = await customerService.resolveOrCreateCustomer({ uid: firebaseUid });
+      if (resolvedCustomer) {
+        customerId = resolvedCustomer.id;
+        customerEmail = resolvedCustomer.email || '';
+      }
+    } catch (resolveErr) {
+      console.warn('[orderService.getCustomerOrderById] Auto-resolve customer warning:', resolveErr.message);
+    }
+  }
+
+  if (!customerId) return null;
+
   const activeStoreId = parseInt(storeId, 10) === 2 ? 2 : 1;
 
   // 1. First attempt: Look up in regular retail orders
   const order = await getOrderById(orderIdOrNumber, activeStoreId);
-  if (order && Number(order.customer_id) === Number(customerId)) {
-    return order;
+  if (order) {
+    const isOwner = (Number(order.customer_id) === Number(customerId)) ||
+                    (order.customer_email && customerEmail && order.customer_email.toLowerCase() === customerEmail.toLowerCase());
+    if (isOwner) {
+      return order;
+    }
   }
 
   // 2. Second attempt (Store 2 only): Check custom_forge_orders with strict customer ownership
