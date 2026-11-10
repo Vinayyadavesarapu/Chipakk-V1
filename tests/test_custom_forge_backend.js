@@ -848,7 +848,7 @@ async function runCustomForgeTests() {
         }
       });
       assert.strictEqual(res.status, 400, `Expected 400, got ${res.status}`);
-      assert.ok(/must be exactly 'Plastic' or 'MDF'/i.test(getErrMsg(res)));
+      assert.ok(/must be 'Vinyl', 'Plastic', or 'MDF'/i.test(getErrMsg(res)));
     });
 
     await test('5.7: Custom mode enabled with material "MDF" is accepted on 2-feet variant', async () => {
@@ -870,9 +870,9 @@ async function runCustomForgeTests() {
         }
       });
       assert.strictEqual(res.status, 201, `Expected 201, got ${res.status}`);
-      // 2 feet (5999) + Nameplate (29) + MDF (50) = ₹6,078 (607800 paise)
-      assert.strictEqual(res.body.data.subtotal, 607800);
-      assert.strictEqual(res.body.data.subtotal_rupees, 6078);
+      // 2 feet (5999) + MFD (49) = ₹6,048 (604800 paise)
+      assert.strictEqual(res.body.data.subtotal, 604800);
+      assert.strictEqual(res.body.data.subtotal_rupees, 6048);
       assert.strictEqual(res.body.data.items[0].customization.material, 'MDF');
       assert.strictEqual(res.body.data.items[0].customization.name, 'Hon. Justice Verma');
     });
@@ -958,7 +958,23 @@ async function runCustomForgeTests() {
       assert.match(res.body.error.message, /only available when Personalized Nameplate is enabled/i);
     });
 
-    await test('6.5: Lady Justice Pricing Combination D: Nameplate + Wood -> ₹3,778', async () => {
+    await test('6.4b: Lady Justice Pricing Combination: Nameplate + Vinyl Sticker (FREE) -> ₹3,699', async () => {
+      const res = await makeRequest(server, '/api/custom-forge/orders', {
+        method: 'POST',
+        headers: { 'X-Store-ID': '2', 'Authorization': `Bearer ${TOKENS.customer}` },
+        body: {
+          variant_id: 2,
+          custom_mode: 1,
+          customization: { name: 'Adv. Test', designation: 'High Court', material: 'Vinyl' },
+          shipping_address: VALID_SHIPPING_ADDRESS
+        }
+      });
+      assert.strictEqual(res.status, 201);
+      assert.strictEqual(res.body.data.subtotal, 369900);
+      assert.strictEqual(res.body.data.subtotal_rupees, 3699);
+    });
+
+    await test('6.5: Lady Justice Pricing Combination D: Nameplate + MFD -> ₹3,748', async () => {
       const res = await makeRequest(server, '/api/custom-forge/orders', {
         method: 'POST',
         headers: { 'X-Store-ID': '2', 'Authorization': `Bearer ${TOKENS.customer}` },
@@ -970,8 +986,8 @@ async function runCustomForgeTests() {
         }
       });
       assert.strictEqual(res.status, 201);
-      assert.strictEqual(res.body.data.subtotal, 377800);
-      assert.strictEqual(res.body.data.subtotal_rupees, 3778);
+      assert.strictEqual(res.body.data.subtotal, 374800);
+      assert.strictEqual(res.body.data.subtotal_rupees, 3748);
     });
 
     // -------------------------------------------------------------------------

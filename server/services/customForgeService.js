@@ -8,20 +8,23 @@ const { normalizeIndianPhoneNumber } = require('../utils/phoneUtils');
 /**
  * Custom Forge Business Constants
  */
-const ALLOWED_NAMEPLATE_MATERIALS = ['Plastic', 'MDF'];
+const ALLOWED_NAMEPLATE_MATERIALS = ['Vinyl', 'Plastic', 'MDF'];
 const MAX_CUSTOMER_NAME_LENGTH = 35;
 const MAX_DESIGNATION_LENGTH = 50;
 
 /**
  * Lady Justice Customization Pricing (Authoritative Server-Side Constants)
- * - Personalized Nameplate: +₹29 (2,900 paise)
- * - Organic Wood / MDF Material: +₹50 (5,000 paise)
- * - Precision Polymer: +₹0
- * Formula: unitPrice = variantPrice + nameplateCharge + materialCharge
+ * - Name / Designation / Second Person: FREE (0 paise)
+ * - Vinyl Sticker: FREE (0 paise)
+ * - Precision Polymer (Plastic): +₹29 (2,900 paise)
+ * - MFD Engraving (Wooden Board): +₹49 (4,900 paise)
+ * Formula: unitPrice = variantPrice + materialCharge
  */
 const LADY_JUSTICE_CUSTOMIZATION_PRICING = {
-  NAMEPLATE_PAISE: 2900,
-  WOOD_MDF_PAISE: 5000
+  NAMEPLATE_PAISE: 0,
+  VINYL_PAISE: 0,
+  PLASTIC_PAISE: 2900,
+  WOOD_MDF_PAISE: 4900
 };
 
 const VARIANT_SLUG_TO_ID = {
@@ -405,14 +408,12 @@ const validateCustomization = (variant, customMode, customization) => {
   const rawMaterial = customization ? (customization.material !== undefined ? customization.material : customization.nameplate_material) : null;
 
   // 3. Dependency rule:
-  // Personalized Nameplate (+₹29) is the master toggle for custom nameplate & material upgrades.
-  // Wooden engraving (+₹50) is NOT an independent purchase option. It is available only when
-  // Personalized Nameplate is enabled.
+  // When Custom Mode is disabled, personalization inputs and material upgrades are rejected
   if (!isCustomModeEnabled) {
     if (rawMaterial !== undefined && rawMaterial !== null && String(rawMaterial).trim() !== '') {
       const matStr = String(rawMaterial).trim();
       if (matStr === 'MDF' || /wood/i.test(matStr) || /mdf/i.test(matStr)) {
-        const err = new Error('Wooden engraving (+₹50) is only available when Personalized Nameplate is enabled.');
+        const err = new Error('MFD Engraving (+₹49) is only available when Personalized Nameplate is enabled.');
         err.statusCode = 400;
         throw err;
       }
@@ -423,7 +424,7 @@ const validateCustomization = (variant, customMode, customization) => {
       customer_designation: null,
       second_customer_name: null,
       second_customer_designation: null,
-      nameplate_material: 'Plastic',
+      nameplate_material: null,
       nameplateChargePaise: 0,
       materialChargePaise: 0,
       customizationChargePaise: 0
@@ -499,22 +500,29 @@ const validateCustomization = (variant, customMode, customization) => {
     normalizedSecondDesignation = trimmedSecondDesig.toUpperCase() === 'NIL' ? 'NIL' : trimmedSecondDesig;
   }
 
-  const nameplateChargePaise = LADY_JUSTICE_CUSTOMIZATION_PRICING.NAMEPLATE_PAISE; // 2900 paise
+  // Name, designation, and second person are completely FREE (0 paise)
+  const nameplateChargePaise = LADY_JUSTICE_CUSTOMIZATION_PRICING.NAMEPLATE_PAISE; // 0 paise
 
-  // 5. Nameplate Material (+₹50 for Organic Wood / MDF, +₹0 for Precision Polymer)
-  let cleanMaterial = 'Plastic';
+  // 5. Nameplate Material:
+  // - Vinyl Sticker: FREE (0 paise) — Default
+  // - Precision Polymer (Plastic): +₹29 (2,900 paise)
+  // - MFD Engraving (Wooden Board): +₹49 (4,900 paise)
+  let cleanMaterial = 'Vinyl';
   let materialChargePaise = 0;
 
   if (rawMaterial !== undefined && rawMaterial !== null && String(rawMaterial).trim() !== '') {
     const matStr = String(rawMaterial).trim();
-    if (matStr === 'MDF' || /wood/i.test(matStr) || /mdf/i.test(matStr)) {
-      cleanMaterial = 'MDF';
-      materialChargePaise = LADY_JUSTICE_CUSTOMIZATION_PRICING.WOOD_MDF_PAISE; // 5000 paise
+    if (matStr === 'Vinyl' || /vinyl/i.test(matStr) || /sticker/i.test(matStr)) {
+      cleanMaterial = 'Vinyl';
+      materialChargePaise = LADY_JUSTICE_CUSTOMIZATION_PRICING.VINYL_PAISE; // 0 paise
     } else if (matStr === 'Plastic' || /polymer/i.test(matStr) || /plastic/i.test(matStr)) {
       cleanMaterial = 'Plastic';
-      materialChargePaise = 0;
+      materialChargePaise = LADY_JUSTICE_CUSTOMIZATION_PRICING.PLASTIC_PAISE; // 2900 paise
+    } else if (matStr === 'MDF' || /wood/i.test(matStr) || /mdf/i.test(matStr)) {
+      cleanMaterial = 'MDF';
+      materialChargePaise = LADY_JUSTICE_CUSTOMIZATION_PRICING.WOOD_MDF_PAISE; // 4900 paise
     } else {
-      const err = new Error(`Nameplate material must be exactly 'Plastic' or 'MDF'. Received: '${rawMaterial}'.`);
+      const err = new Error(`Nameplate material must be 'Vinyl', 'Plastic', or 'MDF'. Received: '${rawMaterial}'.`);
       err.statusCode = 400;
       throw err;
     }

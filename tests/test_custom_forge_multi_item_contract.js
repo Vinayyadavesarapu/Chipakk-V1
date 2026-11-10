@@ -358,10 +358,10 @@ async function run() {
     // Subtotal with authoritative customization pricing:
     // Item 1 (1ft + Nameplate + Polymer): 3,500 + 29 = ₹3,529 (352,900 paise)
     // Item 2 (6in Standard): ₹1,600 (160,000 paise)
-    // Item 3 (2ft + Nameplate + MDF): 5,600 + 29 + 50 = ₹5,679 (567,900 paise)
-    // Aggregate: 3,529 + 1,600 + 5,679 = ₹10,808 (1,080,800 paise)
-    assert.equal(createdMultiOrder.subtotal, 1080800, 'Aggregate subtotal must be exactly 1,080,800 paise (₹10,808)');
-    assert.equal(createdMultiOrder.subtotal_rupees, 10808);
+    // Item 3 (2ft + Nameplate + MDF): 5,600 + 49 = ₹5,649 (564,900 paise)
+    // Aggregate: 3,529 + 1,600 + 5,649 = ₹10,778 (1,077,800 paise)
+    assert.equal(createdMultiOrder.subtotal, 1077800, 'Aggregate subtotal must be exactly 1,077,800 paise (₹10,778)');
+    assert.equal(createdMultiOrder.subtotal_rupees, 10778);
 
     // Exactly 3 order items must be linked to this single order ID
     assert.equal(createdMultiOrder.items.length, 3, 'Must contain exactly 3 items');
@@ -382,7 +382,7 @@ async function run() {
     const it3 = createdMultiOrder.items.find(i => i.variant_id === 3);
     assert.ok(it3);
     assert.equal(it3.size_label_snapshot, '2 feet');
-    assert.equal(it3.unit_price, 567900);
+    assert.equal(it3.unit_price, 564900);
     assert.equal(it3.customization.name, 'Chief Justice Courtroom');
     assert.equal(it3.customization.material, 'MDF');
   });
@@ -498,10 +498,10 @@ async function run() {
 
     assert.ok(singleOrder);
     assert.equal(singleOrder.items.length, 1);
-    // 1 foot (3,500) + Nameplate (29) + MDF (50) = ₹3,579 (357,900 paise)
-    assert.equal(singleOrder.subtotal, 357900);
-    assert.equal(singleOrder.subtotal_rupees, 3579);
-    assert.equal(singleOrder.items[0].unit_price, 357900);
+    // 1 foot (3,500) + MDF (49) = ₹3,549 (354,900 paise)
+    assert.equal(singleOrder.subtotal, 354900);
+    assert.equal(singleOrder.subtotal_rupees, 3549);
+    assert.equal(singleOrder.items[0].unit_price, 354900);
     assert.equal(singleOrder.items[0].customization.name, 'Adv. Single Client');
   });
 
