@@ -84,7 +84,7 @@ let customForgeVariants = [
     variant_sku: 'MRSH-CF-LJ-6IN',
     size_label: '6 inches',
     height_mm: 152,
-    price: 160000, // ₹1,600
+    price: 199900, // ₹1,999
     custom_mode_allowed: 0,
     display_order: 1,
     active: 1
@@ -95,7 +95,7 @@ let customForgeVariants = [
     variant_sku: 'MRSH-CF-LJ-1FT',
     size_label: '1 foot',
     height_mm: 305,
-    price: 350000, // ₹3,500
+    price: 369900, // ₹3,699
     custom_mode_allowed: 1,
     display_order: 2,
     active: 1
@@ -106,7 +106,7 @@ let customForgeVariants = [
     variant_sku: 'MRSH-CF-LJ-2FT',
     size_label: '2 feet',
     height_mm: 610,
-    price: 560000, // ₹5,600
+    price: 599900, // ₹5,999
     custom_mode_allowed: 1,
     display_order: 3,
     active: 1
@@ -531,35 +531,35 @@ async function runCustomForgeTests() {
       assert.strictEqual(res.body.data.variants.length, 3);
     });
 
-    await test('1.2: Variant 1 (6 inches) has price 160000 paise (₹1,600) and custom_mode_allowed=0', async () => {
+    await test('1.2: Variant 1 (6 inches) has price 199900 paise (₹1,999) and custom_mode_allowed=0', async () => {
       const res = await makeRequest(server, '/api/custom-forge/products/lady-justice', {
         headers: { 'X-Store-ID': '2' }
       });
       const v6in = res.body.data.variants.find(v => v.size_label === '6 inches');
       assert.ok(v6in, '6 inches variant must exist');
-      assert.strictEqual(v6in.price, 160000);
+      assert.strictEqual(v6in.price, 199900);
       assert.strictEqual(v6in.custom_mode_allowed, 0);
       assert.strictEqual(v6in.height_mm, 152);
     });
 
-    await test('1.3: Variant 2 (1 foot) has price 350000 paise (₹3,500) and custom_mode_allowed=1', async () => {
+    await test('1.3: Variant 2 (1 foot) has price 369900 paise (₹3,699) and custom_mode_allowed=1', async () => {
       const res = await makeRequest(server, '/api/custom-forge/products/lady-justice', {
         headers: { 'X-Store-ID': '2' }
       });
       const v1ft = res.body.data.variants.find(v => v.size_label === '1 foot');
       assert.ok(v1ft, '1 foot variant must exist');
-      assert.strictEqual(v1ft.price, 350000);
+      assert.strictEqual(v1ft.price, 369900);
       assert.strictEqual(v1ft.custom_mode_allowed, 1);
       assert.strictEqual(v1ft.height_mm, 305);
     });
 
-    await test('1.4: Variant 3 (2 feet) has price 560000 paise (₹5,600) and custom_mode_allowed=1', async () => {
+    await test('1.4: Variant 3 (2 feet) has price 599900 paise (₹5,999) and custom_mode_allowed=1', async () => {
       const res = await makeRequest(server, '/api/custom-forge/products/lady-justice', {
         headers: { 'X-Store-ID': '2' }
       });
       const v2ft = res.body.data.variants.find(v => v.size_label === '2 feet');
       assert.ok(v2ft, '2 feet variant must exist');
-      assert.strictEqual(v2ft.price, 560000);
+      assert.strictEqual(v2ft.price, 599900);
       assert.strictEqual(v2ft.custom_mode_allowed, 1);
       assert.strictEqual(v2ft.height_mm, 610);
     });
@@ -668,8 +668,8 @@ async function runCustomForgeTests() {
       });
       assert.strictEqual(res.status, 201, `Expected 201, got ${res.status}`);
       assert.strictEqual(res.body.success, true);
-      assert.strictEqual(res.body.data.subtotal, 160000);
-      assert.strictEqual(res.body.data.subtotal_rupees, 1600);
+      assert.strictEqual(res.body.data.subtotal, 199900);
+      assert.strictEqual(res.body.data.subtotal_rupees, 1999);
       assert.strictEqual(res.body.data.items[0].custom_mode_enabled, 0);
       assert.strictEqual(res.body.data.items[0].customization, null);
     });
@@ -689,8 +689,8 @@ async function runCustomForgeTests() {
       });
       assert.strictEqual(res.status, 201, `Expected 201, got ${res.status}`);
       assert.strictEqual(res.body.success, true);
-      assert.strictEqual(res.body.data.subtotal, 350000);
-      assert.strictEqual(res.body.data.subtotal_rupees, 3500);
+      assert.strictEqual(res.body.data.subtotal, 369900);
+      assert.strictEqual(res.body.data.subtotal_rupees, 3699);
       assert.strictEqual(res.body.data.items[0].custom_mode_enabled, 0);
     });
 
@@ -870,9 +870,9 @@ async function runCustomForgeTests() {
         }
       });
       assert.strictEqual(res.status, 201, `Expected 201, got ${res.status}`);
-      // 2 feet (5600) + Nameplate (29) + MDF (50) = ₹5,679 (567900 paise)
-      assert.strictEqual(res.body.data.subtotal, 567900);
-      assert.strictEqual(res.body.data.subtotal_rupees, 5679);
+      // 2 feet (5999) + Nameplate (29) + MDF (50) = ₹6,078 (607800 paise)
+      assert.strictEqual(res.body.data.subtotal, 607800);
+      assert.strictEqual(res.body.data.subtotal_rupees, 6078);
       assert.strictEqual(res.body.data.items[0].customization.material, 'MDF');
       assert.strictEqual(res.body.data.items[0].customization.name, 'Hon. Justice Verma');
     });
@@ -888,7 +888,7 @@ async function runCustomForgeTests() {
           'Authorization': `Bearer ${TOKENS.customer}`
         },
         body: {
-          variant_id: 2, // 1 foot (database price = 350000 paise / ₹3,500)
+          variant_id: 2, // 1 foot (database price = 369900 paise / ₹3,699)
           price: 100, // Tampered attempt: ₹1
           subtotal: 50,
           total: 50,
@@ -903,15 +903,15 @@ async function runCustomForgeTests() {
         }
       });
       assert.strictEqual(res.status, 201, `Expected 201, got ${res.status}`);
-      // Must equal authoritative price 350000 + 2900 = 352900 paise (₹3,529), ignoring client tampering
-      assert.strictEqual(res.body.data.subtotal, 352900);
-      assert.strictEqual(res.body.data.subtotal_rupees, 3529);
-      const expectedTotal = 352900 + (res.body.data.shipping_charge || 0);
+      // Must equal authoritative price 369900 + 2900 = 372800 paise (₹3,728), ignoring client tampering
+      assert.strictEqual(res.body.data.subtotal, 372800);
+      assert.strictEqual(res.body.data.subtotal_rupees, 3728);
+      const expectedTotal = 372800 + (res.body.data.shipping_charge || 0);
       assert.strictEqual(res.body.data.total_price, expectedTotal);
       assert.strictEqual(res.body.data.total_price_rupees, Math.round(expectedTotal / 100));
     });
 
-    await test('6.2: Lady Justice Pricing Combination A: No personalization, Polymer -> ₹3,500', async () => {
+    await test('6.2: Lady Justice Pricing Combination A: No personalization, Polymer -> ₹3,699', async () => {
       const res = await makeRequest(server, '/api/custom-forge/orders', {
         method: 'POST',
         headers: { 'X-Store-ID': '2', 'Authorization': `Bearer ${TOKENS.customer}` },
@@ -923,11 +923,11 @@ async function runCustomForgeTests() {
         }
       });
       assert.strictEqual(res.status, 201);
-      assert.strictEqual(res.body.data.subtotal, 350000);
-      assert.strictEqual(res.body.data.subtotal_rupees, 3500);
+      assert.strictEqual(res.body.data.subtotal, 369900);
+      assert.strictEqual(res.body.data.subtotal_rupees, 3699);
     });
 
-    await test('6.3: Lady Justice Pricing Combination B: Nameplate, Polymer -> ₹3,529', async () => {
+    await test('6.3: Lady Justice Pricing Combination B: Nameplate, Polymer -> ₹3,728', async () => {
       const res = await makeRequest(server, '/api/custom-forge/orders', {
         method: 'POST',
         headers: { 'X-Store-ID': '2', 'Authorization': `Bearer ${TOKENS.customer}` },
@@ -939,8 +939,8 @@ async function runCustomForgeTests() {
         }
       });
       assert.strictEqual(res.status, 201);
-      assert.strictEqual(res.body.data.subtotal, 352900);
-      assert.strictEqual(res.body.data.subtotal_rupees, 3529);
+      assert.strictEqual(res.body.data.subtotal, 372800);
+      assert.strictEqual(res.body.data.subtotal_rupees, 3728);
     });
 
     await test('6.4: Lady Justice Pricing: Wood without personalization is rejected with 400', async () => {
@@ -958,7 +958,7 @@ async function runCustomForgeTests() {
       assert.match(res.body.error.message, /only available when Personalized Nameplate is enabled/i);
     });
 
-    await test('6.5: Lady Justice Pricing Combination D: Nameplate + Wood -> ₹3,579', async () => {
+    await test('6.5: Lady Justice Pricing Combination D: Nameplate + Wood -> ₹3,778', async () => {
       const res = await makeRequest(server, '/api/custom-forge/orders', {
         method: 'POST',
         headers: { 'X-Store-ID': '2', 'Authorization': `Bearer ${TOKENS.customer}` },
@@ -970,8 +970,8 @@ async function runCustomForgeTests() {
         }
       });
       assert.strictEqual(res.status, 201);
-      assert.strictEqual(res.body.data.subtotal, 357900);
-      assert.strictEqual(res.body.data.subtotal_rupees, 3579);
+      assert.strictEqual(res.body.data.subtotal, 377800);
+      assert.strictEqual(res.body.data.subtotal_rupees, 3778);
     });
 
     // -------------------------------------------------------------------------

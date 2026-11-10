@@ -162,6 +162,27 @@ const acknowledgeAdminCustomForgeOrdersHandler = async (req, res, next) => {
   }
 };
 
+/**
+ * Admin: Update Lady Justice Variant Prices
+ * PUT /api/admin/custom-forge/product/variants
+ */
+const updateLadyJusticeVariantPricesHandler = async (req, res, next) => {
+  try {
+    const storeId = req.headers['x-store-id'] || req.storeId || 2;
+    if (parseInt(storeId, 10) !== 2) {
+      return sendError(res, 'Custom Forge is exclusively supported on Store 2 (THE MARSHANS).', 403);
+    }
+    const { variants } = req.body || {};
+    if (!variants || !Array.isArray(variants) || variants.length === 0) {
+      return sendError(res, 'Variants array with id and price is required.', 400);
+    }
+    const updatedProduct = await customForgeService.updateLadyJusticeVariantPrices(variants, storeId);
+    return sendSuccess(res, updatedProduct, 'Lady Justice variant prices updated successfully');
+  } catch (error) {
+    return next(error);
+  }
+};
+
 module.exports = {
   getLadyJusticeProductHandler,
   createCustomerOrderHandler,
@@ -170,5 +191,6 @@ module.exports = {
   getAdminCustomForgeOrderByIdHandler,
   updateAdminCustomForgeOrderStatusHandler,
   getAdminCustomForgeUnreadCountHandler,
-  acknowledgeAdminCustomForgeOrdersHandler
+  acknowledgeAdminCustomForgeOrdersHandler,
+  updateLadyJusticeVariantPricesHandler
 };

@@ -75,8 +75,8 @@ const FALLBACK_LADY_JUSTICE = {
       variant_sku: 'MRSH-CF-LJ-6IN',
       size_label: '6 inches',
       height_mm: 152,
-      price: 160000,
-      price_rupees: 1600,
+      price: 199900,
+      price_rupees: 1999,
       custom_mode_allowed: 0,
       display_order: 1,
       active: 1
@@ -86,8 +86,8 @@ const FALLBACK_LADY_JUSTICE = {
       variant_sku: 'MRSH-CF-LJ-1FT',
       size_label: '1 foot',
       height_mm: 305,
-      price: 350000,
-      price_rupees: 3500,
+      price: 369900,
+      price_rupees: 3699,
       custom_mode_allowed: 1,
       display_order: 2,
       active: 1
@@ -97,8 +97,8 @@ const FALLBACK_LADY_JUSTICE = {
       variant_sku: 'MRSH-CF-LJ-2FT',
       size_label: '2 feet',
       height_mm: 610,
-      price: 560000,
-      price_rupees: 5600,
+      price: 599900,
+      price_rupees: 5999,
       custom_mode_allowed: 1,
       display_order: 3,
       active: 1
@@ -197,6 +197,36 @@ const generateUniqueOrderNumber = async (connection) => {
 };
 
 /**
+ * Idempotently reconciles legacy initial seed prices to approved Lady Justice prices:
+ * 6 Inches: 199900 paise (₹1,999)
+ * 1 Foot: 369900 paise (₹3,699)
+ * 2 Feet: 599900 paise (₹5,999)
+ */
+let pricingReconciled = false;
+const reconcileLadyJusticeApprovedPricing = async () => {
+  if (pricingReconciled) return;
+  try {
+    const tablesExist = await checkCustomForgeTablesExist();
+    if (!tablesExist) return;
+
+    await pool.execute(`
+      UPDATE custom_forge_product_variants
+      SET price = CASE
+        WHEN variant_sku = 'MRSH-CF-LJ-6IN' AND price = 160000 THEN 199900
+        WHEN variant_sku = 'MRSH-CF-LJ-1FT' AND price = 350000 THEN 369900
+        WHEN variant_sku = 'MRSH-CF-LJ-2FT' AND price = 560000 THEN 599900
+        ELSE price
+      END
+      WHERE variant_sku IN ('MRSH-CF-LJ-6IN', 'MRSH-CF-LJ-1FT', 'MRSH-CF-LJ-2FT')
+        AND price IN (160000, 350000, 560000)
+    `);
+    pricingReconciled = true;
+  } catch (err) {
+    console.warn('[CustomForgeService] Pricing reconciliation check skipped:', err.message);
+  }
+};
+
+/**
  * Retrieve Lady Justice Product & Variants
  * GET /api/custom-forge/products/lady-justice
  */
@@ -205,6 +235,8 @@ const getLadyJusticeProduct = async () => {
   if (!tablesExist) {
     return FALLBACK_LADY_JUSTICE;
   }
+
+  await reconcileLadyJusticeApprovedPricing();
 
   try {
     const [products] = await pool.execute(
@@ -232,6 +264,89 @@ const getLadyJusticeProduct = async () => {
     console.warn('[CustomForgeService] DB query failed, using verified fallback:', err.message);
     return FALLBACK_LADY_JUSTICE;
   }
+};
+
+/**
+ * Update Lady Justice Variant Prices (Store ID 2 only)
+ * Persists updated variant prices in custom_forge_product_variants.
+ * @param {Array<{ id: number, price: number, variant_sku?: string }>} variantUpdates Array of updates (price in paise)
+ * @param {number} storeId Must be 2 (THE MARSHANS)
+ * @returns {Promise<Object>} Fresh product record with updated variants
+ */
+const updateLadyJusticeVariantPrices = async (variantUpdates, storeId = 2) => {
+  const activeStoreId = parseInt(storeId, 10);
+  if (activeStoreId !== 2) {
+    const err = new Error('Lady Justice pricing is exclusively supported on Store 2 (THE MARSHANS).');
+    err.statusCode = 403;
+    throw err;
+  }
+
+  if (!Array.isArray(variantUpdates) || variantUpdates.length === 0) {
+    const err = new Error('variantUpdates must be a non-empty array.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  for (const upd of variantUpdates) {
+    const numId = parseInt(upd.id, 10);
+    const numPrice = parseInt(upd.price, 10);
+    if (isNaN(numId) || numId <= 0) {
+      const err = new Error(`Invalid variant ID: ${upd.id}`);
+      err.statusCode = 400;
+      throw err;
+    }
+    if (isNaN(numPrice) || numPrice <= 0) {
+      const err = new Error(`Invalid price for variant #${numId}: must be a positive integer in paise.`);
+      err.statusCode = 400;
+      throw err;
+    }
+  }
+
+  const tablesExist = await checkCustomForgeTablesExist();
+  if (tablesExist) {
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      const [prods] = await connection.execute(
+        'SELECT id FROM custom_forge_products WHERE slug = "lady-justice" AND store_id = 2 LIMIT 1'
+      );
+      if (!prods || prods.length === 0) {
+        const err = new Error('Lady Justice product not found for Store 2.');
+        err.statusCode = 404;
+        throw err;
+      }
+      const prodId = prods[0].id;
+
+      for (const upd of variantUpdates) {
+        const numId = parseInt(upd.id, 10);
+        const numPrice = parseInt(upd.price, 10);
+        await connection.execute(
+          'UPDATE custom_forge_product_variants SET price = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND product_id = ?',
+          [numPrice, numId, prodId]
+        );
+      }
+
+      await connection.commit();
+    } catch (err) {
+      await connection.rollback();
+      throw err;
+    } finally {
+      connection.release();
+    }
+  } else {
+    for (const upd of variantUpdates) {
+      const numId = parseInt(upd.id, 10);
+      const numPrice = parseInt(upd.price, 10);
+      const targetVar = FALLBACK_LADY_JUSTICE.variants.find(v => v.id === numId || v.variant_sku === upd.variant_sku);
+      if (targetVar) {
+        targetVar.price = numPrice;
+        targetVar.price_rupees = Math.round(numPrice / 100);
+      }
+    }
+  }
+
+  return await getLadyJusticeProduct();
 };
 
 /**
@@ -1391,5 +1506,6 @@ module.exports = {
   checkCustomForgeTablesExist,
   getCustomForgeOrderByIdInternal,
   getUnreadCustomForgeOrdersCount,
-  acknowledgeCustomForgeOrders
+  acknowledgeCustomForgeOrders,
+  updateLadyJusticeVariantPrices
 };

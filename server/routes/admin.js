@@ -124,6 +124,8 @@ const {
   updateStoreBuilderAdminHandler
 } = require('../controllers/storeBuilderController');
 const {
+  getLadyJusticeProductHandler,
+  updateLadyJusticeVariantPricesHandler,
   getAdminCustomForgeOrdersHandler,
   getAdminCustomForgeOrderByIdHandler,
   updateAdminCustomForgeOrderStatusHandler,
@@ -252,6 +254,8 @@ router.put('/orders/:id/shipping', updateOrderShippingHandler);
 router.post('/orders/:id/ship', updateOrderShippingHandler);
 
 // Custom Forge Orders Management & Notifications (Store 2: THE MARSHANS)
+router.get('/custom-forge/product', getLadyJusticeProductHandler);
+router.put('/custom-forge/product/variants', updateLadyJusticeVariantPricesHandler);
 router.get('/custom-forge/orders', getAdminCustomForgeOrdersHandler);
 router.get('/custom-forge/orders/unread-count', getAdminCustomForgeUnreadCountHandler);
 router.post('/custom-forge/orders/acknowledge', acknowledgeAdminCustomForgeOrdersHandler);

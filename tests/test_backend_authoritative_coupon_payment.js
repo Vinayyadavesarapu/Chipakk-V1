@@ -313,11 +313,11 @@ test('9. Client amount tampering rejection: payment verification rejects mismatc
 });
 
 test('10. Client product price tampering: backend resolves authoritative variant price', () => {
-  const dbVariantPrices = { 1: 160000, 2: 350000, 3: 560000 };
+  const dbVariantPrices = { 1: 199900, 2: 369900, 3: 599900 };
   const clientSubmittedPrice = 100; // Attacker sends ₹1.00 for 2-foot statue (variant 3)
 
   const authoritativePrice = dbVariantPrices[3];
-  assert.strictEqual(authoritativePrice, 560000);
+  assert.strictEqual(authoritativePrice, 599900);
   assert.notStrictEqual(authoritativePrice, clientSubmittedPrice);
 });
 

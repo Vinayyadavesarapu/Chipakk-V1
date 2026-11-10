@@ -1063,6 +1063,109 @@ async function refreshCustomForgeOrdersFromAPI(statusFilter = activeCfStatus, se
     }
 }
 
+// =============================================================================
+// CUSTOM FORGE: LADY JUSTICE PRODUCT & VARIANT PRICING (STORE 2)
+// =============================================================================
+let customForgeProduct = null;
+
+async function refreshCustomForgeProductFromAPI() {
+    const tbody = document.getElementById('cf-variants-pricing-tbody');
+    try {
+        const res = await apiClient.get('/admin/custom-forge/product');
+        const data = res?.data || res;
+        if (data && Array.isArray(data.variants)) {
+            customForgeProduct = data;
+            renderCustomForgePricingTable();
+        }
+    } catch (err) {
+        console.error('[refreshCustomForgeProductFromAPI]', err.message);
+        if (tbody) {
+            tbody.innerHTML = `<tr><td colspan="6" style="color: #ef4444; padding: 12px; text-align: center;">Failed to load Lady Justice variants: ${escapeHtml(err.message)} <button type="button" class="retro-btn" onclick="refreshCustomForgeProductFromAPI()" style="margin-left: 8px; padding: 2px 6px;">RETRY</button></td></tr>`;
+        }
+    }
+}
+
+function renderCustomForgePricingTable() {
+    const tbody = document.getElementById('cf-variants-pricing-tbody');
+    if (!tbody || !customForgeProduct || !Array.isArray(customForgeProduct.variants)) return;
+
+    const referenceWeights = {
+        '6 inches': '400 grams',
+        '1 foot': '1 kg',
+        '2 feet': '2 kg'
+    };
+
+    tbody.innerHTML = customForgeProduct.variants.map(v => {
+        const sizeLabel = v.size_label || '';
+        const weightRef = referenceWeights[sizeLabel.toLowerCase()] || '—';
+        const priceRupees = v.price_rupees !== undefined ? v.price_rupees : Math.round(Number(v.price || 0) / 100);
+        return `
+            <tr data-variant-id="${v.id}">
+                <td><strong>${escapeHtml(sizeLabel)}</strong></td>
+                <td><code>${escapeHtml(v.variant_sku || '')}</code></td>
+                <td>${v.height_mm ? v.height_mm + ' mm' : '—'}</td>
+                <td><span style="background: #f1f5f9; padding: 2px 6px; border-radius: 3px; font-weight: bold; color: #334155;">${weightRef}</span></td>
+                <td>
+                    <div style="display: flex; align-items: center; gap: 4px;">
+                        <span style="font-weight: bold;">₹</span>
+                        <input type="number" id="cf-var-price-${v.id}" class="retro-input cf-variant-price-input" data-variant-id="${v.id}" value="${priceRupees}" min="1" step="1" style="width: 110px; font-weight: 900; font-size: 0.9rem; padding: 4px 6px;">
+                    </div>
+                </td>
+                <td><span class="status-badge ${v.active ? 'status-live' : 'status-inactive'}">${v.active ? 'ACTIVE' : 'INACTIVE'}</span></td>
+            </tr>
+        `;
+    }).join('');
+}
+
+async function saveCustomForgePricing() {
+    const saveBtn = document.getElementById('cf-save-pricing-btn');
+    if (!customForgeProduct || !Array.isArray(customForgeProduct.variants)) {
+        showToast("No Lady Justice variants loaded to save.", "error");
+        return;
+    }
+
+    const updates = [];
+    for (const v of customForgeProduct.variants) {
+        const input = document.getElementById(`cf-var-price-${v.id}`);
+        if (!input) continue;
+        const val = Number(input.value);
+        if (isNaN(val) || val <= 0) {
+            showToast(`Please enter a valid price for ${v.size_label}.`, "error");
+            input.focus();
+            return;
+        }
+        updates.push({
+            id: v.id,
+            variant_sku: v.variant_sku,
+            price: Math.round(val * 100) // Convert whole rupees to paise
+        });
+    }
+
+    if (updates.length === 0) {
+        showToast("No price changes detected.", "info");
+        return;
+    }
+
+    const origText = saveBtn ? saveBtn.textContent : '';
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'SAVING...'; }
+
+    try {
+        const res = await apiClient.put('/admin/custom-forge/product/variants', { variants: updates });
+        const updated = res?.data || res;
+        if (updated && Array.isArray(updated.variants)) {
+            customForgeProduct = updated;
+            renderCustomForgePricingTable();
+        } else {
+            await refreshCustomForgeProductFromAPI();
+        }
+        showToast("Lady Justice variant pricing updated successfully!");
+    } catch (err) {
+        showToast(`Error saving pricing: ${err.message}`, 'error');
+    } finally {
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = origText || 'SAVE PRICING'; }
+    }
+}
+
 function populateCategoryDropdowns() {
     const prodCatSelect = document.getElementById('prod-category');
     const filterCatSelect = document.getElementById('prod-filter-category');
@@ -1654,6 +1757,7 @@ function switchAdminTab(targetSecId, options = {}) {
         refreshChipakkMaterialsFromAPI();
     } else if (finalTabId === 'tab-custom-forge') {
         refreshCustomForgeOrdersFromAPI();
+        refreshCustomForgeProductFromAPI().catch(err => console.error('[switchAdminTab tab-custom-forge product]', err));
     } else if (finalTabId === 'tab-orders') {
         refreshOrdersFromAPI();
     } else if (finalTabId === 'tab-products') {
@@ -1918,6 +2022,7 @@ async function switchActiveStore(targetStoreId) {
             refreshDashboardFromAPI(),
             refreshOrdersFromAPI(),
             numericId === 2 ? refreshCustomForgeOrdersFromAPI() : Promise.resolve(),
+            numericId === 2 ? refreshCustomForgeProductFromAPI() : Promise.resolve(),
             refreshProductsFromAPI(),
             numericId === 1 ? refreshChipakkMaterialsFromAPI() : refreshMaterialsFromAPI(),
             numericId === 2 ? refreshFinishingFromAPI() : Promise.resolve(),
@@ -7950,6 +8055,8 @@ function setupEventListeners() {
     });
 
     document.getElementById('cf-update-status-btn')?.addEventListener('click', updateCustomForgeStatus);
+    document.getElementById('cf-refresh-pricing-btn')?.addEventListener('click', () => refreshCustomForgeProductFromAPI());
+    document.getElementById('cf-save-pricing-btn')?.addEventListener('click', () => saveCustomForgePricing());
 
     window.addEventListener('click', (e) => {
         const cfModal = document.getElementById('custom-forge-order-modal');
@@ -7983,6 +8090,8 @@ window.refreshProductsFromAPI = refreshProductsFromAPI;
 window.refreshCategoriesFromAPI = refreshCategoriesFromAPI;
 window.updateStoreSwitcherUI = updateStoreSwitcherUI;
 window.switchActiveStore = switchActiveStore;
+window.refreshCustomForgeProductFromAPI = refreshCustomForgeProductFromAPI;
+window.saveCustomForgePricing = saveCustomForgePricing;
 
 
 /* =========================================================
