@@ -1784,6 +1784,18 @@ const getCustomerOrders = async (firebaseUid, { limit = 20, offset = 0, store_id
         const cfOrderIds = cfRows.map(r => r.id);
         const placeholders = cfOrderIds.map(() => '?').join(',');
 
+        let hasSecondCols = false;
+        try {
+          const [checkCols] = await pool.execute(
+            "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'custom_forge_order_customizations' AND COLUMN_NAME = 'second_customer_name'"
+          );
+          hasSecondCols = checkCols && checkCols.length > 0;
+        } catch (_) {}
+
+        const secondColsSelect = hasSecondCols
+          ? 'oc.second_customer_name, oc.second_customer_designation,'
+          : 'NULL AS second_customer_name, NULL AS second_customer_designation,';
+
         // 1. Fetch line items and customization snapshots
         const [cfItemRows] = await pool.execute(`
           SELECT
@@ -1801,6 +1813,7 @@ const getCustomerOrders = async (firebaseUid, { limit = 20, offset = 0, store_id
             oc.custom_mode_enabled,
             oc.customer_name AS engraved_name,
             oc.customer_designation AS engraved_designation,
+            ${secondColsSelect}
             oc.nameplate_material,
             oc.verification_status,
             p.hero_image_url
@@ -1817,6 +1830,8 @@ const getCustomerOrders = async (firebaseUid, { limit = 20, offset = 0, store_id
           const customData = it.custom_mode_enabled ? {
             name: it.engraved_name,
             designation: it.engraved_designation,
+            second_name: it.second_customer_name || null,
+            second_designation: it.second_customer_designation || null,
             material: it.nameplate_material,
             status: it.verification_status
           } : null;

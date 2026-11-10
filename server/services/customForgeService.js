@@ -124,6 +124,23 @@ const checkCustomForgeTablesExist = async (connection = pool) => {
 };
 
 /**
+ * Helper to check whether second_customer_name column exists in custom_forge_order_customizations
+ */
+let hasSecondPersonColumnsCached = null;
+const checkSecondPersonColumnsExist = async (connection = pool) => {
+  if (hasSecondPersonColumnsCached !== null) return hasSecondPersonColumnsCached;
+  try {
+    const [rows] = await connection.execute(
+      "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'custom_forge_order_customizations' AND COLUMN_NAME = 'second_customer_name'"
+    );
+    hasSecondPersonColumnsCached = rows && rows.length > 0;
+  } catch (_) {
+    hasSecondPersonColumnsCached = false;
+  }
+  return hasSecondPersonColumnsCached;
+};
+
+/**
  * Helper: Find or create customer record in users table linked to Firebase UID
  */
 const upsertCustomerUser = async (firebaseUser, connection = pool) => {
@@ -371,6 +388,8 @@ const validateCustomization = (variant, customMode, customization) => {
       custom_mode_enabled: 0,
       customer_name: null,
       customer_designation: null,
+      second_customer_name: null,
+      second_customer_designation: null,
       nameplate_material: null,
       nameplateChargePaise: 0,
       materialChargePaise: 0,
@@ -381,6 +400,8 @@ const validateCustomization = (variant, customMode, customization) => {
   // 2. Extract inputs for 1-foot or 2-feet variants
   const rawName = customization ? (customization.name !== undefined ? customization.name : customization.customer_name) : null;
   const rawDesignation = customization ? (customization.designation !== undefined ? customization.designation : customization.customer_designation) : null;
+  const rawSecondName = customization ? (customization.second_name !== undefined ? customization.second_name : customization.second_customer_name) : null;
+  const rawSecondDesignation = customization ? (customization.second_designation !== undefined ? customization.second_designation : customization.second_customer_designation) : null;
   const rawMaterial = customization ? (customization.material !== undefined ? customization.material : customization.nameplate_material) : null;
 
   // 3. Dependency rule:
@@ -400,6 +421,8 @@ const validateCustomization = (variant, customMode, customization) => {
       custom_mode_enabled: 0,
       customer_name: null,
       customer_designation: null,
+      second_customer_name: null,
+      second_customer_designation: null,
       nameplate_material: 'Plastic',
       nameplateChargePaise: 0,
       materialChargePaise: 0,
@@ -427,18 +450,53 @@ const validateCustomization = (variant, customMode, customization) => {
     throw err;
   }
 
-  // Designation validation: optional, max 50 chars; literal 'NIL' or empty accepted
-  let normalizedDesignation = 'NIL';
-  if (rawDesignation !== undefined && rawDesignation !== null && typeof rawDesignation === 'string') {
-    const cleanDesignation = rawDesignation.trim();
-    if (cleanDesignation.length > MAX_DESIGNATION_LENGTH) {
-      const err = new Error(`Designation on nameplate cannot exceed ${MAX_DESIGNATION_LENGTH} characters.`);
+  // Designation validation: required, max 50 chars; literal 'NIL' accepted
+  if (rawDesignation === undefined || rawDesignation === null || typeof rawDesignation !== 'string' || !rawDesignation.trim()) {
+    const err = new Error('Designation on custom nameplate is required (or enter NIL).');
+    err.statusCode = 400;
+    throw err;
+  }
+  const cleanDesignation = rawDesignation.trim();
+  if (cleanDesignation.length > MAX_DESIGNATION_LENGTH) {
+    const err = new Error(`Designation on nameplate cannot exceed ${MAX_DESIGNATION_LENGTH} characters.`);
+    err.statusCode = 400;
+    throw err;
+  }
+  const normalizedDesignation = cleanDesignation.toUpperCase() === 'NIL' ? 'NIL' : cleanDesignation;
+
+  // Optional Second Person Validation:
+  let cleanSecondName = null;
+  let normalizedSecondDesignation = null;
+
+  const hasSecondName = rawSecondName !== undefined && rawSecondName !== null && String(rawSecondName).trim() !== '';
+  const hasSecondDesignation = rawSecondDesignation !== undefined && rawSecondDesignation !== null && String(rawSecondDesignation).trim() !== '';
+
+  if (hasSecondName || hasSecondDesignation) {
+    if (!hasSecondName) {
+      const err = new Error('Second person name is required when second person details are provided.');
       err.statusCode = 400;
       throw err;
     }
-    if (cleanDesignation && cleanDesignation.toUpperCase() !== 'NIL') {
-      normalizedDesignation = cleanDesignation;
+    const trimmedSecondName = String(rawSecondName).trim();
+    if (trimmedSecondName.length > MAX_CUSTOMER_NAME_LENGTH) {
+      const err = new Error(`Second person name on nameplate cannot exceed ${MAX_CUSTOMER_NAME_LENGTH} characters.`);
+      err.statusCode = 400;
+      throw err;
     }
+    cleanSecondName = trimmedSecondName;
+
+    if (rawSecondDesignation === undefined || rawSecondDesignation === null || typeof rawSecondDesignation !== 'string' || !rawSecondDesignation.trim()) {
+      const err = new Error('Second person designation on nameplate is required (or enter NIL).');
+      err.statusCode = 400;
+      throw err;
+    }
+    const trimmedSecondDesig = rawSecondDesignation.trim();
+    if (trimmedSecondDesig.length > MAX_DESIGNATION_LENGTH) {
+      const err = new Error(`Second person designation on nameplate cannot exceed ${MAX_DESIGNATION_LENGTH} characters.`);
+      err.statusCode = 400;
+      throw err;
+    }
+    normalizedSecondDesignation = trimmedSecondDesig.toUpperCase() === 'NIL' ? 'NIL' : trimmedSecondDesig;
   }
 
   const nameplateChargePaise = LADY_JUSTICE_CUSTOMIZATION_PRICING.NAMEPLATE_PAISE; // 2900 paise
@@ -468,6 +526,8 @@ const validateCustomization = (variant, customMode, customization) => {
     custom_mode_enabled: 1,
     customer_name: cleanName,
     customer_designation: normalizedDesignation,
+    second_customer_name: cleanSecondName,
+    second_customer_designation: normalizedSecondDesignation,
     nameplate_material: cleanMaterial,
     nameplateChargePaise,
     materialChargePaise,
@@ -862,18 +922,38 @@ const createCustomForgeOrder = async (orderPayload, firebaseUser, requestStoreId
       );
       const orderItemId = itemRes.insertId;
 
-      await connection.execute(
-        `INSERT INTO custom_forge_order_customizations (
-           order_item_id, custom_mode_enabled, customer_name, customer_designation, nameplate_material, verification_status
-         ) VALUES (?, ?, ?, ?, ?, 'pending')`,
-        [
-          orderItemId,
-          item.validatedCustomization.custom_mode_enabled,
-          item.validatedCustomization.customer_name,
-          item.validatedCustomization.customer_designation,
-          item.validatedCustomization.nameplate_material
-        ]
-      );
+      const hasSecondCols = await checkSecondPersonColumnsExist(connection);
+      if (hasSecondCols) {
+        await connection.execute(
+          `INSERT INTO custom_forge_order_customizations (
+             order_item_id, custom_mode_enabled, customer_name, customer_designation,
+             second_customer_name, second_customer_designation,
+             nameplate_material, verification_status
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')`,
+          [
+            orderItemId,
+            item.validatedCustomization.custom_mode_enabled,
+            item.validatedCustomization.customer_name,
+            item.validatedCustomization.customer_designation,
+            item.validatedCustomization.second_customer_name || null,
+            item.validatedCustomization.second_customer_designation || null,
+            item.validatedCustomization.nameplate_material
+          ]
+        );
+      } else {
+        await connection.execute(
+          `INSERT INTO custom_forge_order_customizations (
+             order_item_id, custom_mode_enabled, customer_name, customer_designation, nameplate_material, verification_status
+           ) VALUES (?, ?, ?, ?, ?, 'pending')`,
+          [
+            orderItemId,
+            item.validatedCustomization.custom_mode_enabled,
+            item.validatedCustomization.customer_name,
+            item.validatedCustomization.customer_designation,
+            item.validatedCustomization.nameplate_material
+          ]
+        );
+      }
     }
 
     // 14. Record coupon usage reservation if coupon applied
@@ -943,12 +1023,19 @@ const getCustomForgeOrderByIdInternal = async (orderId, connection = pool) => {
 
   const order = orders[0];
 
+  const hasSecondCols = await checkSecondPersonColumnsExist(connection);
+  const secondColsSql = hasSecondCols
+    ? 'oc.second_customer_name, oc.second_customer_designation,'
+    : 'NULL AS second_customer_name, NULL AS second_customer_designation,';
+
   const [items] = await connection.execute(
     `SELECT oi.id, oi.order_id, oi.product_id, oi.variant_id, oi.product_name_snapshot,
             oi.variant_sku_snapshot, oi.size_label_snapshot, oi.height_mm_snapshot,
             oi.unit_price, oi.quantity, oi.total_price,
             oc.custom_mode_enabled, oc.customer_name AS engraved_name,
-            oc.customer_designation AS engraved_designation, oc.nameplate_material,
+            oc.customer_designation AS engraved_designation,
+            ${secondColsSql}
+            oc.nameplate_material,
             oc.verification_status
      FROM custom_forge_order_items oi
      LEFT JOIN custom_forge_order_customizations oc ON oc.order_item_id = oi.id
@@ -1004,6 +1091,8 @@ const getCustomForgeOrderByIdInternal = async (orderId, connection = pool) => {
       customization: it.custom_mode_enabled ? {
         name: it.engraved_name,
         designation: it.engraved_designation,
+        second_name: it.second_customer_name || null,
+        second_designation: it.second_customer_designation || null,
         material: it.nameplate_material,
         status: it.verification_status
       } : null
@@ -1111,13 +1200,20 @@ const getAdminCustomForgeOrders = async ({
   );
   const total = countRows[0].total || 0;
 
+  const hasSecondCols = await checkSecondPersonColumnsExist(pool);
+  const secondColsSql = hasSecondCols
+    ? 'oc.second_customer_name, oc.second_customer_designation,'
+    : 'NULL AS second_customer_name, NULL AS second_customer_designation,';
+
   const query = `
     SELECT
       o.id, o.store_id, o.order_number, o.customer_name, o.customer_email, o.customer_phone,
       o.total_price, o.payment_status, o.production_status, o.created_at,
       oi.size_label_snapshot, oi.variant_sku_snapshot,
       oc.custom_mode_enabled, oc.customer_name AS engraved_name,
-      oc.customer_designation AS engraved_designation, oc.nameplate_material
+      oc.customer_designation AS engraved_designation,
+      ${secondColsSql}
+      oc.nameplate_material
     FROM custom_forge_orders o
     LEFT JOIN custom_forge_order_items oi ON oi.order_id = o.id
     LEFT JOIN custom_forge_order_customizations oc ON oc.order_item_id = oi.id
@@ -1135,6 +1231,8 @@ const getAdminCustomForgeOrders = async ({
       customization: r.custom_mode_enabled ? {
         name: r.engraved_name,
         designation: r.engraved_designation,
+        second_name: r.second_customer_name || null,
+        second_designation: r.second_customer_designation || null,
         material: r.nameplate_material
       } : null
     })),

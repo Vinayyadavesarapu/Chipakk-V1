@@ -5369,8 +5369,11 @@ function renderCustomForgeTable() {
         const matBadge = o.nameplate_material
             ? `<span class="status-badge" style="background: #e0e7ff; color: #3730a3; font-weight: bold;">${escapeHtml(o.nameplate_material)}</span>`
             : '<span style="color:#888;">-</span>';
+        const secondPersonText = (o.customization?.second_name || o.second_customer_name)
+            ? `<div style="margin-top:2px; font-size:0.75rem; color:#475569;">+ <strong>${escapeHtml(o.customization?.second_name || o.second_customer_name)}</strong> <small>(${escapeHtml(o.customization?.second_designation || o.second_customer_designation || 'NIL')})</small></div>`
+            : '';
         const engravedInfo = o.engraved_name
-            ? `<strong>${escapeHtml(o.engraved_name)}</strong><br><small style="color:#555;">${escapeHtml(o.designation || o.engraved_designation || 'NIL')}</small>`
+            ? `<strong>${escapeHtml(o.engraved_name)}</strong><br><small style="color:#555;">${escapeHtml(o.designation || o.engraved_designation || 'NIL')}</small>${secondPersonText}`
             : '<span style="color:#888;">None</span>';
 
         return `
@@ -5464,6 +5467,8 @@ async function openCustomForgeDetailModal(orderId) {
             const custData = item.customization || order.customization || {
                 engraved_name: order.engraved_name,
                 designation: order.designation || order.engraved_designation,
+                second_name: order.second_customer_name || order.second_name,
+                second_designation: order.second_customer_designation || order.second_designation,
                 nameplate_material: order.nameplate_material
             };
             const engName = custData.engraved_name || custData.name;
@@ -5473,6 +5478,24 @@ async function openCustomForgeDetailModal(orderId) {
                 if (engravedNameEl) engravedNameEl.textContent = engName || 'N/A';
                 const engravedDesigEl = document.getElementById('cf-detail-engraved-desig');
                 if (engravedDesigEl) engravedDesigEl.textContent = custData.designation || custData.engraved_designation || 'NIL';
+
+                const secondName = custData.second_name || custData.second_customer_name;
+                const secondDesig = custData.second_designation || custData.second_customer_designation;
+                const p2Fields = document.getElementById('cf-detail-person2-fields');
+                const p2NotAdded = document.getElementById('cf-detail-person2-not-added');
+                const secondNameEl = document.getElementById('cf-detail-engraved-second-name');
+                const secondDesigEl = document.getElementById('cf-detail-engraved-second-desig');
+
+                if (secondName && String(secondName).trim()) {
+                    if (p2Fields) p2Fields.style.display = 'block';
+                    if (p2NotAdded) p2NotAdded.style.display = 'none';
+                    if (secondNameEl) secondNameEl.textContent = String(secondName).trim();
+                    if (secondDesigEl) secondDesigEl.textContent = secondDesig ? String(secondDesig).trim() : 'NIL';
+                } else {
+                    if (p2Fields) p2Fields.style.display = 'none';
+                    if (p2NotAdded) p2NotAdded.style.display = 'block';
+                }
+
                 const matEl = document.getElementById('cf-detail-nameplate-mat');
                 if (matEl) matEl.textContent = custData.nameplate_material || custData.material || 'N/A';
             } else {
