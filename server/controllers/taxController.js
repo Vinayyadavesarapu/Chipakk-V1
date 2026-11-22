@@ -79,7 +79,8 @@ const getInvoiceHandler = async (req, res, next) => {
 const getCustomerInvoiceHandler = async (req, res, next) => {
   try {
     if (!req.user || !req.user.uid) return sendError(res, 'Authentication required.', 401);
-    const order = await orderService.getCustomerOrderById(req.params.id, req.user.uid); // ownership check
+    const resolvedStoreId = req.storeId || (req.query && (parseInt(req.query.store_id, 10) === 2 || req.query.store === 'marshans' ? 2 : 1)) || 1;
+    const order = await orderService.getCustomerOrderById(req.params.id, req.user, resolvedStoreId); // ownership check
     if (!order) return sendError(res, 'Order not found or access denied.', 404);
     const invoice = await invoiceService.getInvoiceByOrderId(order.id);
     if (!invoice) return sendError(res, 'An invoice has not been issued for this order yet.', 404);

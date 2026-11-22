@@ -1,9 +1,24 @@
 const { pool } = require('../config/database');
 const { normalizeIndianPhoneNumber } = require('../utils/phoneUtils');
 
+let hasCustomForgeTablesCached = null;
+const checkCustomForgeTablesExist = async () => {
+  if (hasCustomForgeTablesCached !== null) return hasCustomForgeTablesCached;
+  try {
+    const [rows] = await pool.execute(
+      "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'custom_forge_orders'"
+    );
+    hasCustomForgeTablesCached = rows && rows.length > 0;
+  } catch (_) {
+    hasCustomForgeTablesCached = false;
+  }
+  return hasCustomForgeTablesCached;
+};
+
 /**
  * Resolve existing customer record or idempotently auto-provision a new row in users table.
- * Strictly binds Firebase UID <-> MySQL users.id relationship.
+ * Strictly binds Firebase UID <-> MySQL users.id relationship, supporting phone-number-based
+ * customer recognition without duplicate accounts or credential hijacking.
  *
  * @param {Object} firebaseUser - Authenticated user payload (from req.user or Firebase token)
  * @param {Object} extraData - Optional profile attributes (full_name, phone, etc.)
@@ -47,21 +62,21 @@ const resolveOrCreateCustomer = async (firebaseUser, extraData = {}, connection 
 
   if (uidRows && uidRows.length > 0) {
     const customer = uidRows[0];
-    // Enrich missing fields if new values are supplied
-    const needsNameUpdate = rawName && (!customer.full_name || customer.full_name.trim().length === 0);
+    // Enrich missing fields safely if new values are supplied
+    const needsNameUpdate = rawName && (!customer.full_name || customer.full_name.trim().length === 0 || customer.full_name === 'Customer');
     const needsPhoneUpdate = cleanPhone && (!customer.phone || customer.phone.trim().length === 0);
     const needsEmailUpdate = rawEmail && (!customer.email || customer.email.trim().length === 0);
 
     if (needsNameUpdate || needsPhoneUpdate || needsEmailUpdate) {
       try {
         await connection.execute(
-          'UPDATE users SET full_name = COALESCE(full_name, ?), phone = COALESCE(phone, ?), email = COALESCE(NULLIF(email, ""), ?) WHERE id = ?',
+          'UPDATE users SET full_name = COALESCE(NULLIF(full_name, "Customer"), ?), phone = COALESCE(phone, ?), email = COALESCE(NULLIF(email, ""), ?) WHERE id = ?',
           [rawName || null, cleanPhone || null, rawEmail || null, customer.id]
         );
       } catch (upErr) {
         if (upErr.message && upErr.message.includes("Unknown column 'full_name'")) {
           await connection.execute(
-            'UPDATE users SET name = COALESCE(name, ?), phone = COALESCE(phone, ?), email = COALESCE(NULLIF(email, ""), ?) WHERE id = ?',
+            'UPDATE users SET name = COALESCE(NULLIF(name, "Customer"), ?), phone = COALESCE(phone, ?), email = COALESCE(NULLIF(email, ""), ?) WHERE id = ?',
             [rawName || null, cleanPhone || null, rawEmail || null, customer.id]
           ).catch(() => {});
         }
@@ -82,7 +97,60 @@ const resolveOrCreateCustomer = async (firebaseUser, extraData = {}, connection 
     };
   }
 
-  // 2. Secondary Lookup by Email (Links pre-existing records or guest orders)
+  // 2. Secondary Lookup by Normalized Phone Number
+  // Links repeat orders or guest records when identity can be confirmed safely without merging conflicting active accounts
+  if (cleanPhone) {
+    const [phoneRows] = await connection.execute(
+      'SELECT id, firebase_uid, email, full_name, phone, created_at FROM users WHERE phone = ? LIMIT 2',
+      [cleanPhone]
+    ).catch(async (err) => {
+      if (err.message && err.message.includes("Unknown column 'full_name'")) {
+        const [nameRows] = await connection.execute(
+          'SELECT id, firebase_uid, email, name AS full_name, phone, created_at FROM users WHERE phone = ? LIMIT 2',
+          [cleanPhone]
+        );
+        return [nameRows];
+      }
+      throw err;
+    });
+
+    if (phoneRows && phoneRows.length === 1) {
+      const existingUser = phoneRows[0];
+      const existingEmail = (existingUser.email || '').toLowerCase().trim();
+      const isSameEmail = rawEmail && existingEmail && rawEmail === existingEmail;
+      const isUnboundUid = !existingUser.firebase_uid || existingUser.firebase_uid.startsWith('guest_') || existingUser.firebase_uid === cleanUid;
+
+      // Safely link if same email or existing record has placeholder/guest UID
+      if (isSameEmail || isUnboundUid) {
+        try {
+          await connection.execute(
+            'UPDATE users SET firebase_uid = ?, full_name = COALESCE(NULLIF(full_name, "Customer"), ?), email = COALESCE(NULLIF(email, ""), ?) WHERE id = ?',
+            [cleanUid, rawName || null, rawEmail || null, existingUser.id]
+          );
+        } catch (linkErr) {
+          if (linkErr.message && linkErr.message.includes("Unknown column 'full_name'")) {
+            await connection.execute(
+              'UPDATE users SET firebase_uid = ?, name = COALESCE(NULLIF(name, "Customer"), ?), email = COALESCE(NULLIF(email, ""), ?) WHERE id = ?',
+              [cleanUid, rawName || null, rawEmail || null, existingUser.id]
+            ).catch(() => {});
+          }
+        }
+
+        return {
+          id: existingUser.id,
+          firebase_uid: cleanUid,
+          email: rawEmail || existingUser.email,
+          full_name: rawName || existingUser.full_name || null,
+          name: rawName || existingUser.full_name || null,
+          phone: cleanPhone,
+          created_at: existingUser.created_at
+        };
+      }
+      // If the existing user has a confirmed, different active email/account, DO NOT merge automatically (avoids account hijacking on shared numbers)
+    }
+  }
+
+  // 3. Tertiary Lookup by Email (Links pre-existing records or guest orders)
   if (rawEmail) {
     const [emailRows] = await connection.execute(
       'SELECT id, firebase_uid, email, full_name, phone, created_at FROM users WHERE email IS NOT NULL AND LOWER(email) = LOWER(?) LIMIT 1',
@@ -103,13 +171,13 @@ const resolveOrCreateCustomer = async (firebaseUser, extraData = {}, connection 
       // Bind this user's Firebase UID and update name/phone if missing
       try {
         await connection.execute(
-          'UPDATE users SET firebase_uid = ?, full_name = COALESCE(full_name, ?), phone = COALESCE(phone, ?) WHERE id = ?',
+          'UPDATE users SET firebase_uid = ?, full_name = COALESCE(NULLIF(full_name, "Customer"), ?), phone = COALESCE(phone, ?) WHERE id = ?',
           [cleanUid, rawName || null, cleanPhone || null, existingUser.id]
         );
       } catch (linkErr) {
         if (linkErr.message && linkErr.message.includes("Unknown column 'full_name'")) {
           await connection.execute(
-            'UPDATE users SET firebase_uid = ?, name = COALESCE(name, ?), phone = COALESCE(phone, ?) WHERE id = ?',
+            'UPDATE users SET firebase_uid = ?, name = COALESCE(NULLIF(name, "Customer"), ?), phone = COALESCE(phone, ?) WHERE id = ?',
             [cleanUid, rawName || null, cleanPhone || null, existingUser.id]
           ).catch(() => {});
         }
@@ -127,7 +195,7 @@ const resolveOrCreateCustomer = async (firebaseUser, extraData = {}, connection 
     }
   }
 
-  // 3. Auto-Provision New Record in users table
+  // 4. Auto-Provision New Record in users table
   try {
     const [insertResult] = await connection.execute(
       'INSERT INTO users (firebase_uid, email, full_name, phone) VALUES (?, ?, ?, ?)',
@@ -274,13 +342,26 @@ const getCustomers = async ({ search = '', limit = 50, offset = 0, store_id = nu
 
   const isStore2 = store_id !== null && store_id !== undefined && parseInt(store_id, 10) === 2;
 
+  let cfTablesExist = false;
+  if (isStore2 || store_id === null) {
+    try {
+      cfTablesExist = await checkCustomForgeTablesExist();
+    } catch (_) {
+      cfTablesExist = false;
+    }
+  }
+
   const conditions = [];
   const params = [];
 
   if (search && String(search).trim()) {
-    const term = `%${String(search).trim().toLowerCase()}%`;
-    conditions.push('(LOWER(COALESCE(u.full_name, "")) LIKE ? OR LOWER(COALESCE(u.email, "")) LIKE ? OR COALESCE(u.phone, "") LIKE ?)');
-    params.push(term, term, term);
+    const rawSearch = String(search).trim();
+    const term = `%${rawSearch.toLowerCase()}%`;
+    const phoneNorm = normalizeIndianPhoneNumber(rawSearch);
+    const phoneClean = rawSearch.replace(/[\s\-+]/g, '');
+    const phoneTerm = `%${phoneNorm.valid ? phoneNorm.phone : phoneClean}%`;
+    conditions.push('(LOWER(COALESCE(u.full_name, "")) LIKE ? OR LOWER(COALESCE(u.email, "")) LIKE ? OR COALESCE(u.phone, "") LIKE ? OR COALESCE(u.phone, "") LIKE ?)');
+    params.push(term, term, term, phoneTerm);
   }
 
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -300,6 +381,15 @@ const getCustomers = async ({ search = '', limit = 50, offset = 0, store_id = nu
     }
   }
 
+  // Unified Store 2 order source subquery (Retail orders + Custom Forge orders)
+  const orderTableSource = (isStore2 && cfTablesExist)
+    ? `(
+        SELECT id, store_id, customer_id, customer_email, customer_name, customer_phone, shipping_address, fulfillment_status, payment_status, total_price, created_at FROM orders WHERE store_id = 2
+        UNION ALL
+        SELECT id, store_id, customer_id, customer_email, customer_name, customer_phone, shipping_address, production_status AS fulfillment_status, payment_status, total_price, created_at FROM custom_forge_orders WHERE store_id = 2
+      )`
+    : 'orders';
+
   // Count query
   let total = 0;
   try {
@@ -307,7 +397,7 @@ const getCustomers = async ({ search = '', limit = 50, offset = 0, store_id = nu
       const countSql = `
         SELECT COUNT(DISTINCT u.id) AS total
         FROM users u
-        INNER JOIN orders o ON (o.customer_id = u.id OR o.customer_id = u.firebase_uid OR (o.customer_email IS NOT NULL AND LOWER(o.customer_email) = LOWER(u.email)))
+        INNER JOIN ${orderTableSource} o ON (o.customer_id = u.id OR o.customer_id = u.firebase_uid OR (o.customer_email IS NOT NULL AND LOWER(o.customer_email) = LOWER(u.email)))
         WHERE o.store_id = 2 ${whereClause ? 'AND ' + conditions.join(' AND ') : ''}
       `;
       const [countRows] = await pool.execute(countSql, params);
@@ -346,7 +436,7 @@ const getCustomers = async ({ search = '', limit = 50, offset = 0, store_id = nu
       COALESCE(SUM(CASE WHEN o.payment_status = 'paid' THEN o.total_price ELSE 0 END), 0) AS total_spent,
       MAX(o.created_at) AS last_order
     FROM users u
-    LEFT JOIN orders o ON (o.customer_id = u.id OR o.customer_id = u.firebase_uid OR (o.customer_email IS NOT NULL AND LOWER(o.customer_email) = LOWER(u.email)))${orderStoreCondition}
+    LEFT JOIN ${orderTableSource} o ON (o.customer_id = u.id OR o.customer_id = u.firebase_uid OR (o.customer_email IS NOT NULL AND LOWER(o.customer_email) = LOWER(u.email)))${isStore2 && cfTablesExist ? '' : orderStoreCondition}
     ${whereClause}
     GROUP BY u.id, u.firebase_uid, u.email, u.phone, u.full_name, u.created_at
     ${havingClause}
@@ -356,7 +446,7 @@ const getCustomers = async ({ search = '', limit = 50, offset = 0, store_id = nu
 
   let customers = [];
   try {
-    const queryParams = [...orderStoreParams, ...params, parsedLimit, parsedOffset];
+    const queryParams = [...(isStore2 && cfTablesExist ? [] : orderStoreParams), ...params, parsedLimit, parsedOffset];
     const [rows] = await pool.execute(listSql, queryParams);
     customers = rows.map(r => {
       const completedCount = parseInt(r.completed_orders !== undefined ? r.completed_orders : r.delivered_orders, 10) || 0;
@@ -553,6 +643,15 @@ const getCustomerById = async (idOrUid, store_id = null) => {
 
   const isStore2 = store_id !== null && store_id !== undefined && parseInt(store_id, 10) === 2;
 
+  let cfTablesExist = false;
+  if (isStore2 || store_id === null) {
+    try {
+      cfTablesExist = await checkCustomForgeTablesExist();
+    } catch (_) {
+      cfTablesExist = false;
+    }
+  }
+
   if (user) {
     let orderStoreCondition = '';
     const orderParams = [user.id, user.firebase_uid, user.email || ''];
@@ -573,18 +672,40 @@ const getCustomerById = async (idOrUid, store_id = null) => {
       orderParams
     );
 
-    const totalOrders = orderRows.length;
-    const completedOrders = orderRows.filter(o => ['DELIVERED', 'COMPLETED'].includes(String(o.fulfillment_status || '').toUpperCase())).length;
-    const rawTotalSpent = orderRows
-      .filter(o => String(o.payment_status || '').toLowerCase() === 'paid')
-      .reduce((sum, o) => sum + (parseInt(o.total_price, 10) || 0), 0);
-    const totalSpentRupees = isStore2 ? Math.round(rawTotalSpent / 100) : rawTotalSpent;
+    let cfOrderRows = [];
+    if (cfTablesExist && (isStore2 || store_id === null)) {
+      try {
+        const [cfRows] = await pool.execute(
+          `SELECT id, order_number, customer_name, customer_email, customer_phone, production_status AS fulfillment_status, payment_status, total_price, created_at FROM custom_forge_orders WHERE (customer_id = ? OR customer_id = ? OR (customer_email IS NOT NULL AND LOWER(customer_email) = LOWER(?))) AND store_id = 2 ORDER BY created_at DESC LIMIT 20`,
+          orderParams
+        );
+        cfOrderRows = (cfRows || []).map(r => ({ ...r, is_custom_forge: true }));
+      } catch (_) {}
+    }
+
+    // Merge and sort newest first
+    const allRecentOrders = [...orderRows, ...cfOrderRows].sort(
+      (a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0)
+    ).slice(0, 20);
+
+    const totalOrders = orderRows.length + cfOrderRows.length;
+    const completedOrders = allRecentOrders.filter(o => ['DELIVERED', 'COMPLETED'].includes(String(o.fulfillment_status || '').toUpperCase())).length;
+    
+    // Total spent: convert paise to rupees for Store 2
+    let totalSpentRupees = 0;
+    for (const o of allRecentOrders) {
+      if (String(o.payment_status || '').toLowerCase() === 'paid') {
+        const raw = parseInt(o.total_price, 10) || 0;
+        totalSpentRupees += (isStore2 || o.is_custom_forge) ? Math.round(raw / 100) : raw;
+      }
+    }
+
     const tier = calculateCustomerTier(completedOrders);
 
-    const resolvedName = (user.name && user.name !== 'Customer') ? user.name : (orderRows[0]?.customer_name || user.name || 'Customer');
-    const resolvedEmail = user.email || orderRows[0]?.customer_email || '';
-    const resolvedPhone = user.phone || orderRows[0]?.customer_phone || '';
-    const lastOrderDate = orderRows[0] ? orderRows[0].created_at : null;
+    const resolvedName = (user.name && user.name !== 'Customer') ? user.name : (allRecentOrders[0]?.customer_name || user.name || 'Customer');
+    const resolvedEmail = user.email || allRecentOrders[0]?.customer_email || '';
+    const resolvedPhone = user.phone || allRecentOrders[0]?.customer_phone || '';
+    const lastOrderDate = allRecentOrders[0] ? allRecentOrders[0].created_at : null;
 
     return {
       id: user.id,
@@ -604,9 +725,9 @@ const getCustomerById = async (idOrUid, store_id = null) => {
       last_order: lastOrderDate,
       status: tier,
       loyalty_tier: tier,
-      recent_orders: orderRows.map(o => ({
+      recent_orders: allRecentOrders.map(o => ({
         ...o,
-        total_price_rupees: isStore2 ? Math.round((parseInt(o.total_price, 10) || 0) / 100) : (parseInt(o.total_price, 10) || 0)
+        total_price_rupees: (isStore2 || o.is_custom_forge) ? Math.round((parseInt(o.total_price, 10) || 0) / 100) : (parseInt(o.total_price, 10) || 0)
       }))
     };
   }

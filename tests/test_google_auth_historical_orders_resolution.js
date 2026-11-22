@@ -528,4 +528,145 @@ test('Google Auth & Historical Order Resolution End-to-End Suite', async (t) => 
     assert.ok(singleLookup, 'Single lookup must succeed for order matching via shipping_address.email');
     assert.strictEqual(singleLookup.order_number, 'CF-MRSH-2026-LEGACY-ADDR');
   });
+
+  await t.test('7. Historical Guest Customer signs in with Google and claims guest orders via verified email', async () => {
+    // Guest customer Priya placed an order before signing up with Google
+    const guestUser = {
+      uid: 'google_uid_priya_555',
+      email: 'priya.sharma@example.in',
+      emailVerified: true,
+      displayName: 'Priya Sharma'
+    };
+
+    orders.push({
+      id: 301,
+      order_number: 'MRSH-GUEST-301',
+      customer_id: null, // Guest checkout: no user account yet
+      customer_name: 'Priya Sharma',
+      customer_email: 'priya.sharma@example.in',
+      customer_phone: '9820011223',
+      shipping_address: JSON.stringify({
+        name: 'Priya Sharma',
+        phone: '9820011223',
+        email: 'priya.sharma@example.in',
+        address: 'B-12, Green Park',
+        city: 'Bengaluru',
+        state: 'Karnataka',
+        pincode: '560001'
+      }),
+      payment_method: 'ONLINE',
+      payment_status: 'paid',
+      fulfillment_status: 'processing',
+      subtotal: 399900,
+      discount_total: 0,
+      shipping_charge: 5000,
+      total_price: 404900,
+      coupon_code: null,
+      courier: null,
+      tracking_no: null,
+      ship_date: null,
+      created_at: '2026-11-21T09:00:00.000Z',
+      store_id: 2
+    });
+
+    const res = await orderService.getCustomerOrders(guestUser, { store_id: 2 });
+    assert.ok(res.orders.some(o => o.order_number === 'MRSH-GUEST-301'), 'Guest order must be claimed by verified Google email');
+    assert.strictEqual(res.orders.length, 1);
+  });
+
+  await t.test('8. Customer with Multiple Historical User IDs sees all orders across linked profiles', async () => {
+    // Simulate customer who had user ID 10 and a duplicate legacy user ID 30
+    users.push({
+      id: 30,
+      firebase_uid: 'legacy_uid_30',
+      email: 'collector@themarshans.shop', // identical email
+      full_name: 'Rajesh Sharma Legacy',
+      phone: '9876543210',
+      created_at: new Date('2026-09-15T10:00:00Z')
+    });
+
+    orders.push({
+      id: 302,
+      order_number: 'MRSH-RET-LEGACY-302',
+      customer_id: 30, // attached to legacy ID 30
+      customer_name: 'Rajesh Sharma',
+      customer_email: 'collector@themarshans.shop',
+      customer_phone: '9876543210',
+      shipping_address: JSON.stringify({
+        name: 'Rajesh Sharma',
+        phone: '9876543210',
+        email: 'collector@themarshans.shop',
+        address: 'High Court',
+        city: 'Mumbai',
+        state: 'Maharashtra',
+        pincode: '400032'
+      }),
+      payment_method: 'ONLINE',
+      payment_status: 'paid',
+      fulfillment_status: 'delivered',
+      subtotal: 150000,
+      discount_total: 0,
+      shipping_charge: 5000,
+      total_price: 155000,
+      coupon_code: null,
+      courier: 'BlueDart',
+      tracking_no: 'BD998877',
+      ship_date: '2026-09-18T10:00:00.000Z',
+      created_at: '2026-09-16T10:00:00.000Z',
+      store_id: 2
+    });
+
+    const res = await orderService.getCustomerOrders(googleUser, { store_id: 2 });
+    const orderNumbers = res.orders.map(o => o.order_number);
+    assert.ok(orderNumbers.includes('MRSH-RET-LEGACY-302'), 'Legacy order attached to user ID 30 must be included');
+    assert.ok(orderNumbers.includes('CF-MRSH-2026-0001'), 'Current Custom Forge order must be included');
+    assert.ok(orderNumbers.includes('MRSH-RET-101'), 'Current retail order must be included');
+  });
+
+  await t.test('9. Population-based Cross-Customer Access Rejection', async () => {
+    // 3 distinct customers:
+    // User A: collector@themarshans.shop
+    // User B: other.collector@example.com (id: 20)
+    // User C: priya.sharma@example.in (guest)
+    const userB = { uid: 'uid_b', email: 'other.collector@example.com', emailVerified: true };
+    const userC = { uid: 'uid_c', email: 'priya.sharma@example.in', emailVerified: true };
+
+    const resA = await orderService.getCustomerOrders(googleUser, { store_id: 2 });
+    const resB = await orderService.getCustomerOrders(userB, { store_id: 2 });
+    const resC = await orderService.getCustomerOrders(userC, { store_id: 2 });
+
+    const numsA = new Set(resA.orders.map(o => o.order_number));
+    const numsB = new Set(resB.orders.map(o => o.order_number));
+    const numsC = new Set(resC.orders.map(o => o.order_number));
+
+    // Zero overlap between A, B, and C
+    for (const num of numsA) {
+      assert.strictEqual(numsB.has(num), false, `User B must NOT see order ${num} belonging to A`);
+      assert.strictEqual(numsC.has(num), false, `User C must NOT see order ${num} belonging to A`);
+    }
+    for (const num of numsB) {
+      assert.strictEqual(numsA.has(num), false, `User A must NOT see order ${num} belonging to B`);
+      assert.strictEqual(numsC.has(num), false, `User C must NOT see order ${num} belonging to B`);
+    }
+  });
+
+  await t.test('10. Store Scoping Invariant: Store 1 orders never leak into Store 2', async () => {
+    // Ensure CHP-102 (Store 1) is never accessible via store_id = 2
+    const res = await orderService.getCustomerOrders(googleUser, { store_id: 2 });
+    assert.ok(!res.orders.some(o => o.store_id === 1), 'No Store 1 orders in Store 2 response');
+    for (const o of res.orders) {
+      assert.strictEqual(o.store_id, 2, `Order ${o.order_number} must have store_id = 2`);
+    }
+  });
+
+  await t.test('11. Pagination, Sorting (newest first), and Totals Integrity', async () => {
+    const res = await orderService.getCustomerOrders(googleUser, { limit: 2, offset: 0, store_id: 2 });
+    assert.strictEqual(res.orders.length, 2, 'Must obey limit: 2');
+    assert.ok(res.total >= 3, 'Total count reflects full order population');
+
+    // Newest first order
+    const date1 = new Date(res.orders[0].created_at).getTime();
+    const date2 = new Date(res.orders[1].created_at).getTime();
+    assert.ok(date1 >= date2, 'Orders must be sorted in descending chronological order');
+  });
 });

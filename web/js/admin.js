@@ -322,13 +322,34 @@ function normalizeOrder(o) {
     const totalPriceRupees = o.total_price_rupees !== undefined ? o.total_price_rupees : (isStore2 ? Math.round(rawTotalPrice / 100) : rawTotalPrice);
 
     const rawAddress = o.shipping_address;
+    let parsedAddress = rawAddress;
+    if (typeof parsedAddress === 'string') {
+        try { parsedAddress = JSON.parse(parsedAddress); } catch (_) {}
+    }
+    if (typeof parsedAddress === 'string') {
+        try { parsedAddress = JSON.parse(parsedAddress); } catch (_) {}
+    }
+
+    const recipientName = (parsedAddress && typeof parsedAddress === 'object')
+        ? (parsedAddress.name || parsedAddress.recipient_name || '')
+        : '';
+    const recipientPhone = (parsedAddress && typeof parsedAddress === 'object')
+        ? (parsedAddress.phone || parsedAddress.recipient_phone || parsedAddress.mobile || '')
+        : '';
+
     let formattedAddress = '';
-    if (typeof rawAddress === 'string') {
-        formattedAddress = rawAddress;
-    } else if (rawAddress && typeof rawAddress === 'object') {
-        formattedAddress = [rawAddress.address_line1 || rawAddress.address, rawAddress.city, rawAddress.state, rawAddress.pincode || rawAddress.zip].filter(Boolean).join(', ');
+    if (parsedAddress && typeof parsedAddress === 'object') {
+        const line1 = parsedAddress.address_line1 || parsedAddress.address || '';
+        const line2 = parsedAddress.address_line2 || '';
+        const street = [line1, line2].filter(Boolean).join(', ');
+        const cityStateZip = [
+            parsedAddress.city,
+            [parsedAddress.state, parsedAddress.pincode || parsedAddress.postal_code || parsedAddress.zip].filter(Boolean).join(' - ')
+        ].filter(Boolean).join(', ');
+        const country = parsedAddress.country || 'India';
+        formattedAddress = [street, cityStateZip, country].filter(Boolean).join(', ');
     } else {
-        formattedAddress = o.address || 'Address not provided';
+        formattedAddress = o.address || (typeof rawAddress === 'string' ? rawAddress : 'Address not provided');
     }
 
     const normalizedItems = (o.items || []).map((item, idx) => {
@@ -359,9 +380,12 @@ function normalizeOrder(o) {
         ...o,
         id: o.id,
         order_id: o.order_number || o.order_id || `CHP-${o.id}`,
-        customer_name: o.customer_name || 'Anonymous Customer',
-        email: o.customer_email || o.email || '',
-        phone: o.customer_phone || o.phone || '',
+        customer_name: o.customer_name || recipientName || 'Anonymous Customer',
+        email: o.customer_email || o.email || (parsedAddress && parsedAddress.email) || '',
+        phone: o.customer_phone || o.phone || recipientPhone || '',
+        recipient_name: recipientName,
+        recipient_phone: recipientPhone,
+        shipping_address: parsedAddress,
         address: formattedAddress,
         items: normalizedItems,
         total_price: totalPriceRupees,
@@ -504,7 +528,7 @@ async function loadAllAdminData() {
             dashRes
         ] = await Promise.allSettled([
             fetchAllAdminProducts(),
-            apiClient.get('/categories'),
+            apiClient.get('/admin/categories'),
             apiClient.get('/admin/orders'),
             apiClient.get('/admin/production/queue'),
             apiClient.get('/admin/customers'),
@@ -722,7 +746,7 @@ async function refreshCategoriesFromAPI() {
     const fetchStoreId = apiClient.getActiveStoreId ? apiClient.getActiveStoreId() : 1;
     const requestId = ++currentCategoryFetchRequestId;
     try {
-        const res = await apiClient.get('/categories');
+        const res = await apiClient.get('/admin/categories');
         const currentStoreId = apiClient.getActiveStoreId ? apiClient.getActiveStoreId() : 1;
         // Strict Race-Condition Guard: Discard if store changed or newer request started
         if (requestId !== currentCategoryFetchRequestId || currentStoreId !== fetchStoreId) {
@@ -3762,7 +3786,10 @@ function renderOrdersTable() {
     tbody.innerHTML = filtered.map(o => `
         <tr>
             <td><strong class="admin-id-highlight">${o.order_id}</strong></td>
-            <td><a href="#" class="view-cust-link" data-id="${o.order_id}" style="color:#000; font-weight:bold; text-decoration:underline;">${o.customer_name}</a></td>
+            <td>
+                <a href="#" class="view-cust-link" data-id="${o.order_id}" style="color:#000; font-weight:bold; text-decoration:underline;">${escapeHtml(o.customer_name)}</a>
+                ${o.phone ? `<br><small style="color:#555;">📞 ${escapeHtml(o.phone)}</small>` : (o.email ? `<br><small style="color:#666;">${escapeHtml(o.email)}</small>` : '')}
+            </td>
             <td><strong>₹${o.total_price}</strong></td>
             <td><span class="status-badge ${o.payment_status === 'Paid' ? 'status-live' : 'status-upcoming'}">${o.payment_status}</span></td>
             <td><span class="status-badge status-upcoming">${o.status}</span></td>
@@ -3850,10 +3877,51 @@ async function openOrderDetailModal(orderId) {
 function renderOrderDetailModalContent(o) {
     document.getElementById('ord-detail-title').textContent = `[ORDER DETAILS: ${o.order_id}]`;
     document.getElementById('ord-detail-date').textContent = `Placed on: ${new Date(o.created_at).toLocaleString()}`;
-    document.getElementById('ord-detail-cust-name').textContent = o.customer_name;
-    document.getElementById('ord-detail-cust-email').textContent = o.email;
-    document.getElementById('ord-detail-cust-phone').textContent = o.phone;
-    document.getElementById('ord-detail-cust-address').textContent = o.address;
+
+    const rawAddr = o.shipping_address;
+    let addr = rawAddr;
+    if (typeof addr === 'string') {
+        try { addr = JSON.parse(addr); } catch (_) {}
+    }
+    if (typeof addr === 'string') {
+        try { addr = JSON.parse(addr); } catch (_) {}
+    }
+
+    const recipientName = (addr && typeof addr === 'object' && (addr.name || addr.recipient_name)) || o.recipient_name || o.customer_name || 'Customer';
+    const recipientPhone = (addr && typeof addr === 'object' && (addr.phone || addr.recipient_phone)) || o.recipient_phone || o.phone || '';
+
+    const custName = o.customer_name || recipientName || 'Customer';
+    const custEmail = o.email || (addr && typeof addr === 'object' && addr.email) || '-';
+    const custPhone = o.phone || recipientPhone || '-';
+
+    document.getElementById('ord-detail-cust-name').textContent = custName;
+    document.getElementById('ord-detail-cust-email').textContent = custEmail;
+    document.getElementById('ord-detail-cust-phone').textContent = custPhone;
+
+    const addrEl = document.getElementById('ord-detail-cust-address');
+    if (addrEl) {
+        if (addr && typeof addr === 'object') {
+            const line1 = addr.address_line1 || addr.address || '';
+            const line2 = addr.address_line2 || '';
+            const street = [line1, line2].filter(Boolean).join(', ');
+            const cityStatePin = [
+                addr.city,
+                [addr.state, addr.pincode || addr.postal_code || addr.zip].filter(Boolean).join(' - ')
+            ].filter(Boolean).join(', ');
+            const country = addr.country || 'India';
+            const deliveryPhone = addr.phone || addr.recipient_phone || o.phone || '';
+
+            addrEl.innerHTML = `
+                <div><strong>Recipient:</strong> <span style="font-weight:900; color:#0f172a;">${escapeHtml(recipientName)}</span></div>
+                <div style="margin-top:2px;">${escapeHtml(street)}</div>
+                <div>${escapeHtml(cityStatePin)}</div>
+                <div>${escapeHtml(country)}</div>
+                <div style="margin-top:4px; font-weight:bold; color:#1e293b;">📞 Delivery Contact: <span style="font-family:monospace;">${escapeHtml(deliveryPhone || 'N/A')}</span></div>
+            `;
+        } else {
+            addrEl.textContent = escapeHtml(String(o.address || 'No address provided.'));
+        }
+    }
 
     // Detailed price breakdown
     const subtotal = o.subtotal_rupees !== undefined ? o.subtotal_rupees : o.total_price;
@@ -4034,18 +4102,27 @@ function openCustomerModal(custOrOrder) {
     if (!modal) return;
 
     let cust = null;
-    if (custOrOrder.id && customers.some(c => String(c.id) === String(custOrOrder.id))) {
-        cust = customers.find(c => String(c.id) === String(custOrOrder.id));
-    } else {
-        cust = customers.find(c => (c.email && c.email.toLowerCase() === (custOrOrder.email || '').toLowerCase()) || c.name.toLowerCase() === (custOrOrder.customer_name || '').toLowerCase());
+    const lookupId = custOrOrder.customer_id || custOrOrder.id;
+    const lookupEmail = (custOrOrder.email || custOrOrder.customer_email || '').toLowerCase().trim();
+    const lookupPhoneDigits = String(custOrOrder.phone || custOrOrder.customer_phone || '').replace(/\D/g, '').slice(-10);
+    const lookupName = (custOrOrder.customer_name || custOrOrder.name || '').toLowerCase().trim();
+
+    if (lookupId && customers.some(c => String(c.id) === String(lookupId))) {
+        cust = customers.find(c => String(c.id) === String(lookupId));
+    } else if (lookupPhoneDigits && customers.some(c => String(c.phone || '').replace(/\D/g, '').slice(-10) === lookupPhoneDigits)) {
+        cust = customers.find(c => String(c.phone || '').replace(/\D/g, '').slice(-10) === lookupPhoneDigits);
+    } else if (lookupEmail && customers.some(c => (c.email || '').toLowerCase().trim() === lookupEmail)) {
+        cust = customers.find(c => (c.email || '').toLowerCase().trim() === lookupEmail);
+    } else if (lookupName && lookupName !== 'customer' && customers.some(c => (c.name || '').toLowerCase().trim() === lookupName)) {
+        cust = customers.find(c => (c.name || '').toLowerCase().trim() === lookupName);
     }
 
     if (!cust) {
         cust = {
-            id: Date.now(),
+            id: lookupId || Date.now(),
             name: custOrOrder.customer_name || custOrOrder.name || "Customer",
-            email: custOrOrder.email || "No email",
-            phone: custOrOrder.phone || "No phone",
+            email: custOrOrder.email || custOrOrder.customer_email || "No email",
+            phone: custOrOrder.phone || custOrOrder.customer_phone || "No phone",
             address: custOrOrder.address || "No address provided",
             total_orders: 1,
             delivered_orders: custOrOrder.status === 'Delivered' ? 1 : 0,
@@ -4056,53 +4133,129 @@ function openCustomerModal(custOrOrder) {
 
     document.getElementById('cust-modal-name').textContent = `[CUSTOMER PROFILE: ${cust.name}]`;
 
-    const custOrders = orders.filter(o => o.email.toLowerCase() === cust.email.toLowerCase() || o.customer_name.toLowerCase() === cust.name.toLowerCase());
-    const deliveredCount = custOrders.filter(o => o.status === 'Delivered').length;
+    const normalizePhoneDigits = (p) => String(p || '').replace(/\D/g, '').slice(-10);
+    const targetPhoneDigits = normalizePhoneDigits(cust.phone);
+    const targetEmail = (cust.email || '').toLowerCase().trim();
+    const targetName = (cust.name || '').toLowerCase().trim();
+
+    const isOrderMatch = (ord) => {
+        const oEmail = (ord.email || ord.customer_email || '').toLowerCase().trim();
+        if (targetEmail && oEmail && targetEmail === oEmail) return true;
+        const oPhone = normalizePhoneDigits(ord.phone || ord.customer_phone);
+        if (targetPhoneDigits && oPhone && targetPhoneDigits === oPhone) return true;
+        const oName = (ord.customer_name || ord.name || '').toLowerCase().trim();
+        if (targetName && oName && targetName === oName && targetName !== 'customer') return true;
+        return false;
+    };
+
+    let custOrders = [];
+    for (const o of orders) {
+        if (isOrderMatch(o)) custOrders.push(o);
+    }
+    if (Array.isArray(customForgeOrders)) {
+        for (const cfo of customForgeOrders) {
+            if (isOrderMatch(cfo)) {
+                const alreadyAdded = custOrders.some(co => co.order_id === cfo.order_number || String(co.id) === String(cfo.id));
+                if (!alreadyAdded) {
+                    custOrders.push({
+                        id: cfo.id,
+                        order_id: cfo.order_number || `CF-${cfo.id}`,
+                        customer_name: cfo.customer_name,
+                        email: cfo.customer_email,
+                        phone: cfo.customer_phone,
+                        total_price: cfo.total_price_rupees !== undefined ? cfo.total_price_rupees : Math.round((cfo.total_price || cfo.total_amount_paise || 0) / 100),
+                        payment_status: (cfo.payment_status || 'pending').charAt(0).toUpperCase() + (cfo.payment_status || 'pending').slice(1).toLowerCase(),
+                        status: (cfo.production_status || 'order_placed').replace(/_/g, ' ').toUpperCase(),
+                        created_at: cfo.created_at,
+                        is_custom_forge: true
+                    });
+                }
+            }
+        }
+    }
+    custOrders.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+
+    const deliveredCount = custOrders.filter(o => ['Delivered', 'DELIVERED', 'COMPLETED'].includes(o.status)).length;
     const tier = calculateCustomerTier(deliveredCount);
 
-    const content = document.getElementById('cust-modal-content');
-    content.innerHTML = `
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:15px; margin-bottom:15px; font-size:0.85rem;">
-            <div>
-                <p style="margin:4px 0;"><strong>EMAIL:</strong> ${cust.email}</p>
-                <p style="margin:4px 0;"><strong>PHONE:</strong> ${cust.phone || '-'}</p>
-                <p style="margin:4px 0;"><strong>DELIVERED SPEND:</strong> <strong style="color:#059669;">₹${cust.total_spent || 0}</strong></p>
+    const renderModalContent = (orderList, currentCust) => {
+        const dCount = orderList.filter(o => ['Delivered', 'DELIVERED', 'COMPLETED'].includes(o.status)).length;
+        const dTier = calculateCustomerTier(dCount);
+        const content = document.getElementById('cust-modal-content');
+        if (!content) return;
+        content.innerHTML = `
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:15px; margin-bottom:15px; font-size:0.85rem;">
+                <div>
+                    <p style="margin:4px 0;"><strong>EMAIL:</strong> ${escapeHtml(currentCust.email || '-')}</p>
+                    <p style="margin:4px 0;"><strong>PHONE:</strong> ${escapeHtml(currentCust.phone || '-')}</p>
+                    <p style="margin:4px 0;"><strong>DELIVERED SPEND:</strong> <strong style="color:#059669;">₹${currentCust.total_spent || 0}</strong></p>
+                </div>
+                <div>
+                    <p style="margin:4px 0;"><strong>DELIVERED ORDERS:</strong> ${dCount}</p>
+                    <p style="margin:4px 0;"><strong>LOYALTY TIER:</strong> <span class="status-badge status-live">${dTier}</span></p>
+                    <p style="margin:4px 0;"><strong>ADDRESS:</strong> ${escapeHtml(currentCust.address || '-')}</p>
+                </div>
             </div>
-            <div>
-                <p style="margin:4px 0;"><strong>DELIVERED ORDERS:</strong> ${deliveredCount}</p>
-                <p style="margin:4px 0;"><strong>LOYALTY TIER:</strong> <span class="status-badge status-live">${tier}</span></p>
-                <p style="margin:4px 0;"><strong>ADDRESS:</strong> ${cust.address || '-'}</p>
-            </div>
-        </div>
 
-        <h4 style="font-weight:900; margin-bottom:8px; border-bottom:1.5px solid #000; padding-bottom:4px;">PURCHASE HISTORY (${custOrders.length})</h4>
-        <div style="max-height:220px; overflow-y:auto;">
-            <table class="retro-table" style="font-size:0.8rem;">
-                <thead>
-                    <tr>
-                        <th>ORDER ID</th>
-                        <th>TOTAL</th>
-                        <th>PAYMENT</th>
-                        <th>FULFILLMENT</th>
-                        <th>DATE</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${custOrders.map(o => `
+            <h4 style="font-weight:900; margin-bottom:8px; border-bottom:1.5px solid #000; padding-bottom:4px;">PURCHASE HISTORY (${orderList.length})</h4>
+            <div style="max-height:220px; overflow-y:auto;">
+                <table class="retro-table" style="font-size:0.8rem;">
+                    <thead>
                         <tr>
-                            <td><strong class="admin-id-highlight">${o.order_id}</strong></td>
-                            <td>₹${o.total_price}</td>
-                            <td><span class="status-badge status-live">${o.payment_status}</span></td>
-                            <td><span class="status-badge status-upcoming">${o.status}</span></td>
-                            <td><small>${new Date(o.created_at).toLocaleDateString()}</small></td>
+                            <th>ORDER ID</th>
+                            <th>TOTAL</th>
+                            <th>PAYMENT</th>
+                            <th>FULFILLMENT</th>
+                            <th>DATE</th>
                         </tr>
-                    `).join('') || '<tr><td colspan="5">No orders found for this customer profile.</td></tr>'}
-                </tbody>
-            </table>
-        </div>
-    `;
+                    </thead>
+                    <tbody>
+                        ${orderList.map(o => `
+                            <tr>
+                                <td><strong class="admin-id-highlight">${escapeHtml(o.order_id || '')}</strong></td>
+                                <td>₹${o.total_price}</td>
+                                <td><span class="status-badge status-live">${escapeHtml(o.payment_status || '')}</span></td>
+                                <td><span class="status-badge status-upcoming">${escapeHtml(o.status || '')}</span></td>
+                                <td><small>${o.created_at ? new Date(o.created_at).toLocaleDateString() : '-'}</small></td>
+                            </tr>
+                        `).join('') || '<tr><td colspan="5">No orders found for this customer profile.</td></tr>'}
+                    </tbody>
+                </table>
+            </div>
+        `;
+    };
 
+    renderModalContent(custOrders, cust);
     modal.style.display = 'flex';
+
+    // Asynchronously enrich from backend if customer has a valid ID
+    if (cust.id && !String(cust.id).startsWith('guest_') && !isNaN(Number(cust.id))) {
+        apiClient.get(`/admin/customers/${cust.id}`).then(res => {
+            const apiCust = res?.data || res;
+            if (apiCust && apiCust.recent_orders && Array.isArray(apiCust.recent_orders)) {
+                const enriched = apiCust.recent_orders.map(ro => ({
+                    id: ro.id,
+                    order_id: ro.order_number || `ORD-${ro.id}`,
+                    customer_name: ro.customer_name || apiCust.name,
+                    email: ro.customer_email || apiCust.email,
+                    phone: ro.customer_phone || apiCust.phone,
+                    total_price: ro.total_price_rupees !== undefined ? ro.total_price_rupees : ro.total_price,
+                    payment_status: (ro.payment_status || 'pending').charAt(0).toUpperCase() + (ro.payment_status || 'pending').slice(1).toLowerCase(),
+                    status: (ro.fulfillment_status || 'pending').replace(/_/g, ' ').toUpperCase(),
+                    created_at: ro.created_at,
+                    is_custom_forge: Boolean(ro.is_custom_forge)
+                }));
+                const updatedCust = {
+                    ...cust,
+                    total_spent: apiCust.total_spent || cust.total_spent,
+                    phone: apiCust.phone || cust.phone,
+                    email: apiCust.email || cust.email,
+                    name: apiCust.name || cust.name
+                };
+                renderModalContent(enriched, updatedCust);
+            }
+        }).catch(() => {});
+    }
 }
 
 // =============================================================================
@@ -5376,11 +5529,15 @@ function renderCustomForgeTable() {
             ? `<strong>${escapeHtml(o.engraved_name)}</strong><br><small style="color:#555;">${escapeHtml(o.designation || o.engraved_designation || 'NIL')}</small>${secondPersonText}`
             : '<span style="color:#888;">None</span>';
 
+        const custName = o.customer_name || (o.shipping_address && o.shipping_address.name) || 'Customer';
+        const custEmail = o.customer_email || (o.shipping_address && o.shipping_address.email) || '';
+        const custPhone = o.customer_phone || (o.shipping_address && o.shipping_address.phone) || '-';
+
         return `
             <tr>
                 <td><strong>${escapeHtml(o.order_number)}</strong></td>
-                <td>${escapeHtml(o.customer_name || 'Customer')}<br><small style="color:#666;">${escapeHtml(o.customer_email || '')}</small></td>
-                <td>${escapeHtml(o.customer_phone || '-')}</td>
+                <td>${escapeHtml(custName)}<br><small style="color:#666;">${escapeHtml(custEmail)}</small></td>
+                <td>${escapeHtml(custPhone)}</td>
                 <td><strong>${escapeHtml(o.variant_name || o.size_label_snapshot || 'Lady Justice')}</strong></td>
                 <td>${customBadge}</td>
                 <td>${matBadge}</td>
@@ -5503,26 +5660,48 @@ async function openCustomForgeDetailModal(orderId) {
             }
         }
 
+        let addr = order.shipping_address;
+        if (typeof addr === 'string') {
+            try { addr = JSON.parse(addr); } catch (_) {}
+        }
+        if (typeof addr === 'string') {
+            try { addr = JSON.parse(addr); } catch (_) {}
+        }
+
+        const recipientName = (addr && typeof addr === 'object' && (addr.name || addr.recipient_name)) || order.customer_name || 'Customer';
+        const recipientPhone = (addr && typeof addr === 'object' && (addr.phone || addr.recipient_phone)) || order.customer_phone || '';
+
+        const custName = order.customer_name || recipientName || 'Customer';
+        const custEmail = order.customer_email || (addr && typeof addr === 'object' && addr.email) || '-';
+        const custPhone = order.customer_phone || recipientPhone || '-';
+
         // Customer & Order Breakdown
         const custNameEl = document.getElementById('cf-detail-cust-name');
-        if (custNameEl) custNameEl.textContent = order.customer_name || 'N/A';
+        if (custNameEl) custNameEl.textContent = custName;
         const custEmailEl = document.getElementById('cf-detail-cust-email');
-        if (custEmailEl) custEmailEl.textContent = order.customer_email || 'N/A';
+        if (custEmailEl) custEmailEl.textContent = custEmail;
         const custPhoneEl = document.getElementById('cf-detail-cust-phone');
-        if (custPhoneEl) custPhoneEl.textContent = order.customer_phone || 'N/A';
+        if (custPhoneEl) custPhoneEl.textContent = custPhone;
 
         const addrEl = document.getElementById('cf-detail-cust-address');
         if (addrEl) {
-            let addr = order.shipping_address;
-            if (typeof addr === 'string') {
-                try { addr = JSON.parse(addr); } catch (_) {}
-            }
             if (addr && typeof addr === 'object') {
+                const line1 = addr.address_line1 || addr.address || '';
+                const line2 = addr.address_line2 || '';
+                const street = [line1, line2].filter(Boolean).join(', ');
+                const cityStatePin = [
+                    addr.city,
+                    [addr.state, addr.postal_code || addr.pincode || addr.zip].filter(Boolean).join(' - ')
+                ].filter(Boolean).join(', ');
+                const country = addr.country || 'India';
+                const deliveryPhone = addr.phone || addr.recipient_phone || order.customer_phone || '';
+
                 addrEl.innerHTML = `
-                    <div><strong>${escapeHtml(addr.name || order.customer_name || '')}</strong></div>
-                    <div>${escapeHtml(addr.address_line1 || addr.address || '')} ${escapeHtml(addr.address_line2 || '')}</div>
-                    <div>${escapeHtml(addr.city || '')}, ${escapeHtml(addr.state || '')} - ${escapeHtml(addr.postal_code || addr.pincode || '')}</div>
-                    <div>Phone: ${escapeHtml(addr.phone || order.customer_phone || 'N/A')}</div>
+                    <div><strong>Recipient:</strong> <span style="font-weight:900; color:#0f172a;">${escapeHtml(recipientName)}</span></div>
+                    <div style="margin-top:2px;">${escapeHtml(street)}</div>
+                    <div>${escapeHtml(cityStatePin)}</div>
+                    <div>${escapeHtml(country)}</div>
+                    <div style="margin-top:4px; font-weight:bold; color:#1e293b;">📞 Delivery Contact: <span style="font-family:monospace;">${escapeHtml(deliveryPhone || 'N/A')}</span></div>
                 `;
             } else {
                 addrEl.textContent = escapeHtml(String(addr || 'No address provided.'));
@@ -5532,12 +5711,29 @@ async function openCustomForgeDetailModal(orderId) {
         const subtotalPaise = order.subtotal_paise !== undefined ? order.subtotal_paise : order.subtotal;
         const subtotalEl = document.getElementById('cf-detail-subtotal');
         if (subtotalEl) subtotalEl.textContent = `₹${Math.round((subtotalPaise || 0) / 100).toLocaleString('en-IN')}`;
+
+        const shipFee = order.shipping_fee_paise !== undefined ? order.shipping_fee_paise : (order.shipping_charge || 0);
+        const totalPaise = order.total_amount_paise !== undefined ? order.total_amount_paise : order.total_price;
+        const discountPaise = order.discount_total !== undefined ? order.discount_total : (order.discount_amount || (order.discount_total_rupees ? order.discount_total_rupees * 100 : Math.max(0, ((subtotalPaise || 0) + shipFee) - (totalPaise || 0))));
+
+        const discountRowEl = document.getElementById('cf-detail-discount-row');
+        const discountEl = document.getElementById('cf-detail-discount');
+        const couponEl = document.getElementById('cf-detail-coupon-code');
+        if (discountPaise > 0) {
+            if (discountRowEl) discountRowEl.style.display = 'block';
+            if (discountEl) discountEl.textContent = `-₹${Math.round(discountPaise / 100).toLocaleString('en-IN')}`;
+            if (couponEl) {
+                couponEl.textContent = order.coupon_code ? `(${order.coupon_code})` : '';
+                couponEl.style.display = order.coupon_code ? 'inline' : 'none';
+            }
+        } else {
+            if (discountRowEl) discountRowEl.style.display = 'none';
+        }
+
         const shipEl = document.getElementById('cf-detail-shipping');
         if (shipEl) {
-            const shipFee = order.shipping_fee_paise !== undefined ? order.shipping_fee_paise : (order.shipping_charge || 0);
             shipEl.textContent = shipFee > 0 ? `₹${Math.round(shipFee / 100).toLocaleString('en-IN')}` : 'FREE';
         }
-        const totalPaise = order.total_amount_paise !== undefined ? order.total_amount_paise : order.total_price;
         const totalEl = document.getElementById('cf-detail-total');
         if (totalEl) totalEl.textContent = `₹${Math.round((totalPaise || 0) / 100).toLocaleString('en-IN')}`;
         const payStatusEl = document.getElementById('cf-detail-pay-status');

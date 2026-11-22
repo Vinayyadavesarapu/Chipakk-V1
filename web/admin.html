@@ -2836,19 +2836,23 @@
                 <div class="retro-panel" style="background: #fff; font-size: 0.85rem;">
                     <div
                         style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #ddd; padding-bottom: 6px; margin-bottom: 10px;">
-                        <h4 style="font-weight: 900; margin: 0;">👤 CUSTOMER DETAILS</h4>
+                        <h4 style="font-weight: 900; margin: 0;">👤 CUSTOMER &amp; DELIVERY DETAILS</h4>
                         <button id="ord-view-cust-btn" class="retro-btn"
                             style="padding: 1px 6px; font-size: 0.7rem; background: #000; color: #fff;">VIEW
                             PROFILE</button>
                     </div>
-                    <div><strong>Name:</strong> <a href="#" id="ord-detail-cust-name-link"
-                            style="color: #000; font-weight: bold; text-decoration: underline;"><span
-                                id="ord-detail-cust-name"></span></a></div>
-                    <div><strong>Email:</strong> <span id="ord-detail-cust-email"></span></div>
-                    <div><strong>Phone:</strong> <span id="ord-detail-cust-phone"></span></div>
-                    <div><strong>Address:</strong>
+                    <div style="margin-bottom: 8px;">
+                        <div style="font-size: 0.72rem; font-weight: 900; text-transform: uppercase; color: #555; margin-bottom: 4px;">BUYER ACCOUNT</div>
+                        <div><strong>Account Name:</strong> <a href="#" id="ord-detail-cust-name-link"
+                                style="color: #000; font-weight: bold; text-decoration: underline;"><span
+                                    id="ord-detail-cust-name"></span></a></div>
+                        <div><strong>Email:</strong> <span id="ord-detail-cust-email"></span></div>
+                        <div><strong>Account Phone:</strong> <span id="ord-detail-cust-phone"></span></div>
+                    </div>
+                    <div style="border-top: 1px dashed #ddd; padding-top: 8px;">
+                        <div style="font-size: 0.72rem; font-weight: 900; text-transform: uppercase; color: #555; margin-bottom: 4px;">SHIPPING &amp; DELIVERY RECIPIENT</div>
                         <div id="ord-detail-cust-address"
-                            style="background: #f9f8f3; padding: 6px; border: 1px solid #ddd; margin-top: 4px;"></div>
+                            style="background: #f9f8f3; padding: 6px 8px; border: 1px solid #ddd; margin-top: 4px; font-size: 0.82rem; line-height: 1.4;"></div>
                     </div>
                 </div>
             </div>
@@ -3216,15 +3220,20 @@
 
                 <!-- Customer Details & Pricing Breakdown -->
                 <div class="retro-panel" style="background: #fff; font-size: 0.85rem;">
-                    <h4 style="font-weight: 900; border-bottom: 1px solid #ddd; padding-bottom: 6px; margin-bottom: 10px;">👤 CUSTOMER & ORDER BREAKDOWN</h4>
-                    <div><strong>Customer Name:</strong> <span id="cf-detail-cust-name" style="font-weight: bold;"></span></div>
-                    <div><strong>Email:</strong> <span id="cf-detail-cust-email"></span></div>
-                    <div><strong>Phone:</strong> <span id="cf-detail-cust-phone"></span></div>
-                    <div style="margin-top: 8px;"><strong>Delivery Address:</strong>
-                        <div id="cf-detail-cust-address" style="background: #f9f8f3; padding: 6px; border: 1px solid #ddd; margin-top: 4px; font-size: 0.8rem;"></div>
+                    <h4 style="font-weight: 900; border-bottom: 1px solid #ddd; padding-bottom: 6px; margin-bottom: 10px;">👤 CUSTOMER &amp; ORDER BREAKDOWN</h4>
+                    <div style="margin-bottom: 8px;">
+                        <div style="font-size: 0.72rem; font-weight: 900; text-transform: uppercase; color: #555; margin-bottom: 4px;">BUYER ACCOUNT</div>
+                        <div><strong>Customer Name:</strong> <span id="cf-detail-cust-name" style="font-weight: bold;"></span></div>
+                        <div><strong>Email:</strong> <span id="cf-detail-cust-email"></span></div>
+                        <div><strong>Phone:</strong> <span id="cf-detail-cust-phone"></span></div>
+                    </div>
+                    <div style="border-top: 1px dashed #ddd; padding-top: 8px;">
+                        <div style="font-size: 0.72rem; font-weight: 900; text-transform: uppercase; color: #555; margin-bottom: 4px;">SHIPPING &amp; DELIVERY RECIPIENT</div>
+                        <div id="cf-detail-cust-address" style="background: #f9f8f3; padding: 6px 8px; border: 1px solid #ddd; margin-top: 4px; font-size: 0.82rem; line-height: 1.4;"></div>
                     </div>
                     <div style="margin-top: 10px; border-top: 1px dashed #ddd; padding-top: 8px;">
                         <div>Subtotal: <span id="cf-detail-subtotal"></span></div>
+                        <div id="cf-detail-discount-row" style="display: none; color: #15803d; font-weight: bold;">Coupon Discount <span id="cf-detail-coupon-code" style="font-size: 0.75rem; background: #dcfce7; padding: 1px 4px; border-radius: 2px;"></span>: <span id="cf-detail-discount"></span></div>
                         <div>Shipping Fee: <span id="cf-detail-shipping"></span></div>
                         <div style="font-size: 1.05rem; font-weight: 900; color: #059669; margin-top: 4px;">Total: <span id="cf-detail-total"></span></div>
                         <div>Payment Status: <span id="cf-detail-pay-status" class="status-badge"></span></div>
@@ -3251,7 +3260,7 @@
     </div>
 
     <script type="module" src="js/firebase-config.js?v=3.5.0"></script>
-    <script type="module" src="js/admin.js?v=3.5.4"></script>
+    <script type="module" src="js/admin.js?v=3.5.5"></script>
     <script type="module" src="js/migration.js?v=3.5.0"></script>
 </body>
 

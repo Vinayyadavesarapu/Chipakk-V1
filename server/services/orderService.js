@@ -1608,8 +1608,19 @@ const getCustomerOrders = async (firebaseUserOrUid, { limit = 20, offset = 0, st
              LOWER(TRIM(COALESCE(customer_email, ''))) = LOWER(TRIM(?))
              OR (
                shipping_address IS NOT NULL
-               AND JSON_VALID(shipping_address)
-               AND LOWER(TRIM(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(shipping_address, '$.email')), ''))) = LOWER(TRIM(?))
+               AND (
+                 CASE
+                   WHEN JSON_VALID(shipping_address) = 1
+                   THEN (
+                     CASE
+                       WHEN JSON_EXTRACT(shipping_address, '$.email') IS NOT NULL
+                       THEN LOWER(TRIM(JSON_UNQUOTE(JSON_EXTRACT(shipping_address, '$.email'))))
+                       ELSE LOWER(COALESCE(CAST(shipping_address AS CHAR), ''))
+                     END
+                   )
+                   ELSE LOWER(COALESCE(CAST(shipping_address AS CHAR), ''))
+                 END LIKE LOWER(CONCAT('%', ?, '%'))
+               )
              )
            )`,
         [customerEmail, customerEmail]
@@ -1633,8 +1644,19 @@ const getCustomerOrders = async (firebaseUserOrUid, { limit = 20, offset = 0, st
              LOWER(TRIM(COALESCE(customer_email, ''))) = LOWER(TRIM(?))
              OR (
                shipping_address IS NOT NULL
-               AND JSON_VALID(shipping_address)
-               AND LOWER(TRIM(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(shipping_address, '$.email')), ''))) = LOWER(TRIM(?))
+               AND (
+                 CASE
+                   WHEN JSON_VALID(shipping_address) = 1
+                   THEN (
+                     CASE
+                       WHEN JSON_EXTRACT(shipping_address, '$.email') IS NOT NULL
+                       THEN LOWER(TRIM(JSON_UNQUOTE(JSON_EXTRACT(shipping_address, '$.email'))))
+                       ELSE LOWER(COALESCE(CAST(shipping_address AS CHAR), ''))
+                     END
+                   )
+                   ELSE LOWER(COALESCE(CAST(shipping_address AS CHAR), ''))
+                 END LIKE LOWER(CONCAT('%', ?, '%'))
+               )
              )
            )`,
         [customerEmail, customerEmail]
@@ -1804,8 +1826,19 @@ const getCustomerOrders = async (firebaseUserOrUid, { limit = 20, offset = 0, st
            LOWER(TRIM(COALESCE(customer_email, ''))) = LOWER(TRIM(?))
            OR (
              shipping_address IS NOT NULL
-             AND JSON_VALID(shipping_address)
-             AND LOWER(TRIM(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(shipping_address, '$.email')), ''))) = LOWER(TRIM(?))
+             AND (
+               CASE
+                 WHEN JSON_VALID(shipping_address) = 1
+                 THEN (
+                   CASE
+                     WHEN JSON_EXTRACT(shipping_address, '$.email') IS NOT NULL
+                     THEN LOWER(TRIM(JSON_UNQUOTE(JSON_EXTRACT(shipping_address, '$.email'))))
+                     ELSE LOWER(COALESCE(CAST(shipping_address AS CHAR), ''))
+                   END
+                 )
+                 ELSE LOWER(COALESCE(CAST(shipping_address AS CHAR), ''))
+               END LIKE LOWER(CONCAT('%', ?, '%'))
+             )
            )
          )
        )
@@ -1827,8 +1860,19 @@ const getCustomerOrders = async (firebaseUserOrUid, { limit = 20, offset = 0, st
                LOWER(TRIM(COALESCE(customer_email, ''))) = LOWER(TRIM(?))
                OR (
                  shipping_address IS NOT NULL
-                 AND JSON_VALID(shipping_address)
-                 AND LOWER(TRIM(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(shipping_address, '$.email')), ''))) = LOWER(TRIM(?))
+                 AND (
+                   CASE
+                     WHEN JSON_VALID(shipping_address) = 1
+                     THEN (
+                       CASE
+                         WHEN JSON_EXTRACT(shipping_address, '$.email') IS NOT NULL
+                         THEN LOWER(TRIM(JSON_UNQUOTE(JSON_EXTRACT(shipping_address, '$.email'))))
+                         ELSE LOWER(COALESCE(CAST(shipping_address AS CHAR), ''))
+                       END
+                     )
+                     ELSE LOWER(COALESCE(CAST(shipping_address AS CHAR), ''))
+                   END LIKE LOWER(CONCAT('%', ?, '%'))
+                 )
                )
              )
            )
@@ -1876,8 +1920,19 @@ const getCustomerOrders = async (firebaseUserOrUid, { limit = 20, offset = 0, st
             LOWER(TRIM(COALESCE(o.customer_email, ''))) = LOWER(TRIM(?))
             OR (
               o.shipping_address IS NOT NULL
-              AND JSON_VALID(o.shipping_address)
-              AND LOWER(TRIM(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, '$.email')), ''))) = LOWER(TRIM(?))
+              AND (
+                CASE
+                  WHEN JSON_VALID(o.shipping_address) = 1
+                  THEN (
+                    CASE
+                      WHEN JSON_EXTRACT(o.shipping_address, '$.email') IS NOT NULL
+                      THEN LOWER(TRIM(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, '$.email'))))
+                      ELSE LOWER(COALESCE(CAST(o.shipping_address AS CHAR), ''))
+                    END
+                  )
+                  ELSE LOWER(COALESCE(CAST(o.shipping_address AS CHAR), ''))
+                END LIKE LOWER(CONCAT('%', ?, '%'))
+              )
             )
           )
         )
@@ -1984,8 +2039,19 @@ const getCustomerOrders = async (firebaseUserOrUid, { limit = 20, offset = 0, st
               LOWER(TRIM(COALESCE(o.customer_email, ''))) = LOWER(TRIM(?))
               OR (
                 o.shipping_address IS NOT NULL
-                AND JSON_VALID(o.shipping_address)
-                AND LOWER(TRIM(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, '$.email')), ''))) = LOWER(TRIM(?))
+                AND (
+                  CASE
+                    WHEN JSON_VALID(o.shipping_address) = 1
+                    THEN (
+                      CASE
+                        WHEN JSON_EXTRACT(o.shipping_address, '$.email') IS NOT NULL
+                        THEN LOWER(TRIM(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, '$.email'))))
+                        ELSE LOWER(COALESCE(CAST(o.shipping_address AS CHAR), ''))
+                      END
+                    )
+                    ELSE LOWER(COALESCE(CAST(o.shipping_address AS CHAR), ''))
+                  END LIKE LOWER(CONCAT('%', ?, '%'))
+                )
               )
             )
           )
@@ -2228,8 +2294,19 @@ const getCustomerOrderById = async (orderIdOrNumber, firebaseUserOrUid, storeId 
              LOWER(TRIM(COALESCE(customer_email, ''))) = LOWER(TRIM(?))
              OR (
                shipping_address IS NOT NULL
-               AND JSON_VALID(shipping_address)
-               AND LOWER(TRIM(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(shipping_address, '$.email')), ''))) = LOWER(TRIM(?))
+               AND (
+                 CASE
+                   WHEN JSON_VALID(shipping_address) = 1
+                   THEN (
+                     CASE
+                       WHEN JSON_EXTRACT(shipping_address, '$.email') IS NOT NULL
+                       THEN LOWER(TRIM(JSON_UNQUOTE(JSON_EXTRACT(shipping_address, '$.email'))))
+                       ELSE LOWER(COALESCE(CAST(shipping_address AS CHAR), ''))
+                     END
+                   )
+                   ELSE LOWER(COALESCE(CAST(shipping_address AS CHAR), ''))
+                 END LIKE LOWER(CONCAT('%', ?, '%'))
+               )
              )
            )`,
         [customerEmail, customerEmail]
@@ -2252,8 +2329,19 @@ const getCustomerOrderById = async (orderIdOrNumber, firebaseUserOrUid, storeId 
              LOWER(TRIM(COALESCE(customer_email, ''))) = LOWER(TRIM(?))
              OR (
                shipping_address IS NOT NULL
-               AND JSON_VALID(shipping_address)
-               AND LOWER(TRIM(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(shipping_address, '$.email')), ''))) = LOWER(TRIM(?))
+               AND (
+                 CASE
+                   WHEN JSON_VALID(shipping_address) = 1
+                   THEN (
+                     CASE
+                       WHEN JSON_EXTRACT(shipping_address, '$.email') IS NOT NULL
+                       THEN LOWER(TRIM(JSON_UNQUOTE(JSON_EXTRACT(shipping_address, '$.email'))))
+                       ELSE LOWER(COALESCE(CAST(shipping_address AS CHAR), ''))
+                     END
+                   )
+                   ELSE LOWER(COALESCE(CAST(shipping_address AS CHAR), ''))
+                 END LIKE LOWER(CONCAT('%', ?, '%'))
+               )
              )
            )`,
         [customerEmail, customerEmail]
@@ -2276,7 +2364,27 @@ const getCustomerOrderById = async (orderIdOrNumber, firebaseUserOrUid, storeId 
   // 1. First attempt: Look up in regular retail orders
   const order = await getOrderById(orderIdOrNumber, activeStoreId);
   if (order) {
-    const shipEmail = order.shipping_address && order.shipping_address.email ? String(order.shipping_address.email).toLowerCase().trim() : '';
+    let shipEmail = '';
+    if (order.shipping_address) {
+      if (typeof order.shipping_address === 'string') {
+        try {
+          const parsed = JSON.parse(order.shipping_address);
+          if (typeof parsed === 'string') {
+            try {
+              const doubleParsed = JSON.parse(parsed);
+              shipEmail = doubleParsed && doubleParsed.email ? String(doubleParsed.email).toLowerCase().trim() : '';
+            } catch (_) {}
+          } else if (parsed && typeof parsed === 'object') {
+            shipEmail = parsed.email ? String(parsed.email).toLowerCase().trim() : '';
+          }
+        } catch (_) {}
+        if (!shipEmail && customerEmail && order.shipping_address.toLowerCase().includes(customerEmail)) {
+          shipEmail = customerEmail;
+        }
+      } else if (typeof order.shipping_address === 'object') {
+        shipEmail = order.shipping_address.email ? String(order.shipping_address.email).toLowerCase().trim() : '';
+      }
+    }
     const isOwner = (candidateCustomerIds.includes(Number(order.customer_id))) ||
                     (order.customer_email && customerEmail && order.customer_email.toLowerCase().trim() === customerEmail) ||
                     (shipEmail && customerEmail && shipEmail === customerEmail);
@@ -2302,10 +2410,25 @@ const getCustomerOrderById = async (orderIdOrNumber, firebaseUserOrUid, storeId 
       if (cfRows && cfRows.length > 0) {
         const cfMeta = cfRows[0];
         let shipAddr = cfMeta.shipping_address;
+        let shipEmail = '';
         if (typeof shipAddr === 'string') {
-          try { shipAddr = JSON.parse(shipAddr); } catch (_) {}
+          try {
+            const parsed = JSON.parse(shipAddr);
+            if (typeof parsed === 'string') {
+              try {
+                const doubleParsed = JSON.parse(parsed);
+                shipEmail = doubleParsed && doubleParsed.email ? String(doubleParsed.email).toLowerCase().trim() : '';
+              } catch (_) {}
+            } else if (parsed && typeof parsed === 'object') {
+              shipEmail = parsed.email ? String(parsed.email).toLowerCase().trim() : '';
+            }
+          } catch (_) {}
+          if (!shipEmail && customerEmail && shipAddr.toLowerCase().includes(customerEmail)) {
+            shipEmail = customerEmail;
+          }
+        } else if (shipAddr && typeof shipAddr === 'object') {
+          shipEmail = shipAddr.email ? String(shipAddr.email).toLowerCase().trim() : '';
         }
-        const shipEmail = shipAddr && shipAddr.email ? String(shipAddr.email).toLowerCase().trim() : '';
 
         // Enforce strict customer ownership (zero cross-customer leakage)
         const isOwner = (candidateCustomerIds.includes(Number(cfMeta.customer_id))) ||
