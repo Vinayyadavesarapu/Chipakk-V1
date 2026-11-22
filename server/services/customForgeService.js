@@ -4,6 +4,7 @@ const shippingService = require('./shippingService');
 const taxProfileService = require('./taxProfileService');
 const taxCore = require('../utils/taxCore');
 const { normalizeIndianPhoneNumber } = require('../utils/phoneUtils');
+const { resolveOrCreateCustomer } = require('./customerService');
 
 /**
  * Custom Forge Business Constants
@@ -144,7 +145,7 @@ const checkSecondPersonColumnsExist = async (connection = pool) => {
 };
 
 /**
- * Helper: Find or create customer record in users table linked to Firebase UID
+ * Helper: Find or create customer record in users table linked to Firebase UID & phone
  */
 const upsertCustomerUser = async (firebaseUser, connection = pool) => {
   const { uid, email, name, phone } = firebaseUser;
@@ -154,32 +155,12 @@ const upsertCustomerUser = async (firebaseUser, connection = pool) => {
     throw err;
   }
 
-  const [existingRows] = await connection.execute(
-    'SELECT id, firebase_uid, email FROM users WHERE firebase_uid = ? LIMIT 1',
-    [uid]
+  const customerRecord = await resolveOrCreateCustomer(
+    { uid },
+    { email, full_name: name, name, phone },
+    connection
   );
-
-  if (existingRows && existingRows.length > 0) {
-    return existingRows[0].id;
-  }
-
-  // Insert new customer user profile
-  try {
-    const [insertRes] = await connection.execute(
-      'INSERT INTO users (firebase_uid, email, full_name, phone) VALUES (?, ?, ?, ?)',
-      [uid, email || '', name || null, phone || null]
-    );
-    return insertRes.insertId;
-  } catch (err) {
-    if (err.message && (err.message.includes("Unknown column 'full_name'") || err.code === 'ER_BAD_FIELD_ERROR')) {
-      const [fallbackRes] = await connection.execute(
-        'INSERT INTO users (firebase_uid, email, name, phone) VALUES (?, ?, ?, ?)',
-        [uid, email || '', name || null, phone || null]
-      );
-      return fallbackRes.insertId;
-    }
-    throw err;
-  }
+  return customerRecord.id;
 };
 
 /**
@@ -743,12 +724,18 @@ const createCustomForgeOrder = async (orderPayload, firebaseUser, requestStoreId
       });
     }
 
-    // 8. Upsert customer in users table (linked to Firebase UID)
+    // 8. Resolve buyer account details vs recipient delivery details & upsert customer in users table
+    const buyerName = (orderPayload?.customer_name || (firebaseUser && (firebaseUser.name || firebaseUser.displayName)) || recipientName).trim();
+    const rawBuyerPhone = (orderPayload?.customer_phone || (firebaseUser && (firebaseUser.phoneNumber || firebaseUser.phone)) || cleanPhone).trim();
+    const buyerPhoneCheck = normalizeIndianPhoneNumber(rawBuyerPhone);
+    const buyerPhone = buyerPhoneCheck.valid ? buyerPhoneCheck.phone : rawBuyerPhone;
+    const buyerEmail = (firebaseUser?.email || orderPayload?.customer_email || shipping_address.email || '').trim().toLowerCase();
+
     const customerId = await upsertCustomerUser({
       uid: firebaseUser.uid,
-      email: firebaseUser.email || shipping_address.email || '',
-      name: recipientName.trim(),
-      phone: cleanPhone
+      email: buyerEmail,
+      name: buyerName,
+      phone: buyerPhone
     }, connection);
 
     // 8.1 Server-side coupon validation (Store 2 authoritative)
@@ -839,8 +826,10 @@ const createCustomForgeOrder = async (orderPayload, firebaseUser, requestStoreId
     const shippingSnapshot = {
       name: recipientName.trim(),
       phone: cleanPhone,
-      email: firebaseUser.email || shipping_address.email || '',
+      email: shipping_address.email || buyerEmail,
       address: streetAddress.trim(),
+      address_line1: shipping_address.address_line1 ? shipping_address.address_line1.trim() : streetAddress.trim(),
+      address_line2: shipping_address.address_line2 ? shipping_address.address_line2.trim() : '',
       city: city.trim(),
       state: state.trim(),
       pincode: cleanPin,
@@ -876,9 +865,9 @@ const createCustomForgeOrder = async (orderPayload, firebaseUser, requestStoreId
     const cfParams = [
       orderNumber,
       customerId,
-      shippingSnapshot.email,
-      shippingSnapshot.name,
-      shippingSnapshot.phone,
+      buyerEmail,
+      buyerName,
+      buyerPhone,
       JSON.stringify(shippingSnapshot),
       shippingChargePaise,
       subtotalPaise,
@@ -1001,7 +990,9 @@ const createCustomForgeOrder = async (orderPayload, firebaseUser, requestStoreId
 
     await connection.commit();
 
-    return getCustomForgeOrderByIdInternal(orderId, connection);
+    const createdOrder = await getCustomForgeOrderByIdInternal(orderId, connection);
+
+    return createdOrder;
   } catch (error) {
     await connection.rollback();
     throw error;
@@ -1065,6 +1056,15 @@ const getCustomForgeOrderByIdInternal = async (orderId, connection = pool) => {
       parsedAddress = JSON.parse(parsedAddress);
     } catch (_) {}
   }
+  if (typeof parsedAddress === 'string') {
+    try {
+      parsedAddress = JSON.parse(parsedAddress);
+    } catch (_) {}
+  }
+
+  const resolvedCustName = order.customer_name || (parsedAddress && typeof parsedAddress === 'object' && parsedAddress.name) || 'Customer';
+  const resolvedCustEmail = order.customer_email || (parsedAddress && typeof parsedAddress === 'object' && parsedAddress.email) || '';
+  const resolvedCustPhone = order.customer_phone || (parsedAddress && typeof parsedAddress === 'object' && parsedAddress.phone) || '';
 
   let couponCode = order.coupon_code || null;
   let discountTotal = order.discount_total !== undefined ? order.discount_total : (order.discount_amount !== undefined ? order.discount_amount : 0);
@@ -1085,6 +1085,9 @@ const getCustomForgeOrderByIdInternal = async (orderId, connection = pool) => {
 
   return {
     ...order,
+    customer_name: resolvedCustName,
+    customer_email: resolvedCustEmail,
+    customer_phone: resolvedCustPhone,
     coupon_code: couponCode,
     discount_total: discountTotal,
     discount_total_rupees: Math.round(Number(discountTotal || 0) / 100),
@@ -1146,15 +1149,33 @@ const getCustomerOrderById = async (orderId, firebaseUser) => {
 
   const orderMeta = orders[0];
 
-  // Verify ownership
+  // Verify ownership across linked candidate profiles and verified email
   const [userRows] = await pool.execute(
     'SELECT id, email FROM users WHERE firebase_uid = ? LIMIT 1',
     [firebaseUser.uid]
   );
   const user = userRows && userRows.length > 0 ? userRows[0] : null;
 
-  const isOwner = (user && orderMeta.customer_id && Number(user.id) === Number(orderMeta.customer_id)) ||
-                  (orderMeta.customer_email && firebaseUser.email && orderMeta.customer_email.toLowerCase() === firebaseUser.email.toLowerCase());
+  let candidateUserIds = user ? [Number(user.id)] : [];
+  const effectiveEmail = String(firebaseUser.email || (user ? user.email : '') || '').toLowerCase().trim();
+
+  if (effectiveEmail) {
+    try {
+      const [emailRows] = await pool.execute(
+        'SELECT id FROM users WHERE email IS NOT NULL AND LOWER(TRIM(email)) = LOWER(?)',
+        [effectiveEmail]
+      );
+      if (emailRows && emailRows.length > 0) {
+        for (const r of emailRows) {
+          const numId = Number(r.id);
+          if (!candidateUserIds.includes(numId)) candidateUserIds.push(numId);
+        }
+      }
+    } catch (_) {}
+  }
+
+  const isOwner = (orderMeta.customer_id && candidateUserIds.includes(Number(orderMeta.customer_id))) ||
+                  (orderMeta.customer_email && effectiveEmail && orderMeta.customer_email.toLowerCase().trim() === effectiveEmail);
 
   if (!isOwner) {
     const err = new Error('Access denied: You do not have permission to view this Custom Forge order.');
@@ -1194,8 +1215,8 @@ const getAdminCustomForgeOrders = async ({
 
   if (search && String(search).trim()) {
     const term = `%${String(search).trim()}%`;
-    conditions.push('(o.order_number LIKE ? OR o.customer_name LIKE ? OR o.customer_email LIKE ? OR o.customer_phone LIKE ?)');
-    params.push(term, term, term, term);
+    conditions.push('(o.order_number LIKE ? OR o.customer_name LIKE ? OR o.customer_email LIKE ? OR o.customer_phone LIKE ? OR COALESCE(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, "$.phone")), "") LIKE ? OR COALESCE(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, "$.name")), "") LIKE ?)');
+    params.push(term, term, term, term, term, term);
   }
 
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -1216,6 +1237,7 @@ const getAdminCustomForgeOrders = async ({
   const query = `
     SELECT
       o.id, o.store_id, o.order_number, o.customer_name, o.customer_email, o.customer_phone,
+      o.shipping_address,
       o.total_price, o.payment_status, o.production_status, o.created_at,
       oi.size_label_snapshot, oi.variant_sku_snapshot,
       oc.custom_mode_enabled, oc.customer_name AS engraved_name,
@@ -1233,17 +1255,30 @@ const getAdminCustomForgeOrders = async ({
   const [rows] = await pool.execute(query, [...params, parsedLimit, parsedOffset]);
 
   return {
-    orders: rows.map(r => ({
-      ...r,
-      total_price_rupees: Math.round(Number(r.total_price) / 100),
-      customization: r.custom_mode_enabled ? {
-        name: r.engraved_name,
-        designation: r.engraved_designation,
-        second_name: r.second_customer_name || null,
-        second_designation: r.second_customer_designation || null,
-        material: r.nameplate_material
-      } : null
-    })),
+    orders: rows.map(r => {
+      let parsedAddr = r.shipping_address;
+      if (typeof parsedAddr === 'string') {
+        try { parsedAddr = JSON.parse(parsedAddr); } catch (_) {}
+      }
+      if (typeof parsedAddr === 'string') {
+        try { parsedAddr = JSON.parse(parsedAddr); } catch (_) {}
+      }
+      return {
+        ...r,
+        shipping_address: parsedAddr,
+        customer_name: r.customer_name || (parsedAddr && parsedAddr.name) || 'Customer',
+        customer_email: r.customer_email || (parsedAddr && parsedAddr.email) || '',
+        customer_phone: r.customer_phone || (parsedAddr && parsedAddr.phone) || '',
+        total_price_rupees: Math.round(Number(r.total_price) / 100),
+        customization: r.custom_mode_enabled ? {
+          name: r.engraved_name,
+          designation: r.engraved_designation,
+          second_name: r.second_customer_name || null,
+          second_designation: r.second_customer_designation || null,
+          material: r.nameplate_material
+        } : null
+      };
+    }),
     pagination: {
       total,
       limit: parsedLimit,

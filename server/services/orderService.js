@@ -4,6 +4,7 @@ const shippingService = require('./shippingService');
 const settingsService = require('./settingsService');
 const { isMarshansHybridCatalogEnabled } = require('../config/features');
 const { normalizeIndianPhoneNumber } = require('../utils/phoneUtils');
+const { resolveOrCreateCustomer } = require('./customerService');
 const core = require('../utils/taxCore');
 const taxUtils = require('../utils/taxUtils');
 const taxProfileService = require('./taxProfileService');
@@ -21,6 +22,20 @@ const checkHasTaxCols = async () => {
     hasTaxColsCached = false;
   }
   return hasTaxColsCached;
+};
+
+let hasCustomerPhoneColCached = null;
+const checkHasCustomerPhoneCol = async () => {
+  if (hasCustomerPhoneColCached !== null) return hasCustomerPhoneColCached;
+  try {
+    const [cols] = await pool.execute(
+      "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'orders' AND COLUMN_NAME = 'customer_phone'"
+    );
+    hasCustomerPhoneColCached = cols && cols.length > 0;
+  } catch (_) {
+    hasCustomerPhoneColCached = false;
+  }
+  return hasCustomerPhoneColCached;
 };
 
 /** Which of the optional GST configuration / snapshot columns exist yet (migration 017). */
@@ -256,10 +271,17 @@ const getOrders = async ({
     }
   }
 
+  const hasPhone = await checkHasCustomerPhoneCol();
+
   if (search && String(search).trim()) {
     const term = `%${String(search).trim()}%`;
-    conditions.push('(o.order_number LIKE ? OR o.customer_name LIKE ? OR o.customer_email LIKE ? OR COALESCE(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, "$.phone")), "") LIKE ?)');
-    params.push(term, term, term, term);
+    if (hasPhone) {
+      conditions.push('(o.order_number LIKE ? OR o.customer_name LIKE ? OR o.customer_email LIKE ? OR o.customer_phone LIKE ? OR COALESCE(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, "$.phone")), "") LIKE ? OR COALESCE(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, "$.name")), "") LIKE ?)');
+      params.push(term, term, term, term, term, term);
+    } else {
+      conditions.push('(o.order_number LIKE ? OR o.customer_name LIKE ? OR o.customer_email LIKE ? OR COALESCE(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, "$.phone")), "") LIKE ? OR COALESCE(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, "$.name")), "") LIKE ?)');
+      params.push(term, term, term, term, term);
+    }
   }
 
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -273,15 +295,18 @@ const getOrders = async ({
   const total = countRows[0].total || 0;
 
   const hasTax = await checkHasTaxCols();
+  const phoneSql = hasPhone
+    ? 'COALESCE(NULLIF(TRIM(o.customer_phone), ""), NULLIF(TRIM(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, "$.phone"))), ""), NULLIF(TRIM(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, "$.phoneNumber"))), ""), "") AS customer_phone,'
+    : 'COALESCE(NULLIF(TRIM(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, "$.phone"))), ""), NULLIF(TRIM(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, "$.phoneNumber"))), ""), "") AS customer_phone,';
 
   const query = `
     SELECT
       o.id,
       o.order_number,
       o.customer_id,
-      o.customer_name,
-      o.customer_email,
-      COALESCE(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, '$.phone')), '') AS customer_phone,
+      COALESCE(NULLIF(TRIM(o.customer_name), ''), NULLIF(TRIM(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, '$.name'))), ''), 'Customer') AS customer_name,
+      COALESCE(NULLIF(TRIM(o.customer_email), ''), NULLIF(TRIM(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, '$.email'))), ''), '') AS customer_email,
+      ${phoneSql}
       o.shipping_address,
       o.payment_method,
       o.payment_status,
@@ -309,6 +334,14 @@ const getOrders = async ({
   const [rows] = await pool.execute(query, queryParams);
 
   const orders = rows.map(r => {
+    let parsedAddress = safeJsonParse(r.shipping_address, null);
+    if (typeof parsedAddress === 'string') {
+      parsedAddress = safeJsonParse(parsedAddress, null);
+    }
+    const resolvedName = r.customer_name || (parsedAddress && parsedAddress.name) || 'Customer';
+    const resolvedPhone = r.customer_phone || (parsedAddress && parsedAddress.phone) || '';
+    const resolvedEmail = r.customer_email || (parsedAddress && parsedAddress.email) || '';
+
     const isStore2 = parseInt(r.store_id, 10) === 2;
     const rawTotalPrice = parseInt(r.total_price, 10) || 0;
     const rawSubtotal = parseInt(r.subtotal, 10) || 0;
@@ -324,7 +357,10 @@ const getOrders = async ({
 
     return {
       ...r,
-      shipping_address: safeJsonParse(r.shipping_address, null),
+      customer_name: resolvedName,
+      customer_email: resolvedEmail,
+      customer_phone: resolvedPhone,
+      shipping_address: parsedAddress,
       total_price_rupees: totalPriceRupees,
       subtotal_rupees: isStore2 ? Math.round(rawSubtotal / 100) : rawSubtotal,
       discount_total_rupees: isStore2 ? Math.round(rawDiscount / 100) : rawDiscount,
@@ -374,15 +410,19 @@ const getOrderById = async (orderIdOrNumber, storeId = null) => {
   }
 
   const hasTax = await checkHasTaxCols();
+  const hasPhone = await checkHasCustomerPhoneCol();
+  const phoneSql = hasPhone
+    ? 'COALESCE(NULLIF(TRIM(o.customer_phone), ""), NULLIF(TRIM(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, "$.phone"))), ""), NULLIF(TRIM(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, "$.phoneNumber"))), ""), "") AS customer_phone,'
+    : 'COALESCE(NULLIF(TRIM(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, "$.phone"))), ""), NULLIF(TRIM(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, "$.phoneNumber"))), ""), "") AS customer_phone,';
 
   const orderQuery = `
     SELECT
       o.id,
       o.order_number,
       o.customer_id,
-      o.customer_name,
-      o.customer_email,
-      COALESCE(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, '$.phone')), '') AS customer_phone,
+      COALESCE(NULLIF(TRIM(o.customer_name), ''), NULLIF(TRIM(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, '$.name'))), ''), 'Customer') AS customer_name,
+      COALESCE(NULLIF(TRIM(o.customer_email), ''), NULLIF(TRIM(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, '$.email'))), ''), '') AS customer_email,
+      ${phoneSql}
       o.shipping_address,
       o.payment_method,
       o.payment_status,
@@ -414,7 +454,41 @@ const getOrderById = async (orderIdOrNumber, storeId = null) => {
   const order = orderRows[0];
   const numOrderId = order.id;
 
-  order.shipping_address = safeJsonParse(order.shipping_address, null);
+  let parsedAddress = safeJsonParse(order.shipping_address, null);
+  if (typeof parsedAddress === 'string') {
+    parsedAddress = safeJsonParse(parsedAddress, null);
+  }
+  order.shipping_address = parsedAddress;
+
+  if (order.customer_id) {
+    try {
+      const [uRows] = await pool.execute(
+        'SELECT email, full_name, phone FROM users WHERE id = ? LIMIT 1',
+        [order.customer_id]
+      ).catch(async () => {
+        return pool.execute(
+          'SELECT email, name AS full_name, phone FROM users WHERE id = ? LIMIT 1',
+          [order.customer_id]
+        );
+      });
+      if (uRows && uRows.length > 0) {
+        const u = uRows[0];
+        if (!order.customer_name || order.customer_name === 'Customer') order.customer_name = u.full_name || order.customer_name;
+        if (!order.customer_email) order.customer_email = u.email || '';
+        if (!order.customer_phone) order.customer_phone = u.phone || '';
+      }
+    } catch (_) {}
+  }
+
+  if (!order.customer_name || order.customer_name === 'Customer') {
+    order.customer_name = (parsedAddress && parsedAddress.name) || order.customer_name || 'Customer';
+  }
+  if (!order.customer_email) {
+    order.customer_email = (parsedAddress && parsedAddress.email) || '';
+  }
+  if (!order.customer_phone) {
+    order.customer_phone = (parsedAddress && parsedAddress.phone) || '';
+  }
 
   const isStore2 = parseInt(order.store_id, 10) === 2;
   const rawTotalPrice = parseInt(order.total_price, 10) || 0;
@@ -602,7 +676,7 @@ const updateOrderShipping = async (id, shippingData = {}, storeId = null) => {
 };
 
 /**
- * Helper to find or create customer record in users table linked to Firebase UID
+ * Helper to find or create customer record in users table linked to Firebase UID & phone
  */
 const upsertCustomerUser = async (firebaseUser, connection = pool) => {
   const { uid, email, name, phone } = firebaseUser;
@@ -610,32 +684,12 @@ const upsertCustomerUser = async (firebaseUser, connection = pool) => {
     throw new Error('Firebase UID is required to identify customer.');
   }
 
-  const [existingRows] = await connection.execute(
-    'SELECT id, firebase_uid, email FROM users WHERE firebase_uid = ? LIMIT 1',
-    [uid]
+  const customerRecord = await resolveOrCreateCustomer(
+    { uid },
+    { email, full_name: name, name, phone },
+    connection
   );
-
-  if (existingRows && existingRows.length > 0) {
-    return existingRows[0].id;
-  }
-
-  // Insert new user; support either name or full_name column seamlessly
-  try {
-    const [insertRes] = await connection.execute(
-      'INSERT INTO users (firebase_uid, email, full_name, phone) VALUES (?, ?, ?, ?)',
-      [uid, email || '', name || null, phone || null]
-    );
-    return insertRes.insertId;
-  } catch (err) {
-    if (err.message && (err.message.includes("Unknown column 'full_name'") || err.code === 'ER_BAD_FIELD_ERROR')) {
-      const [fallbackRes] = await connection.execute(
-        'INSERT INTO users (firebase_uid, email, name, phone) VALUES (?, ?, ?, ?)',
-        [uid, email || '', name || null, phone || null]
-      );
-      return fallbackRes.insertId;
-    }
-    throw err;
-  }
+  return customerRecord.id;
 };
 
 /**
@@ -723,12 +777,19 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
   try {
     await connection.beginTransaction();
 
-    // 3. Upsert customer in users table
+    // Resolve buyer account details vs recipient delivery details
+    const buyerName = (orderPayload?.customer_name || (firebaseUser && (firebaseUser.name || firebaseUser.displayName)) || recipientName).trim();
+    const rawBuyerPhone = (orderPayload?.customer_phone || (firebaseUser && (firebaseUser.phoneNumber || firebaseUser.phone)) || cleanPhone).trim();
+    const buyerPhoneCheck = normalizeIndianPhoneNumber(rawBuyerPhone);
+    const buyerPhone = buyerPhoneCheck.valid ? buyerPhoneCheck.phone : rawBuyerPhone;
+    const buyerEmail = (firebaseUser?.email || orderPayload?.customer_email || shipping_address.email || '').trim().toLowerCase();
+
+    // 3. Upsert customer in users table (linked safely by UID and normalized phone)
     const customerId = await upsertCustomerUser({
       uid: firebaseUser.uid,
-      email: firebaseUser.email || shipping_address.email || '',
-      name: recipientName.trim(),
-      phone: cleanPhone
+      email: buyerEmail,
+      name: buyerName,
+      phone: buyerPhone
     }, connection);
 
     const activeStoreId = parseInt(orderPayload?.store_id, 10) === 2 ? 2 : 1;
@@ -1141,8 +1202,10 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
     const shippingSnapshot = {
       name: recipientName.trim(),
       phone: cleanPhone,
-      email: firebaseUser.email || shipping_address.email || '',
+      email: shipping_address.email || buyerEmail,
       address: streetAddress.trim(),
+      address_line1: shipping_address.address_line1 ? shipping_address.address_line1.trim() : streetAddress.trim(),
+      address_line2: shipping_address.address_line2 ? shipping_address.address_line2.trim() : '',
       city: city.trim(),
       state: state.trim(),
       pincode: cleanPin,
@@ -1174,8 +1237,8 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
     const orderParams = [
       orderNumber,
       customerId,
-      shippingSnapshot.email,
-      shippingSnapshot.name
+      buyerEmail,
+      buyerName
     ];
 
     if (hasStoreIdCol) {
@@ -1187,7 +1250,7 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
     if (hasPhoneCol) {
       orderColumns.push('customer_phone');
       orderPlaceholders.push('?');
-      orderParams.push(shippingSnapshot.phone);
+      orderParams.push(buyerPhone);
     }
 
     orderColumns.push('shipping_address');
@@ -1367,7 +1430,9 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
     await connection.commit();
     connection.release();
 
-    return getOrderById(orderId, activeStoreId);
+    const createdOrder = await getOrderById(orderId, activeStoreId);
+
+    return createdOrder;
   } catch (error) {
     await connection.rollback();
     connection.release();
@@ -1470,31 +1535,72 @@ const normalizeCustomForgeOrder = (cfOrder) => {
 /**
  * Fetch orders for a specific authenticated customer
  */
-const getCustomerOrders = async (firebaseUid, { limit = 20, offset = 0, store_id = 1 } = {}) => {
-  if (!firebaseUid) return { total: 0, limit, offset, orders: [] };
+const getCustomerOrders = async (firebaseUserOrUid, { limit = 20, offset = 0, store_id = 1 } = {}) => {
+  if (!firebaseUserOrUid) return { total: 0, limit, offset, orders: [] };
 
-  let [userRows] = await pool.execute(
-    'SELECT id, email FROM users WHERE firebase_uid = ? LIMIT 1',
-    [firebaseUid]
-  );
+  const firebaseUid = typeof firebaseUserOrUid === 'object' && firebaseUserOrUid !== null
+    ? (firebaseUserOrUid.uid || '')
+    : String(firebaseUserOrUid || '').trim();
 
-  let customerId = userRows && userRows.length > 0 ? userRows[0].id : null;
-  let customerEmail = userRows && userRows.length > 0 ? (userRows[0].email || '') : '';
+  const authEmail = typeof firebaseUserOrUid === 'object' && firebaseUserOrUid !== null && firebaseUserOrUid.email
+    ? String(firebaseUserOrUid.email).trim().toLowerCase()
+    : '';
 
-  if (!customerId) {
-    try {
-      const customerService = require('./customerService');
-      const resolvedCustomer = await customerService.resolveOrCreateCustomer({ uid: firebaseUid });
-      if (resolvedCustomer) {
-        customerId = resolvedCustomer.id;
-        customerEmail = resolvedCustomer.email || '';
+  const authUserPayload = typeof firebaseUserOrUid === 'object' && firebaseUserOrUid !== null
+    ? firebaseUserOrUid
+    : { uid: firebaseUid };
+
+  let customerId = null;
+  let customerEmail = authEmail;
+
+  // 1. Resolve or bind customer record using authoritative customerService
+  try {
+    const customerService = require('./customerService');
+    const resolvedCustomer = await customerService.resolveOrCreateCustomer(authUserPayload);
+    if (resolvedCustomer) {
+      customerId = resolvedCustomer.id;
+      if (!customerEmail && resolvedCustomer.email) {
+        customerEmail = String(resolvedCustomer.email).trim().toLowerCase();
       }
-    } catch (resolveErr) {
-      console.warn('[orderService.getCustomerOrders] Auto-resolve customer warning:', resolveErr.message);
+    }
+  } catch (resolveErr) {
+    console.warn('[orderService.getCustomerOrders] Auto-resolve customer warning:', resolveErr.message);
+  }
+
+  // Fallback to direct lookup by firebase_uid if resolveOrCreateCustomer did not return an id
+  if (!customerId && firebaseUid) {
+    const [userRows] = await pool.execute(
+      'SELECT id, email FROM users WHERE firebase_uid = ? LIMIT 1',
+      [firebaseUid]
+    );
+    if (userRows && userRows.length > 0) {
+      customerId = userRows[0].id;
+      if (!customerEmail && userRows[0].email) {
+        customerEmail = String(userRows[0].email).trim().toLowerCase();
+      }
     }
   }
 
-  if (!customerId) {
+  // Find all candidate customer IDs belonging to this user (matches historical orders across linked profiles)
+  let candidateCustomerIds = customerId ? [Number(customerId)] : [];
+  if (customerEmail) {
+    try {
+      const [emailUserRows] = await pool.execute(
+        'SELECT id FROM users WHERE email IS NOT NULL AND LOWER(TRIM(email)) = LOWER(?)',
+        [customerEmail]
+      );
+      if (emailUserRows && emailUserRows.length > 0) {
+        for (const u of emailUserRows) {
+          const numId = Number(u.id);
+          if (!candidateCustomerIds.includes(numId)) {
+            candidateCustomerIds.push(numId);
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
+  if (candidateCustomerIds.length === 0 && !customerEmail) {
     return { total: 0, limit, offset, orders: [] };
   }
   const parsedLimit = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
@@ -1506,12 +1612,15 @@ const getCustomerOrders = async (firebaseUid, { limit = 20, offset = 0, store_id
   // -------------------------------------------------------------
   if (targetStoreId === 1) {
     const storeCondition = '(store_id = 1 OR store_id IS NULL)';
-    const countQuery = `SELECT COUNT(*) AS total FROM orders WHERE customer_id = ? AND ${storeCondition}`;
-    const [countRows] = await pool.execute(countQuery, [customerId]);
+    const idPlaceholders = candidateCustomerIds.length > 0
+      ? candidateCustomerIds.map(() => '?').join(',')
+      : '0';
+    const countQuery = `SELECT COUNT(*) AS total FROM orders WHERE customer_id IN (${idPlaceholders}) AND ${storeCondition}`;
+    const [countRows] = await pool.execute(countQuery, candidateCustomerIds);
     const total = countRows[0]?.total || 0;
 
     const oStoreCondition = '(o.store_id = 1 OR o.store_id IS NULL)';
-    const queryParams = [customerId, parsedLimit, parsedOffset];
+    const queryParams = [...candidateCustomerIds, parsedLimit, parsedOffset];
 
     const query = `
       SELECT
@@ -1537,7 +1646,7 @@ const getCustomerOrders = async (firebaseUid, { limit = 20, offset = 0, store_id
         COALESCE(o.store_id, 1) AS store_id,
         (SELECT COUNT(*) FROM order_items WHERE order_id = o.id) AS item_count
       FROM orders o
-      WHERE o.customer_id = ? AND ${oStoreCondition}
+      WHERE o.customer_id IN (${idPlaceholders}) AND ${oStoreCondition}
       ORDER BY o.created_at DESC, o.id DESC
       LIMIT ? OFFSET ?
     `;
@@ -1630,10 +1739,15 @@ const getCustomerOrders = async (firebaseUid, { limit = 20, offset = 0, store_id
     cfTablesExist = tRows && tRows.length > 0;
   } catch (_) {}
 
-  // 1. Retail orders count for Store 2 (matched by customer_id OR verified customer_email)
+  // 1. Retail orders count for Store 2 (matched by customer_id IN (...) OR verified customer_email)
+  const idPlaceholders = candidateCustomerIds.length > 0
+    ? candidateCustomerIds.map(() => '?').join(',')
+    : '0';
+  const queryParams = [...candidateCustomerIds, customerEmail, customerEmail];
+
   const [retailCountRows] = await pool.execute(
-    'SELECT COUNT(*) AS total FROM orders WHERE ((customer_id = ?) OR (? != "" AND LOWER(customer_email) = LOWER(?))) AND store_id = 2',
-    [customerId, customerEmail, customerEmail]
+    `SELECT COUNT(*) AS total FROM orders WHERE ((customer_id IN (${idPlaceholders})) OR (? != "" AND LOWER(TRIM(customer_email)) = LOWER(TRIM(?)))) AND store_id = 2`,
+    queryParams
   );
   const retailTotal = retailCountRows[0]?.total || 0;
 
@@ -1642,8 +1756,8 @@ const getCustomerOrders = async (firebaseUid, { limit = 20, offset = 0, store_id
   if (cfTablesExist) {
     try {
       const [cfCountRows] = await pool.execute(
-        'SELECT COUNT(*) AS total FROM custom_forge_orders WHERE ((customer_id = ?) OR (? != "" AND LOWER(customer_email) = LOWER(?))) AND store_id = 2',
-        [customerId, customerEmail, customerEmail]
+        `SELECT COUNT(*) AS total FROM custom_forge_orders WHERE ((customer_id IN (${idPlaceholders})) OR (? != "" AND LOWER(TRIM(customer_email)) = LOWER(TRIM(?)))) AND store_id = 2`,
+        queryParams
       );
       cfTotal = cfCountRows[0]?.total || 0;
     } catch (_) {}
@@ -1679,10 +1793,10 @@ const getCustomerOrders = async (firebaseUid, { limit = 20, offset = 0, store_id
         2 AS store_id,
         (SELECT COUNT(*) FROM order_items WHERE order_id = o.id) AS item_count
       FROM orders o
-      WHERE ((o.customer_id = ?) OR (? != '' AND LOWER(o.customer_email) = LOWER(?))) AND o.store_id = 2
+      WHERE ((o.customer_id IN (${idPlaceholders})) OR (? != '' AND LOWER(TRIM(o.customer_email)) = LOWER(TRIM(?)))) AND o.store_id = 2
       ORDER BY o.created_at DESC, o.id DESC
       LIMIT ?
-    `, [customerId, customerEmail, customerEmail, fetchLimit]);
+    `, [...queryParams, fetchLimit]);
 
     if (retailRows.length > 0) {
       let itemsByOrderId = {};
@@ -1775,10 +1889,10 @@ const getCustomerOrders = async (firebaseUid, { limit = 20, offset = 0, store_id
           o.created_at,
           2 AS store_id
         FROM custom_forge_orders o
-        WHERE ((o.customer_id = ?) OR (? != '' AND LOWER(o.customer_email) = LOWER(?))) AND o.store_id = 2
+        WHERE ((o.customer_id IN (${idPlaceholders})) OR (? != '' AND LOWER(TRIM(o.customer_email)) = LOWER(TRIM(?)))) AND o.store_id = 2
         ORDER BY o.created_at DESC, o.id DESC
         LIMIT ?
-      `, [customerId, customerEmail, customerEmail, fetchLimit]);
+      `, [...queryParams, fetchLimit]);
 
       if (cfRows.length > 0) {
         const cfOrderIds = cfRows.map(r => r.id);
@@ -1945,39 +2059,77 @@ const getCustomerOrders = async (firebaseUid, { limit = 20, offset = 0, store_id
 /**
  * Fetch a single order by ID or order_number for an authenticated customer
  */
-const getCustomerOrderById = async (orderIdOrNumber, firebaseUid, storeId = 1) => {
-  if (!orderIdOrNumber || !firebaseUid) return null;
+const getCustomerOrderById = async (orderIdOrNumber, firebaseUserOrUid, storeId = 1) => {
+  if (!orderIdOrNumber || !firebaseUserOrUid) return null;
 
-  let [userRows] = await pool.execute(
-    'SELECT id, email FROM users WHERE firebase_uid = ? LIMIT 1',
-    [firebaseUid]
-  );
+  const firebaseUid = typeof firebaseUserOrUid === 'object' && firebaseUserOrUid !== null
+    ? (firebaseUserOrUid.uid || '')
+    : String(firebaseUserOrUid || '').trim();
 
-  let customerId = userRows && userRows.length > 0 ? userRows[0].id : null;
-  let customerEmail = userRows && userRows.length > 0 ? (userRows[0].email || '') : '';
+  const authEmail = typeof firebaseUserOrUid === 'object' && firebaseUserOrUid !== null && firebaseUserOrUid.email
+    ? String(firebaseUserOrUid.email).trim().toLowerCase()
+    : '';
 
-  if (!customerId) {
-    try {
-      const customerService = require('./customerService');
-      const resolvedCustomer = await customerService.resolveOrCreateCustomer({ uid: firebaseUid });
-      if (resolvedCustomer) {
-        customerId = resolvedCustomer.id;
-        customerEmail = resolvedCustomer.email || '';
+  const authUserPayload = typeof firebaseUserOrUid === 'object' && firebaseUserOrUid !== null
+    ? firebaseUserOrUid
+    : { uid: firebaseUid };
+
+  let customerId = null;
+  let customerEmail = authEmail;
+
+  try {
+    const customerService = require('./customerService');
+    const resolvedCustomer = await customerService.resolveOrCreateCustomer(authUserPayload);
+    if (resolvedCustomer) {
+      customerId = resolvedCustomer.id;
+      if (!customerEmail && resolvedCustomer.email) {
+        customerEmail = String(resolvedCustomer.email).trim().toLowerCase();
       }
-    } catch (resolveErr) {
-      console.warn('[orderService.getCustomerOrderById] Auto-resolve customer warning:', resolveErr.message);
+    }
+  } catch (resolveErr) {
+    console.warn('[orderService.getCustomerOrderById] Customer resolution warning:', resolveErr.message);
+  }
+
+  if (!customerId && firebaseUid) {
+    const [userRows] = await pool.execute(
+      'SELECT id, email FROM users WHERE firebase_uid = ? LIMIT 1',
+      [firebaseUid]
+    );
+    if (userRows && userRows.length > 0) {
+      customerId = userRows[0].id;
+      if (!customerEmail && userRows[0].email) {
+        customerEmail = String(userRows[0].email).trim().toLowerCase();
+      }
     }
   }
 
-  if (!customerId) return null;
+  let candidateCustomerIds = customerId ? [Number(customerId)] : [];
+  if (customerEmail) {
+    try {
+      const [emailUserRows] = await pool.execute(
+        'SELECT id FROM users WHERE email IS NOT NULL AND LOWER(TRIM(email)) = LOWER(?)',
+        [customerEmail]
+      );
+      if (emailUserRows && emailUserRows.length > 0) {
+        for (const u of emailUserRows) {
+          const numId = Number(u.id);
+          if (!candidateCustomerIds.includes(numId)) {
+            candidateCustomerIds.push(numId);
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
+  if (candidateCustomerIds.length === 0 && !customerEmail) return null;
 
   const activeStoreId = parseInt(storeId, 10) === 2 ? 2 : 1;
 
   // 1. First attempt: Look up in regular retail orders
   const order = await getOrderById(orderIdOrNumber, activeStoreId);
   if (order) {
-    const isOwner = (Number(order.customer_id) === Number(customerId)) ||
-                    (order.customer_email && customerEmail && order.customer_email.toLowerCase() === customerEmail.toLowerCase());
+    const isOwner = (candidateCustomerIds.includes(Number(order.customer_id))) ||
+                    (order.customer_email && customerEmail && order.customer_email.toLowerCase().trim() === customerEmail);
     if (isOwner) {
       return order;
     }
@@ -2000,8 +2152,8 @@ const getCustomerOrderById = async (orderIdOrNumber, firebaseUid, storeId = 1) =
       if (cfRows && cfRows.length > 0) {
         const cfMeta = cfRows[0];
         // Enforce strict customer ownership (zero cross-customer leakage)
-        const isOwner = (Number(cfMeta.customer_id) === Number(customerId)) ||
-                        (cfMeta.customer_email && customerEmail && cfMeta.customer_email.toLowerCase() === customerEmail.toLowerCase());
+        const isOwner = (candidateCustomerIds.includes(Number(cfMeta.customer_id))) ||
+                        (cfMeta.customer_email && customerEmail && cfMeta.customer_email.toLowerCase().trim() === customerEmail);
         if (!isOwner) {
           return null; // Access denied: order belongs to another customer
         }
