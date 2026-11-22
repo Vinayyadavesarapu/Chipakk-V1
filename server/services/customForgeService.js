@@ -1134,7 +1134,7 @@ const getCustomerOrderById = async (orderId, firebaseUser) => {
   const isNumeric = !isNaN(numId) && numId > 0;
 
   const [orders] = await pool.execute(
-    `SELECT o.id, o.customer_id, o.customer_email
+    `SELECT o.id, o.customer_id, o.customer_email, o.shipping_address
      FROM custom_forge_orders o
      WHERE (o.id = ? OR o.order_number = ?) AND o.store_id = 2
      LIMIT 1`,
@@ -1148,6 +1148,11 @@ const getCustomerOrderById = async (orderId, firebaseUser) => {
   }
 
   const orderMeta = orders[0];
+  let shipAddr = orderMeta.shipping_address;
+  if (typeof shipAddr === 'string') {
+    try { shipAddr = JSON.parse(shipAddr); } catch (_) {}
+  }
+  const shipEmail = shipAddr && shipAddr.email ? String(shipAddr.email).toLowerCase().trim() : '';
 
   // Verify ownership across linked candidate profiles and verified email
   const [userRows] = await pool.execute(
@@ -1175,7 +1180,8 @@ const getCustomerOrderById = async (orderId, firebaseUser) => {
   }
 
   const isOwner = (orderMeta.customer_id && candidateUserIds.includes(Number(orderMeta.customer_id))) ||
-                  (orderMeta.customer_email && effectiveEmail && orderMeta.customer_email.toLowerCase().trim() === effectiveEmail);
+                  (orderMeta.customer_email && effectiveEmail && orderMeta.customer_email.toLowerCase().trim() === effectiveEmail) ||
+                  (shipEmail && effectiveEmail && shipEmail === effectiveEmail);
 
   if (!isOwner) {
     const err = new Error('Access denied: You do not have permission to view this Custom Forge order.');

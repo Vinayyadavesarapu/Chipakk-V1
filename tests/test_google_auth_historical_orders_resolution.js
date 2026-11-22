@@ -245,11 +245,18 @@ test('Google Auth & Historical Order Resolution End-to-End Suite', async (t) => 
     [/SELECT\s+COUNT\(\*\)\s+AS\s+total\s+FROM\s+orders\s+WHERE.*store_id\s*=\s*2/i, (sql, params) => {
       // Find candidate ids and email from params
       const email = params[params.length - 1];
-      const candidateIds = params.slice(0, params.length - 2).map(Number);
-      const matched = orders.filter(o =>
-        o.store_id === 2 &&
-        (candidateIds.includes(Number(o.customer_id)) || (email && o.customer_email.toLowerCase().trim() === email.toLowerCase().trim()))
-      );
+      const candidateIds = params.slice(0, params.length - 3).map(Number);
+      const matched = orders.filter(o => {
+        let shipEmail = '';
+        try {
+          const s = typeof o.shipping_address === 'string' ? JSON.parse(o.shipping_address) : o.shipping_address;
+          shipEmail = s?.email || '';
+        } catch (_) {}
+        return o.store_id === 2 &&
+          (candidateIds.includes(Number(o.customer_id)) ||
+           (email && o.customer_email && o.customer_email.toLowerCase().trim() === email.toLowerCase().trim()) ||
+           (email && shipEmail && shipEmail.toLowerCase().trim() === email.toLowerCase().trim()));
+      });
       return [[{ total: matched.length }]];
     }],
 
@@ -257,23 +264,67 @@ test('Google Auth & Historical Order Resolution End-to-End Suite', async (t) => 
     [/SELECT.*FROM\s+orders\s+o\s+WHERE.*o\.store_id\s*=\s*2/i, (sql, params) => {
       const fetchLimit = params[params.length - 1];
       const email = params[params.length - 2];
-      const candidateIds = params.slice(0, params.length - 3).map(Number);
-      const matched = orders.filter(o =>
-        o.store_id === 2 &&
-        (candidateIds.includes(Number(o.customer_id)) || (email && o.customer_email.toLowerCase().trim() === email.toLowerCase().trim()))
-      );
+      const candidateIds = params.slice(0, params.length - 4).map(Number);
+      const matched = orders.filter(o => {
+        let shipEmail = '';
+        try {
+          const s = typeof o.shipping_address === 'string' ? JSON.parse(o.shipping_address) : o.shipping_address;
+          shipEmail = s?.email || '';
+        } catch (_) {}
+        return o.store_id === 2 &&
+          (candidateIds.includes(Number(o.customer_id)) ||
+           (email && o.customer_email && o.customer_email.toLowerCase().trim() === email.toLowerCase().trim()) ||
+           (email && shipEmail && shipEmail.toLowerCase().trim() === email.toLowerCase().trim()));
+      });
       matched.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
       return [matched.slice(0, fetchLimit).map(m => ({ ...m, item_count: 1 }))];
+    }],
+
+    // SELECT DISTINCT customer_id FROM orders
+    [/SELECT\s+DISTINCT\s+customer_id\s+FROM\s+orders/i, (sql, [email]) => {
+      const matched = orders.filter(o => {
+        let shipEmail = '';
+        try {
+          const s = typeof o.shipping_address === 'string' ? JSON.parse(o.shipping_address) : o.shipping_address;
+          shipEmail = s?.email || '';
+        } catch (_) {}
+        return (o.customer_email && o.customer_email.toLowerCase().trim() === email.toLowerCase().trim()) ||
+               (shipEmail && shipEmail.toLowerCase().trim() === email.toLowerCase().trim());
+      });
+      const ids = Array.from(new Set(matched.map(m => m.customer_id).filter(Boolean)));
+      return [ids.map(id => ({ customer_id: id }))];
+    }],
+
+    // SELECT DISTINCT customer_id FROM custom_forge_orders
+    [/SELECT\s+DISTINCT\s+customer_id\s+FROM\s+custom_forge_orders/i, (sql, [email]) => {
+      const matched = customForgeOrders.filter(o => {
+        let shipEmail = '';
+        try {
+          const s = typeof o.shipping_address === 'string' ? JSON.parse(o.shipping_address) : o.shipping_address;
+          shipEmail = s?.email || '';
+        } catch (_) {}
+        return (o.customer_email && o.customer_email.toLowerCase().trim() === email.toLowerCase().trim()) ||
+               (shipEmail && shipEmail.toLowerCase().trim() === email.toLowerCase().trim());
+      });
+      const ids = Array.from(new Set(matched.map(m => m.customer_id).filter(Boolean)));
+      return [ids.map(id => ({ customer_id: id }))];
     }],
 
     // COUNT custom_forge_orders for Store 2
     [/SELECT\s+COUNT\(\*\)\s+AS\s+total\s+FROM\s+custom_forge_orders\s+WHERE.*store_id\s*=\s*2/i, (sql, params) => {
       const email = params[params.length - 1];
-      const candidateIds = params.slice(0, params.length - 2).map(Number);
-      const matched = customForgeOrders.filter(o =>
-        o.store_id === 2 &&
-        (candidateIds.includes(Number(o.customer_id)) || (email && o.customer_email.toLowerCase().trim() === email.toLowerCase().trim()))
-      );
+      const candidateIds = params.slice(0, params.length - 3).map(Number);
+      const matched = customForgeOrders.filter(o => {
+        let shipEmail = '';
+        try {
+          const s = typeof o.shipping_address === 'string' ? JSON.parse(o.shipping_address) : o.shipping_address;
+          shipEmail = s?.email || '';
+        } catch (_) {}
+        return o.store_id === 2 &&
+          (candidateIds.includes(Number(o.customer_id)) ||
+           (email && o.customer_email && o.customer_email.toLowerCase().trim() === email.toLowerCase().trim()) ||
+           (email && shipEmail && shipEmail.toLowerCase().trim() === email.toLowerCase().trim()));
+      });
       return [[{ total: matched.length }]];
     }],
 
@@ -284,21 +335,28 @@ test('Google Auth & Historical Order Resolution End-to-End Suite', async (t) => 
     }],
 
     // Single order lookup custom_forge_orders
-    [/SELECT\s+id,\s*customer_id,\s*customer_email\s+FROM\s+custom_forge_orders\s+WHERE/i, (sql, params) => {
+    [/SELECT\s+id,\s*customer_id,\s*customer_email(?:,\s*shipping_address)?\s+FROM\s+custom_forge_orders\s+WHERE/i, (sql, params) => {
       const [numId, cleanId] = params;
       const match = customForgeOrders.filter(o => o.id === numId || o.order_number === cleanId);
-      return [match.map(m => ({ id: m.id, customer_id: m.customer_id, customer_email: m.customer_email }))];
+      return [match.map(m => ({ id: m.id, customer_id: m.customer_id, customer_email: m.customer_email, shipping_address: m.shipping_address }))];
     }],
 
     // SELECT custom_forge_orders for Store 2
     [/SELECT.*FROM\s+custom_forge_orders\s+o\s+WHERE.*o\.store_id\s*=\s*2/i, (sql, params) => {
       const fetchLimit = params[params.length - 1];
       const email = params[params.length - 2];
-      const candidateIds = params.slice(0, params.length - 3).map(Number);
-      const matched = customForgeOrders.filter(o =>
-        o.store_id === 2 &&
-        (candidateIds.includes(Number(o.customer_id)) || (email && o.customer_email.toLowerCase().trim() === email.toLowerCase().trim()))
-      );
+      const candidateIds = params.slice(0, params.length - 4).map(Number);
+      const matched = customForgeOrders.filter(o => {
+        let shipEmail = '';
+        try {
+          const s = typeof o.shipping_address === 'string' ? JSON.parse(o.shipping_address) : o.shipping_address;
+          shipEmail = s?.email || '';
+        } catch (_) {}
+        return o.store_id === 2 &&
+          (candidateIds.includes(Number(o.customer_id)) ||
+           (email && o.customer_email && o.customer_email.toLowerCase().trim() === email.toLowerCase().trim()) ||
+           (email && shipEmail && shipEmail.toLowerCase().trim() === email.toLowerCase().trim()));
+      });
       matched.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
       return [matched.slice(0, fetchLimit).map(m => ({ ...m }))];
     }],
@@ -416,5 +474,58 @@ test('Google Auth & Historical Order Resolution End-to-End Suite', async (t) => 
     assert.ok(userRow, 'Original customer record preserved');
     assert.strictEqual(userRow.id, 10, 'Customer ID remains 10');
     assert.strictEqual(userRow.firebase_uid, 'google_uid_rajesh_999', 'Firebase UID bound to Google login');
+  });
+
+  await t.test('6. Resolves historical Custom Forge orders where customer_email is empty and email exists only in shipping_address', async () => {
+    // Add an order with customer_email = null/empty, customer_id = 999 (unlinked legacy ID), email inside shipping_address
+    customForgeOrders.push({
+      id: 202,
+      order_number: 'CF-MRSH-2026-LEGACY-ADDR',
+      customer_id: 999,
+      customer_name: 'Rajesh Sharma',
+      customer_email: '', // empty!
+      customer_phone: '9876543210',
+      shipping_address: JSON.stringify({
+        name: 'Rajesh Sharma',
+        phone: '9876543210',
+        email: 'collector@themarshans.shop',
+        address: 'Chamber 402, High Court Complex',
+        city: 'Mumbai',
+        state: 'Maharashtra',
+        pincode: '400032'
+      }),
+      payment_method: 'ONLINE',
+      payment_status: 'paid',
+      production_status: 'order_placed',
+      subtotal: 369900,
+      shipping_charge: 0,
+      total_price: 369900,
+      gateway_order_id: 'order_rzp_cf_202',
+      created_at: '2026-11-20T12:00:00.000Z',
+      store_id: 2
+    });
+
+    customForgeItems.push({
+      id: 602,
+      order_id: 202,
+      product_id: 1,
+      variant_id: 2,
+      quantity: 1,
+      unit_price: 369900,
+      total_price: 369900,
+      product_name_snapshot: 'Lady Justice 1 Foot',
+      variant_sku_snapshot: 'MRSH-CF-LJ-1FT',
+      size_label_snapshot: '1 foot',
+      height_mm_snapshot: 305,
+      custom_mode_enabled: 0,
+      hero_image_url: 'https://themarshans.shop/assets/products/lady-justice.png'
+    });
+
+    const res = await orderService.getCustomerOrders(googleUser, { store_id: 2 });
+    assert.ok(res.orders.some(o => o.order_number === 'CF-MRSH-2026-LEGACY-ADDR'), 'Legacy order with email in shipping_address must be resolved');
+
+    const singleLookup = await orderService.getCustomerOrderById('CF-MRSH-2026-LEGACY-ADDR', googleUser, 2);
+    assert.ok(singleLookup, 'Single lookup must succeed for order matching via shipping_address.email');
+    assert.strictEqual(singleLookup.order_number, 'CF-MRSH-2026-LEGACY-ADDR');
   });
 });

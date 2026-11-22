@@ -1598,6 +1598,56 @@ const getCustomerOrders = async (firebaseUserOrUid, { limit = 20, offset = 0, st
         }
       }
     } catch (_) {}
+
+    // Resolve any historical customer_id from retail orders where customer_email or shipping_address.email matches
+    try {
+      const [histOrderRows] = await pool.execute(
+        `SELECT DISTINCT customer_id FROM orders
+         WHERE customer_id IS NOT NULL AND customer_id > 0
+           AND (
+             LOWER(TRIM(COALESCE(customer_email, ''))) = LOWER(TRIM(?))
+             OR (
+               shipping_address IS NOT NULL
+               AND JSON_VALID(shipping_address)
+               AND LOWER(TRIM(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(shipping_address, '$.email')), ''))) = LOWER(TRIM(?))
+             )
+           )`,
+        [customerEmail, customerEmail]
+      );
+      if (histOrderRows && histOrderRows.length > 0) {
+        for (const r of histOrderRows) {
+          const numId = Number(r.customer_id);
+          if (numId && !candidateCustomerIds.includes(numId)) {
+            candidateCustomerIds.push(numId);
+          }
+        }
+      }
+    } catch (_) {}
+
+    // Resolve any historical customer_id from Custom Forge orders where customer_email or shipping_address.email matches
+    try {
+      const [histCfRows] = await pool.execute(
+        `SELECT DISTINCT customer_id FROM custom_forge_orders
+         WHERE customer_id IS NOT NULL AND customer_id > 0
+           AND (
+             LOWER(TRIM(COALESCE(customer_email, ''))) = LOWER(TRIM(?))
+             OR (
+               shipping_address IS NOT NULL
+               AND JSON_VALID(shipping_address)
+               AND LOWER(TRIM(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(shipping_address, '$.email')), ''))) = LOWER(TRIM(?))
+             )
+           )`,
+        [customerEmail, customerEmail]
+      );
+      if (histCfRows && histCfRows.length > 0) {
+        for (const r of histCfRows) {
+          const numId = Number(r.customer_id);
+          if (numId && !candidateCustomerIds.includes(numId)) {
+            candidateCustomerIds.push(numId);
+          }
+        }
+      }
+    } catch (_) {}
   }
 
   if (candidateCustomerIds.length === 0 && !customerEmail) {
@@ -1739,14 +1789,27 @@ const getCustomerOrders = async (firebaseUserOrUid, { limit = 20, offset = 0, st
     cfTablesExist = tRows && tRows.length > 0;
   } catch (_) {}
 
-  // 1. Retail orders count for Store 2 (matched by customer_id IN (...) OR verified customer_email)
+  // 1. Retail orders count for Store 2 (matched by customer_id IN (...) OR verified customer_email / shipping_address.email)
   const idPlaceholders = candidateCustomerIds.length > 0
     ? candidateCustomerIds.map(() => '?').join(',')
     : '0';
-  const queryParams = [...candidateCustomerIds, customerEmail, customerEmail];
+  const queryParams = [...candidateCustomerIds, customerEmail, customerEmail, customerEmail];
 
   const [retailCountRows] = await pool.execute(
-    `SELECT COUNT(*) AS total FROM orders WHERE ((customer_id IN (${idPlaceholders})) OR (? != "" AND LOWER(TRIM(customer_email)) = LOWER(TRIM(?)))) AND store_id = 2`,
+    `SELECT COUNT(*) AS total FROM orders
+     WHERE (
+       (customer_id IN (${idPlaceholders}))
+       OR (
+         ? != "" AND (
+           LOWER(TRIM(COALESCE(customer_email, ''))) = LOWER(TRIM(?))
+           OR (
+             shipping_address IS NOT NULL
+             AND JSON_VALID(shipping_address)
+             AND LOWER(TRIM(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(shipping_address, '$.email')), ''))) = LOWER(TRIM(?))
+           )
+         )
+       )
+     ) AND store_id = 2`,
     queryParams
   );
   const retailTotal = retailCountRows[0]?.total || 0;
@@ -1756,7 +1819,20 @@ const getCustomerOrders = async (firebaseUserOrUid, { limit = 20, offset = 0, st
   if (cfTablesExist) {
     try {
       const [cfCountRows] = await pool.execute(
-        `SELECT COUNT(*) AS total FROM custom_forge_orders WHERE ((customer_id IN (${idPlaceholders})) OR (? != "" AND LOWER(TRIM(customer_email)) = LOWER(TRIM(?)))) AND store_id = 2`,
+        `SELECT COUNT(*) AS total FROM custom_forge_orders
+         WHERE (
+           (customer_id IN (${idPlaceholders}))
+           OR (
+             ? != "" AND (
+               LOWER(TRIM(COALESCE(customer_email, ''))) = LOWER(TRIM(?))
+               OR (
+                 shipping_address IS NOT NULL
+                 AND JSON_VALID(shipping_address)
+                 AND LOWER(TRIM(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(shipping_address, '$.email')), ''))) = LOWER(TRIM(?))
+               )
+             )
+           )
+         ) AND store_id = 2`,
         queryParams
       );
       cfTotal = cfCountRows[0]?.total || 0;
@@ -1793,7 +1869,19 @@ const getCustomerOrders = async (firebaseUserOrUid, { limit = 20, offset = 0, st
         2 AS store_id,
         (SELECT COUNT(*) FROM order_items WHERE order_id = o.id) AS item_count
       FROM orders o
-      WHERE ((o.customer_id IN (${idPlaceholders})) OR (? != '' AND LOWER(TRIM(o.customer_email)) = LOWER(TRIM(?)))) AND o.store_id = 2
+      WHERE (
+        (o.customer_id IN (${idPlaceholders}))
+        OR (
+          ? != '' AND (
+            LOWER(TRIM(COALESCE(o.customer_email, ''))) = LOWER(TRIM(?))
+            OR (
+              o.shipping_address IS NOT NULL
+              AND JSON_VALID(o.shipping_address)
+              AND LOWER(TRIM(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, '$.email')), ''))) = LOWER(TRIM(?))
+            )
+          )
+        )
+      ) AND o.store_id = 2
       ORDER BY o.created_at DESC, o.id DESC
       LIMIT ?
     `, [...queryParams, fetchLimit]);
@@ -1889,7 +1977,19 @@ const getCustomerOrders = async (firebaseUserOrUid, { limit = 20, offset = 0, st
           o.created_at,
           2 AS store_id
         FROM custom_forge_orders o
-        WHERE ((o.customer_id IN (${idPlaceholders})) OR (? != '' AND LOWER(TRIM(o.customer_email)) = LOWER(TRIM(?)))) AND o.store_id = 2
+        WHERE (
+          (o.customer_id IN (${idPlaceholders}))
+          OR (
+            ? != '' AND (
+              LOWER(TRIM(COALESCE(o.customer_email, ''))) = LOWER(TRIM(?))
+              OR (
+                o.shipping_address IS NOT NULL
+                AND JSON_VALID(o.shipping_address)
+                AND LOWER(TRIM(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, '$.email')), ''))) = LOWER(TRIM(?))
+              )
+            )
+          )
+        ) AND o.store_id = 2
         ORDER BY o.created_at DESC, o.id DESC
         LIMIT ?
       `, [...queryParams, fetchLimit]);
@@ -2119,6 +2219,54 @@ const getCustomerOrderById = async (orderIdOrNumber, firebaseUserOrUid, storeId 
         }
       }
     } catch (_) {}
+
+    try {
+      const [histOrderRows] = await pool.execute(
+        `SELECT DISTINCT customer_id FROM orders
+         WHERE customer_id IS NOT NULL AND customer_id > 0
+           AND (
+             LOWER(TRIM(COALESCE(customer_email, ''))) = LOWER(TRIM(?))
+             OR (
+               shipping_address IS NOT NULL
+               AND JSON_VALID(shipping_address)
+               AND LOWER(TRIM(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(shipping_address, '$.email')), ''))) = LOWER(TRIM(?))
+             )
+           )`,
+        [customerEmail, customerEmail]
+      );
+      if (histOrderRows && histOrderRows.length > 0) {
+        for (const r of histOrderRows) {
+          const numId = Number(r.customer_id);
+          if (numId && !candidateCustomerIds.includes(numId)) {
+            candidateCustomerIds.push(numId);
+          }
+        }
+      }
+    } catch (_) {}
+
+    try {
+      const [histCfRows] = await pool.execute(
+        `SELECT DISTINCT customer_id FROM custom_forge_orders
+         WHERE customer_id IS NOT NULL AND customer_id > 0
+           AND (
+             LOWER(TRIM(COALESCE(customer_email, ''))) = LOWER(TRIM(?))
+             OR (
+               shipping_address IS NOT NULL
+               AND JSON_VALID(shipping_address)
+               AND LOWER(TRIM(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(shipping_address, '$.email')), ''))) = LOWER(TRIM(?))
+             )
+           )`,
+        [customerEmail, customerEmail]
+      );
+      if (histCfRows && histCfRows.length > 0) {
+        for (const r of histCfRows) {
+          const numId = Number(r.customer_id);
+          if (numId && !candidateCustomerIds.includes(numId)) {
+            candidateCustomerIds.push(numId);
+          }
+        }
+      }
+    } catch (_) {}
   }
 
   if (candidateCustomerIds.length === 0 && !customerEmail) return null;
@@ -2128,8 +2276,10 @@ const getCustomerOrderById = async (orderIdOrNumber, firebaseUserOrUid, storeId 
   // 1. First attempt: Look up in regular retail orders
   const order = await getOrderById(orderIdOrNumber, activeStoreId);
   if (order) {
+    const shipEmail = order.shipping_address && order.shipping_address.email ? String(order.shipping_address.email).toLowerCase().trim() : '';
     const isOwner = (candidateCustomerIds.includes(Number(order.customer_id))) ||
-                    (order.customer_email && customerEmail && order.customer_email.toLowerCase().trim() === customerEmail);
+                    (order.customer_email && customerEmail && order.customer_email.toLowerCase().trim() === customerEmail) ||
+                    (shipEmail && customerEmail && shipEmail === customerEmail);
     if (isOwner) {
       return order;
     }
@@ -2143,7 +2293,7 @@ const getCustomerOrderById = async (orderIdOrNumber, firebaseUserOrUid, storeId 
       const isNumeric = !isNaN(numId) && numId > 0;
 
       const [cfRows] = await pool.execute(
-        `SELECT id, customer_id, customer_email FROM custom_forge_orders
+        `SELECT id, customer_id, customer_email, shipping_address FROM custom_forge_orders
          WHERE (id = ? OR order_number = ?) AND store_id = 2
          LIMIT 1`,
         [isNumeric ? numId : 0, cleanId]
@@ -2151,9 +2301,16 @@ const getCustomerOrderById = async (orderIdOrNumber, firebaseUserOrUid, storeId 
 
       if (cfRows && cfRows.length > 0) {
         const cfMeta = cfRows[0];
+        let shipAddr = cfMeta.shipping_address;
+        if (typeof shipAddr === 'string') {
+          try { shipAddr = JSON.parse(shipAddr); } catch (_) {}
+        }
+        const shipEmail = shipAddr && shipAddr.email ? String(shipAddr.email).toLowerCase().trim() : '';
+
         // Enforce strict customer ownership (zero cross-customer leakage)
         const isOwner = (candidateCustomerIds.includes(Number(cfMeta.customer_id))) ||
-                        (cfMeta.customer_email && customerEmail && cfMeta.customer_email.toLowerCase().trim() === customerEmail);
+                        (cfMeta.customer_email && customerEmail && cfMeta.customer_email.toLowerCase().trim() === customerEmail) ||
+                        (shipEmail && customerEmail && shipEmail === customerEmail);
         if (!isOwner) {
           return null; // Access denied: order belongs to another customer
         }
