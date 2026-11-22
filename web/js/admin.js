@@ -1116,6 +1116,9 @@ function renderCustomForgePricingTable() {
     const referenceWeights = {
         '6 inches': '400 grams',
         '1 foot': '1 kg',
+        '1.5 feet': '1.5 kg',
+        '1.5 ft': '1.5 kg',
+        '1.5ft': '1.5 kg',
         '2 feet': '2 kg'
     };
 

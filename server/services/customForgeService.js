@@ -97,6 +97,17 @@ const FALLBACK_LADY_JUSTICE = {
       active: 1
     },
     {
+      id: 4,
+      variant_sku: 'MRSH-CF-LJ-1.5FT',
+      size_label: '1.5 feet',
+      height_mm: 457,
+      price: 499900,
+      price_rupees: 4999,
+      custom_mode_allowed: 1,
+      display_order: 3,
+      active: 1
+    },
+    {
       id: 3,
       variant_sku: 'MRSH-CF-LJ-2FT',
       size_label: '2 feet',
@@ -104,7 +115,7 @@ const FALLBACK_LADY_JUSTICE = {
       price: 599900,
       price_rupees: 5999,
       custom_mode_allowed: 1,
-      display_order: 3,
+      display_order: 4,
       active: 1
     }
   ]
@@ -221,6 +232,31 @@ const reconcileLadyJusticeApprovedPricing = async () => {
       WHERE variant_sku IN ('MRSH-CF-LJ-6IN', 'MRSH-CF-LJ-1FT', 'MRSH-CF-LJ-2FT')
         AND price IN (160000, 350000, 560000)
     `);
+
+    // Ensure MRSH-CF-LJ-1.5FT variant exists in database
+    const [existing15] = await pool.execute(
+      "SELECT id FROM custom_forge_product_variants WHERE variant_sku = 'MRSH-CF-LJ-1.5FT' LIMIT 1"
+    );
+    if (!existing15 || existing15.length === 0) {
+      const [prods] = await pool.execute(
+        "SELECT id FROM custom_forge_products WHERE slug = 'lady-justice' AND store_id = 2 LIMIT 1"
+      );
+      if (prods && prods.length > 0) {
+        const prodId = prods[0].id;
+        // Shift 2FT display_order to 4 if it was 3
+        await pool.execute(
+          "UPDATE custom_forge_product_variants SET display_order = 4 WHERE product_id = ? AND variant_sku = 'MRSH-CF-LJ-2FT' AND display_order = 3",
+          [prodId]
+        );
+        await pool.execute(
+          `INSERT INTO custom_forge_product_variants (
+            product_id, variant_sku, size_label, height_mm, price, custom_mode_allowed, display_order, active
+          ) VALUES (?, 'MRSH-CF-LJ-1.5FT', '1.5 feet', 457, 499900, 1, 3, 1)`,
+          [prodId]
+        );
+      }
+    }
+
     pricingReconciled = true;
   } catch (err) {
     console.warn('[CustomForgeService] Pricing reconciliation check skipped:', err.message);

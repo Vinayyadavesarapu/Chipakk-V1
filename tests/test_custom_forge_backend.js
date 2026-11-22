@@ -520,7 +520,7 @@ async function runCustomForgeTests() {
     // -------------------------------------------------------------------------
     // TEST GROUP 1: CATALOG & VARIANT CONFIGURATION (STORE 2)
     // -------------------------------------------------------------------------
-    await test('1.1: GET /api/custom-forge/products/lady-justice under Store 2 returns product with 3 variants', async () => {
+    await test('1.1: GET /api/custom-forge/products/lady-justice under Store 2 returns product with variants (including 1.5 FT)', async () => {
       const res = await makeRequest(server, '/api/custom-forge/products/lady-justice', {
         headers: { 'X-Store-ID': '2' }
       });
@@ -528,7 +528,11 @@ async function runCustomForgeTests() {
       assert.strictEqual(res.body.success, true);
       assert.strictEqual(res.body.data.slug, 'lady-justice');
       assert.strictEqual(res.body.data.name, 'Lady Justice');
-      assert.strictEqual(res.body.data.variants.length, 3);
+      assert.strictEqual(res.body.data.variants.length, 4);
+      const v15ft = res.body.data.variants.find(v => v.variant_sku === 'MRSH-CF-LJ-1.5FT');
+      assert.ok(v15ft, '1.5 FT variant must exist');
+      assert.strictEqual(v15ft.height_mm, 457);
+      assert.strictEqual(v15ft.custom_mode_allowed, 1);
     });
 
     await test('1.2: Variant 1 (6 inches) has price 199900 paise (₹1,999) and custom_mode_allowed=0', async () => {
