@@ -243,19 +243,22 @@ test('Google Auth & Historical Order Resolution End-to-End Suite', async (t) => 
 
     // COUNT orders for Store 2
     [/SELECT\s+COUNT\(\*\)\s+AS\s+total\s+FROM\s+orders\s+WHERE.*store_id\s*=\s*2/i, (sql, params) => {
-      // Find candidate ids and email from params
-      const email = params[params.length - 1];
-      const candidateIds = params.slice(0, params.length - 3).map(Number);
+      const custIdMatch = sql.match(/customer_id\s+IN\s*\(([^)]+)\)/i);
+      const custIdCount = custIdMatch ? custIdMatch[1].split(',').length : 0;
+      const candidateIds = params.slice(0, custIdCount).map(Number);
+
+      const hasEmail = sql.includes('LOWER(TRIM(COALESCE(customer_email');
+      const email = hasEmail ? String(params[custIdCount] || '').toLowerCase().trim() : '';
+
+      const orderIdMatch = sql.match(/\bid\s+IN\s*\(([^)]+)\)/i);
+      const orderIdCount = orderIdMatch ? orderIdMatch[1].split(',').length : 0;
+      const addressOrderIds = orderIdMatch ? params.slice(custIdCount + (hasEmail ? 1 : 0), custIdCount + (hasEmail ? 1 : 0) + orderIdCount).map(Number) : [];
+
       const matched = orders.filter(o => {
-        let shipEmail = '';
-        try {
-          const s = typeof o.shipping_address === 'string' ? JSON.parse(o.shipping_address) : o.shipping_address;
-          shipEmail = s?.email || '';
-        } catch (_) {}
         return o.store_id === 2 &&
           (candidateIds.includes(Number(o.customer_id)) ||
-           (email && o.customer_email && o.customer_email.toLowerCase().trim() === email.toLowerCase().trim()) ||
-           (email && shipEmail && shipEmail.toLowerCase().trim() === email.toLowerCase().trim()));
+           addressOrderIds.includes(Number(o.id)) ||
+           (email && o.customer_email && o.customer_email.toLowerCase().trim() === email));
       });
       return [[{ total: matched.length }]];
     }],
@@ -263,33 +266,46 @@ test('Google Auth & Historical Order Resolution End-to-End Suite', async (t) => 
     // SELECT orders for Store 2
     [/SELECT.*FROM\s+orders\s+o\s+WHERE.*o\.store_id\s*=\s*2/i, (sql, params) => {
       const fetchLimit = params[params.length - 1];
-      const email = params[params.length - 2];
-      const candidateIds = params.slice(0, params.length - 4).map(Number);
+      const queryParams = params.slice(0, -1);
+
+      const custIdMatch = sql.match(/o\.customer_id\s+IN\s*\(([^)]+)\)/i);
+      const custIdCount = custIdMatch ? custIdMatch[1].split(',').length : 0;
+      const candidateIds = queryParams.slice(0, custIdCount).map(Number);
+
+      const hasEmail = sql.includes('LOWER(TRIM(COALESCE(o.customer_email');
+      const email = hasEmail ? String(queryParams[custIdCount] || '').toLowerCase().trim() : '';
+
+      const orderIdMatch = sql.match(/o\.id\s+IN\s*\(([^)]+)\)/i);
+      const orderIdCount = orderIdMatch ? orderIdMatch[1].split(',').length : 0;
+      const addressOrderIds = orderIdMatch ? queryParams.slice(custIdCount + (hasEmail ? 1 : 0), custIdCount + (hasEmail ? 1 : 0) + orderIdCount).map(Number) : [];
+
       const matched = orders.filter(o => {
-        let shipEmail = '';
-        try {
-          const s = typeof o.shipping_address === 'string' ? JSON.parse(o.shipping_address) : o.shipping_address;
-          shipEmail = s?.email || '';
-        } catch (_) {}
         return o.store_id === 2 &&
           (candidateIds.includes(Number(o.customer_id)) ||
-           (email && o.customer_email && o.customer_email.toLowerCase().trim() === email.toLowerCase().trim()) ||
-           (email && shipEmail && shipEmail.toLowerCase().trim() === email.toLowerCase().trim()));
+           addressOrderIds.includes(Number(o.id)) ||
+           (email && o.customer_email && o.customer_email.toLowerCase().trim() === email));
       });
       matched.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
       return [matched.slice(0, fetchLimit).map(m => ({ ...m, item_count: 1 }))];
     }],
 
+    // Address-only email lookup for orders
+    [/SELECT\s+id,\s*customer_id,\s*shipping_address\s+FROM\s+orders\s+WHERE\s+store_id\s*=\s*2\s+AND\s+\(customer_email\s+IS\s+NULL\s+OR\s+customer_email\s*=\s*""\)/i, () => {
+      const matched = orders.filter(o => o.store_id === 2 && (!o.customer_email || o.customer_email.trim() === ''));
+      return [matched.map(m => ({ id: m.id, customer_id: m.customer_id, shipping_address: m.shipping_address }))];
+    }],
+
+    // Address-only email lookup for custom_forge_orders
+    [/SELECT\s+id,\s*customer_id,\s*shipping_address\s+FROM\s+custom_forge_orders\s+WHERE\s+store_id\s*=\s*2\s+AND\s+\(customer_email\s+IS\s+NULL\s+OR\s+customer_email\s*=\s*""\)/i, () => {
+      const matched = customForgeOrders.filter(o => o.store_id === 2 && (!o.customer_email || o.customer_email.trim() === ''));
+      return [matched.map(m => ({ id: m.id, customer_id: m.customer_id, shipping_address: m.shipping_address }))];
+    }],
+
     // SELECT DISTINCT customer_id FROM orders
     [/SELECT\s+DISTINCT\s+customer_id\s+FROM\s+orders/i, (sql, [email]) => {
+      const cleanEmail = String(email || '').toLowerCase().trim();
       const matched = orders.filter(o => {
-        let shipEmail = '';
-        try {
-          const s = typeof o.shipping_address === 'string' ? JSON.parse(o.shipping_address) : o.shipping_address;
-          shipEmail = s?.email || '';
-        } catch (_) {}
-        return (o.customer_email && o.customer_email.toLowerCase().trim() === email.toLowerCase().trim()) ||
-               (shipEmail && shipEmail.toLowerCase().trim() === email.toLowerCase().trim());
+        return o.customer_email && o.customer_email.toLowerCase().trim() === cleanEmail;
       });
       const ids = Array.from(new Set(matched.map(m => m.customer_id).filter(Boolean)));
       return [ids.map(id => ({ customer_id: id }))];
@@ -297,14 +313,9 @@ test('Google Auth & Historical Order Resolution End-to-End Suite', async (t) => 
 
     // SELECT DISTINCT customer_id FROM custom_forge_orders
     [/SELECT\s+DISTINCT\s+customer_id\s+FROM\s+custom_forge_orders/i, (sql, [email]) => {
+      const cleanEmail = String(email || '').toLowerCase().trim();
       const matched = customForgeOrders.filter(o => {
-        let shipEmail = '';
-        try {
-          const s = typeof o.shipping_address === 'string' ? JSON.parse(o.shipping_address) : o.shipping_address;
-          shipEmail = s?.email || '';
-        } catch (_) {}
-        return (o.customer_email && o.customer_email.toLowerCase().trim() === email.toLowerCase().trim()) ||
-               (shipEmail && shipEmail.toLowerCase().trim() === email.toLowerCase().trim());
+        return o.customer_email && o.customer_email.toLowerCase().trim() === cleanEmail;
       });
       const ids = Array.from(new Set(matched.map(m => m.customer_id).filter(Boolean)));
       return [ids.map(id => ({ customer_id: id }))];
@@ -312,18 +323,22 @@ test('Google Auth & Historical Order Resolution End-to-End Suite', async (t) => 
 
     // COUNT custom_forge_orders for Store 2
     [/SELECT\s+COUNT\(\*\)\s+AS\s+total\s+FROM\s+custom_forge_orders\s+WHERE.*store_id\s*=\s*2/i, (sql, params) => {
-      const email = params[params.length - 1];
-      const candidateIds = params.slice(0, params.length - 3).map(Number);
+      const custIdMatch = sql.match(/customer_id\s+IN\s*\(([^)]+)\)/i);
+      const custIdCount = custIdMatch ? custIdMatch[1].split(',').length : 0;
+      const candidateIds = params.slice(0, custIdCount).map(Number);
+
+      const hasEmail = sql.includes('LOWER(TRIM(COALESCE(customer_email');
+      const email = hasEmail ? String(params[custIdCount] || '').toLowerCase().trim() : '';
+
+      const orderIdMatch = sql.match(/\bid\s+IN\s*\(([^)]+)\)/i);
+      const orderIdCount = orderIdMatch ? orderIdMatch[1].split(',').length : 0;
+      const addressOrderIds = orderIdMatch ? params.slice(custIdCount + (hasEmail ? 1 : 0), custIdCount + (hasEmail ? 1 : 0) + orderIdCount).map(Number) : [];
+
       const matched = customForgeOrders.filter(o => {
-        let shipEmail = '';
-        try {
-          const s = typeof o.shipping_address === 'string' ? JSON.parse(o.shipping_address) : o.shipping_address;
-          shipEmail = s?.email || '';
-        } catch (_) {}
         return o.store_id === 2 &&
           (candidateIds.includes(Number(o.customer_id)) ||
-           (email && o.customer_email && o.customer_email.toLowerCase().trim() === email.toLowerCase().trim()) ||
-           (email && shipEmail && shipEmail.toLowerCase().trim() === email.toLowerCase().trim()));
+           addressOrderIds.includes(Number(o.id)) ||
+           (email && o.customer_email && o.customer_email.toLowerCase().trim() === email));
       });
       return [[{ total: matched.length }]];
     }],
@@ -344,18 +359,24 @@ test('Google Auth & Historical Order Resolution End-to-End Suite', async (t) => 
     // SELECT custom_forge_orders for Store 2
     [/SELECT.*FROM\s+custom_forge_orders\s+o\s+WHERE.*o\.store_id\s*=\s*2/i, (sql, params) => {
       const fetchLimit = params[params.length - 1];
-      const email = params[params.length - 2];
-      const candidateIds = params.slice(0, params.length - 4).map(Number);
+      const queryParams = params.slice(0, -1);
+
+      const custIdMatch = sql.match(/o\.customer_id\s+IN\s*\(([^)]+)\)/i);
+      const custIdCount = custIdMatch ? custIdMatch[1].split(',').length : 0;
+      const candidateIds = queryParams.slice(0, custIdCount).map(Number);
+
+      const hasEmail = sql.includes('LOWER(TRIM(COALESCE(o.customer_email');
+      const email = hasEmail ? String(queryParams[custIdCount] || '').toLowerCase().trim() : '';
+
+      const orderIdMatch = sql.match(/o\.id\s+IN\s*\(([^)]+)\)/i);
+      const orderIdCount = orderIdMatch ? orderIdMatch[1].split(',').length : 0;
+      const addressOrderIds = orderIdMatch ? queryParams.slice(custIdCount + (hasEmail ? 1 : 0), custIdCount + (hasEmail ? 1 : 0) + orderIdCount).map(Number) : [];
+
       const matched = customForgeOrders.filter(o => {
-        let shipEmail = '';
-        try {
-          const s = typeof o.shipping_address === 'string' ? JSON.parse(o.shipping_address) : o.shipping_address;
-          shipEmail = s?.email || '';
-        } catch (_) {}
         return o.store_id === 2 &&
           (candidateIds.includes(Number(o.customer_id)) ||
-           (email && o.customer_email && o.customer_email.toLowerCase().trim() === email.toLowerCase().trim()) ||
-           (email && shipEmail && shipEmail.toLowerCase().trim() === email.toLowerCase().trim()));
+           addressOrderIds.includes(Number(o.id)) ||
+           (email && o.customer_email && o.customer_email.toLowerCase().trim() === email));
       });
       matched.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
       return [matched.slice(0, fetchLimit).map(m => ({ ...m }))];

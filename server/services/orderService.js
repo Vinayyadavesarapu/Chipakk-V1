@@ -1533,6 +1533,31 @@ const normalizeCustomForgeOrder = (cfOrder) => {
 };
 
 /**
+ * Helper to extract email safely from a shipping address string or object.
+ * Handles normal JSON, double-stringified JSON, and regex fallback without calling MySQL JSON functions.
+ */
+const extractEmailFromAddress = (addr) => {
+  if (!addr) return '';
+  if (typeof addr === 'object' && addr !== null) {
+    return addr.email ? String(addr.email).toLowerCase().trim() : '';
+  }
+  if (typeof addr === 'string') {
+    try {
+      let parsed = JSON.parse(addr);
+      if (typeof parsed === 'string') {
+        try { parsed = JSON.parse(parsed); } catch (_) {}
+      }
+      if (parsed && typeof parsed === 'object' && parsed.email) {
+        return String(parsed.email).toLowerCase().trim();
+      }
+    } catch (_) {}
+    const match = addr.match(/"email"\s*:\s*"([^"\\]+)"/i);
+    if (match && match[1]) return match[1].toLowerCase().trim();
+  }
+  return '';
+};
+
+/**
  * Fetch orders for a specific authenticated customer
  */
 const getCustomerOrders = async (firebaseUserOrUid, { limit = 20, offset = 0, store_id = 1 } = {}) => {
@@ -1569,20 +1594,30 @@ const getCustomerOrders = async (firebaseUserOrUid, { limit = 20, offset = 0, st
 
   // Fallback to direct lookup by firebase_uid if resolveOrCreateCustomer did not return an id
   if (!customerId && firebaseUid) {
-    const [userRows] = await pool.execute(
-      'SELECT id, email FROM users WHERE firebase_uid = ? LIMIT 1',
-      [firebaseUid]
-    );
-    if (userRows && userRows.length > 0) {
-      customerId = userRows[0].id;
-      if (!customerEmail && userRows[0].email) {
-        customerEmail = String(userRows[0].email).trim().toLowerCase();
+    try {
+      const [userRows] = await pool.execute(
+        'SELECT id, email FROM users WHERE firebase_uid = ? LIMIT 1',
+        [firebaseUid]
+      );
+      if (userRows && userRows.length > 0) {
+        customerId = userRows[0].id;
+        if (!customerEmail && userRows[0].email) {
+          customerEmail = String(userRows[0].email).trim().toLowerCase();
+        }
       }
+    } catch (dbErr) {
+      console.warn('[orderService.getCustomerOrders] Direct user lookup warning:', dbErr.message);
     }
   }
 
+  const parsedLimit = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
+  const parsedOffset = Math.max(parseInt(offset, 10) || 0, 0);
+  const targetStoreId = parseInt(store_id, 10) === 2 ? 2 : 1;
+
   // Find all candidate customer IDs belonging to this user (matches historical orders across linked profiles)
   let candidateCustomerIds = customerId ? [Number(customerId)] : [];
+  let addressMatchedOrderIds = { retail: [], customForge: [] };
+
   if (customerEmail) {
     try {
       const [emailUserRows] = await pool.execute(
@@ -1599,31 +1634,11 @@ const getCustomerOrders = async (firebaseUserOrUid, { limit = 20, offset = 0, st
       }
     } catch (_) {}
 
-    // Resolve any historical customer_id from retail orders where customer_email or shipping_address.email matches
+    // Resolve historical customer_id from retail orders where customer_email matches exactly
     try {
       const [histOrderRows] = await pool.execute(
-        `SELECT DISTINCT customer_id FROM orders
-         WHERE customer_id IS NOT NULL AND customer_id > 0
-           AND (
-             LOWER(TRIM(COALESCE(customer_email, ''))) = LOWER(TRIM(?))
-             OR (
-               shipping_address IS NOT NULL
-               AND (
-                 CASE
-                   WHEN JSON_VALID(shipping_address) = 1
-                   THEN (
-                     CASE
-                       WHEN JSON_EXTRACT(shipping_address, '$.email') IS NOT NULL
-                       THEN LOWER(TRIM(JSON_UNQUOTE(JSON_EXTRACT(shipping_address, '$.email'))))
-                       ELSE LOWER(COALESCE(CAST(shipping_address AS CHAR), ''))
-                     END
-                   )
-                   ELSE LOWER(COALESCE(CAST(shipping_address AS CHAR), ''))
-                 END LIKE LOWER(CONCAT('%', ?, '%'))
-               )
-             )
-           )`,
-        [customerEmail, customerEmail]
+        'SELECT DISTINCT customer_id FROM orders WHERE customer_id IS NOT NULL AND customer_id > 0 AND LOWER(TRIM(COALESCE(customer_email, ""))) = LOWER(TRIM(?))',
+        [customerEmail]
       );
       if (histOrderRows && histOrderRows.length > 0) {
         for (const r of histOrderRows) {
@@ -1635,31 +1650,11 @@ const getCustomerOrders = async (firebaseUserOrUid, { limit = 20, offset = 0, st
       }
     } catch (_) {}
 
-    // Resolve any historical customer_id from Custom Forge orders where customer_email or shipping_address.email matches
+    // Resolve historical customer_id from Custom Forge orders where customer_email matches exactly
     try {
       const [histCfRows] = await pool.execute(
-        `SELECT DISTINCT customer_id FROM custom_forge_orders
-         WHERE customer_id IS NOT NULL AND customer_id > 0
-           AND (
-             LOWER(TRIM(COALESCE(customer_email, ''))) = LOWER(TRIM(?))
-             OR (
-               shipping_address IS NOT NULL
-               AND (
-                 CASE
-                   WHEN JSON_VALID(shipping_address) = 1
-                   THEN (
-                     CASE
-                       WHEN JSON_EXTRACT(shipping_address, '$.email') IS NOT NULL
-                       THEN LOWER(TRIM(JSON_UNQUOTE(JSON_EXTRACT(shipping_address, '$.email'))))
-                       ELSE LOWER(COALESCE(CAST(shipping_address AS CHAR), ''))
-                     END
-                   )
-                   ELSE LOWER(COALESCE(CAST(shipping_address AS CHAR), ''))
-                 END LIKE LOWER(CONCAT('%', ?, '%'))
-               )
-             )
-           )`,
-        [customerEmail, customerEmail]
+        'SELECT DISTINCT customer_id FROM custom_forge_orders WHERE customer_id IS NOT NULL AND customer_id > 0 AND LOWER(TRIM(COALESCE(customer_email, ""))) = LOWER(TRIM(?))',
+        [customerEmail]
       );
       if (histCfRows && histCfRows.length > 0) {
         for (const r of histCfRows) {
@@ -1670,14 +1665,44 @@ const getCustomerOrders = async (firebaseUserOrUid, { limit = 20, offset = 0, st
         }
       }
     } catch (_) {}
+
+    // For Store 2, inspect historical orders where header customer_email is blank and email exists in shipping_address snapshot
+    if (targetStoreId === 2) {
+      try {
+        const [cfAddrRows] = await pool.execute(
+          'SELECT id, customer_id, shipping_address FROM custom_forge_orders WHERE store_id = 2 AND (customer_email IS NULL OR customer_email = "") AND shipping_address IS NOT NULL'
+        );
+        for (const row of cfAddrRows) {
+          const em = extractEmailFromAddress(row.shipping_address);
+          if (em && em === customerEmail) {
+            addressMatchedOrderIds.customForge.push(row.id);
+            if (row.customer_id && !candidateCustomerIds.includes(Number(row.customer_id))) {
+              candidateCustomerIds.push(Number(row.customer_id));
+            }
+          }
+        }
+      } catch (_) {}
+
+      try {
+        const [retAddrRows] = await pool.execute(
+          'SELECT id, customer_id, shipping_address FROM orders WHERE store_id = 2 AND (customer_email IS NULL OR customer_email = "") AND shipping_address IS NOT NULL'
+        );
+        for (const row of retAddrRows) {
+          const em = extractEmailFromAddress(row.shipping_address);
+          if (em && em === customerEmail) {
+            addressMatchedOrderIds.retail.push(row.id);
+            if (row.customer_id && !candidateCustomerIds.includes(Number(row.customer_id))) {
+              candidateCustomerIds.push(Number(row.customer_id));
+            }
+          }
+        }
+      } catch (_) {}
+    }
   }
 
-  if (candidateCustomerIds.length === 0 && !customerEmail) {
-    return { total: 0, limit, offset, orders: [] };
+  if (candidateCustomerIds.length === 0 && !customerEmail && addressMatchedOrderIds.retail.length === 0 && addressMatchedOrderIds.customForge.length === 0) {
+    return { total: 0, limit: parsedLimit, offset: parsedOffset, orders: [] };
   }
-  const parsedLimit = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
-  const parsedOffset = Math.max(parseInt(offset, 10) || 0, 0);
-  const targetStoreId = parseInt(store_id, 10) === 2 ? 2 : 1;
 
   // -------------------------------------------------------------
   // STORE 1 (CHIPAKK): 100% UNTOUCHED LEGACY PATH
@@ -1803,6 +1828,9 @@ const getCustomerOrders = async (firebaseUserOrUid, { limit = 20, offset = 0, st
   // -------------------------------------------------------------
   // STORE 2 (THE MARSHANS): UNIFIED RETAIL + CUSTOM FORGE RETRIEVAL
   // -------------------------------------------------------------
+  let retailOrdersFormatted = [];
+  let cfOrdersFormatted = [];
+
   let cfTablesExist = false;
   try {
     const [tRows] = await pool.execute(
@@ -1811,254 +1839,217 @@ const getCustomerOrders = async (firebaseUserOrUid, { limit = 20, offset = 0, st
     cfTablesExist = tRows && tRows.length > 0;
   } catch (_) {}
 
-  // 1. Retail orders count for Store 2 (matched by customer_id IN (...) OR verified customer_email / shipping_address.email)
-  const idPlaceholders = candidateCustomerIds.length > 0
-    ? candidateCustomerIds.map(() => '?').join(',')
-    : '0';
-  const queryParams = [...candidateCustomerIds, customerEmail, customerEmail, customerEmail];
+  // 1. Build Retail Order Query for Store 2
+  const retailConditions = [];
+  const retailParams = [];
 
-  const [retailCountRows] = await pool.execute(
-    `SELECT COUNT(*) AS total FROM orders
-     WHERE (
-       (customer_id IN (${idPlaceholders}))
-       OR (
-         ? != "" AND (
-           LOWER(TRIM(COALESCE(customer_email, ''))) = LOWER(TRIM(?))
-           OR (
-             shipping_address IS NOT NULL
-             AND (
-               CASE
-                 WHEN JSON_VALID(shipping_address) = 1
-                 THEN (
-                   CASE
-                     WHEN JSON_EXTRACT(shipping_address, '$.email') IS NOT NULL
-                     THEN LOWER(TRIM(JSON_UNQUOTE(JSON_EXTRACT(shipping_address, '$.email'))))
-                     ELSE LOWER(COALESCE(CAST(shipping_address AS CHAR), ''))
-                   END
-                 )
-                 ELSE LOWER(COALESCE(CAST(shipping_address AS CHAR), ''))
-               END LIKE LOWER(CONCAT('%', ?, '%'))
-             )
-           )
-         )
-       )
-     ) AND store_id = 2`,
-    queryParams
-  );
-  const retailTotal = retailCountRows[0]?.total || 0;
-
-  // 2. Custom Forge orders count for Store 2
-  let cfTotal = 0;
-  if (cfTablesExist) {
-    try {
-      const [cfCountRows] = await pool.execute(
-        `SELECT COUNT(*) AS total FROM custom_forge_orders
-         WHERE (
-           (customer_id IN (${idPlaceholders}))
-           OR (
-             ? != "" AND (
-               LOWER(TRIM(COALESCE(customer_email, ''))) = LOWER(TRIM(?))
-               OR (
-                 shipping_address IS NOT NULL
-                 AND (
-                   CASE
-                     WHEN JSON_VALID(shipping_address) = 1
-                     THEN (
-                       CASE
-                         WHEN JSON_EXTRACT(shipping_address, '$.email') IS NOT NULL
-                         THEN LOWER(TRIM(JSON_UNQUOTE(JSON_EXTRACT(shipping_address, '$.email'))))
-                         ELSE LOWER(COALESCE(CAST(shipping_address AS CHAR), ''))
-                       END
-                     )
-                     ELSE LOWER(COALESCE(CAST(shipping_address AS CHAR), ''))
-                   END LIKE LOWER(CONCAT('%', ?, '%'))
-                 )
-               )
-             )
-           )
-         ) AND store_id = 2`,
-        queryParams
-      );
-      cfTotal = cfCountRows[0]?.total || 0;
-    } catch (_) {}
+  if (candidateCustomerIds.length > 0) {
+    const idPlaceholders = candidateCustomerIds.map(() => '?').join(',');
+    retailConditions.push(`customer_id IN (${idPlaceholders})`);
+    retailParams.push(...candidateCustomerIds);
   }
 
-  const combinedTotal = retailTotal + cfTotal;
-  const fetchLimit = parsedOffset + parsedLimit;
+  if (customerEmail) {
+    retailConditions.push(`LOWER(TRIM(COALESCE(customer_email, ''))) = LOWER(TRIM(?))`);
+    retailParams.push(customerEmail);
+  }
 
-  // Candidate rows from retail orders
-  let retailOrdersFormatted = [];
-  if (retailTotal > 0) {
-    const [retailRows] = await pool.execute(`
-      SELECT
-        o.id,
-        o.order_number,
-        o.customer_id,
-        o.customer_name,
-        o.customer_email,
-        COALESCE(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, '$.phone')), '') AS customer_phone,
-        o.shipping_address,
-        o.payment_method,
-        o.payment_status,
-        o.fulfillment_status,
-        o.subtotal,
-        o.discount_total,
-        o.shipping_charge,
-        o.total_price,
-        o.coupon_code,
-        o.courier,
-        o.tracking_no,
-        o.ship_date,
-        o.created_at,
-        2 AS store_id,
-        (SELECT COUNT(*) FROM order_items WHERE order_id = o.id) AS item_count
-      FROM orders o
-      WHERE (
-        (o.customer_id IN (${idPlaceholders}))
-        OR (
-          ? != '' AND (
-            LOWER(TRIM(COALESCE(o.customer_email, ''))) = LOWER(TRIM(?))
-            OR (
-              o.shipping_address IS NOT NULL
-              AND (
-                CASE
-                  WHEN JSON_VALID(o.shipping_address) = 1
-                  THEN (
-                    CASE
-                      WHEN JSON_EXTRACT(o.shipping_address, '$.email') IS NOT NULL
-                      THEN LOWER(TRIM(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, '$.email'))))
-                      ELSE LOWER(COALESCE(CAST(o.shipping_address AS CHAR), ''))
-                    END
-                  )
-                  ELSE LOWER(COALESCE(CAST(o.shipping_address AS CHAR), ''))
-                END LIKE LOWER(CONCAT('%', ?, '%'))
-              )
-            )
-          )
-        )
-      ) AND o.store_id = 2
-      ORDER BY o.created_at DESC, o.id DESC
-      LIMIT ?
-    `, [...queryParams, fetchLimit]);
+  if (addressMatchedOrderIds.retail.length > 0) {
+    const addrPlaceholders = addressMatchedOrderIds.retail.map(() => '?').join(',');
+    retailConditions.push(`id IN (${addrPlaceholders})`);
+    retailParams.push(...addressMatchedOrderIds.retail);
+  }
 
-    if (retailRows.length > 0) {
-      let itemsByOrderId = {};
-      try {
-        const hasMarshansProductCol = await checkHasMarshansOrderCol();
-        const orderIds = retailRows.map(r => r.id);
-        const placeholders = orderIds.map(() => '?').join(',');
-        const [allItemRows] = await pool.execute(`
+  let retailTotal = 0;
+  let retailRows = [];
+
+  if (retailConditions.length > 0) {
+    try {
+      const [retailCountRows] = await pool.execute(
+        `SELECT COUNT(*) AS total FROM orders WHERE (${retailConditions.join(' OR ')}) AND store_id = 2`,
+        retailParams
+      );
+      retailTotal = retailCountRows[0]?.total || 0;
+
+      if (retailTotal > 0) {
+        const fetchLimit = parsedOffset + parsedLimit;
+        const retailWhere = retailConditions.map(c =>
+          c.replace(/\bcustomer_id\b/g, 'o.customer_id')
+           .replace(/\bcustomer_email\b/g, 'o.customer_email')
+           .replace(/\bid\b/g, 'o.id')
+        ).join(' OR ');
+
+        const [rows] = await pool.execute(`
           SELECT
-            oi.id,
-            oi.order_id,
-            oi.product_id,
-            ${hasMarshansProductCol ? 'oi.marshans_product_id,' : 'NULL AS marshans_product_id,'}
-            oi.variant_id,
-            oi.product_name,
-            oi.sku,
-            oi.variant_options,
-            oi.unit_price,
-            oi.quantity,
-            oi.total_price,
-            COALESCE(
-              (SELECT image_url FROM marshans_product_images WHERE product_id = oi.marshans_product_id ORDER BY is_primary DESC, sort_order ASC, id ASC LIMIT 1),
-              (SELECT image_url FROM product_images WHERE product_id = oi.product_id ORDER BY is_primary DESC, sort_order ASC, id ASC LIMIT 1),
-              NULL
-            ) AS product_image
-          FROM order_items oi
-          WHERE oi.order_id IN (${placeholders})
-          ORDER BY oi.id ASC
-        `, orderIds);
+            o.id,
+            o.order_number,
+            o.customer_id,
+            o.customer_name,
+            o.customer_email,
+            '' AS customer_phone,
+            o.shipping_address,
+            o.payment_method,
+            o.payment_status,
+            o.fulfillment_status,
+            o.subtotal,
+            o.discount_total,
+            o.shipping_charge,
+            o.total_price,
+            o.coupon_code,
+            o.courier,
+            o.tracking_no,
+            o.ship_date,
+            o.created_at,
+            2 AS store_id,
+            (SELECT COUNT(*) FROM order_items WHERE order_id = o.id) AS item_count
+          FROM orders o
+          WHERE (${retailWhere}) AND o.store_id = 2
+          ORDER BY o.created_at DESC, o.id DESC
+          LIMIT ?
+        `, [...retailParams, fetchLimit]);
 
-        for (const item of allItemRows) {
-          if (!itemsByOrderId[item.order_id]) itemsByOrderId[item.order_id] = [];
-          itemsByOrderId[item.order_id].push({
-            ...item,
-            product_id: item.marshans_product_id || item.product_id,
-            marshans_product_id: item.marshans_product_id || null,
-            img: item.product_image || null,
-            variant_options: safeJsonParse(item.variant_options, null)
-          });
-        }
-      } catch (itemErr) {
-        console.warn('[orderService.getCustomerOrders] Could not fetch preview items for Store 2 retail:', itemErr.message);
+        retailRows = rows;
       }
-
-      retailOrdersFormatted = retailRows.map(r => {
-        const rawTotalPrice = parseInt(r.total_price, 10) || 0;
-        const rawSubtotal = parseInt(r.subtotal, 10) || 0;
-        const rawDiscount = parseInt(r.discount_total, 10) || 0;
-        const rawShipping = parseInt(r.shipping_charge, 10) || 0;
-        const orderItems = itemsByOrderId[r.id] || [];
-
-        return {
-          ...r,
-          shipping_address: safeJsonParse(r.shipping_address, null),
-          total_price_rupees: Math.round(rawTotalPrice / 100),
-          subtotal_rupees: Math.round(rawSubtotal / 100),
-          discount_total_rupees: Math.round(rawDiscount / 100),
-          shipping_charge_rupees: Math.round(rawShipping / 100),
-          is_custom_forge: false,
-          items: orderItems.map(item => ({
-            ...item,
-            unit_price_rupees: Math.round((parseInt(item.unit_price, 10) || 0) / 100),
-            total_price_rupees: Math.round((parseInt(item.total_price, 10) || 0) / 100)
-          }))
-        };
-      });
+    } catch (retErr) {
+      console.error('[orderService.getCustomerOrders] Retail orders query error:', retErr.message);
     }
   }
 
-  // Candidate rows from Custom Forge orders
-  let cfOrdersFormatted = [];
-  if (cfTablesExist && cfTotal > 0) {
+  if (retailRows.length > 0) {
+    let itemsByOrderId = {};
     try {
-      const [cfRows] = await pool.execute(`
+      const hasMarshansProductCol = await checkHasMarshansOrderCol();
+      const orderIds = retailRows.map(r => r.id);
+      const placeholders = orderIds.map(() => '?').join(',');
+      const [allItemRows] = await pool.execute(`
         SELECT
-          o.id,
-          o.order_number,
-          o.customer_id,
-          o.customer_name,
-          o.customer_email,
-          o.customer_phone,
-          o.shipping_address,
-          o.payment_method,
-          o.payment_status,
-          o.production_status,
-          o.subtotal,
-          o.shipping_charge,
-          o.total_price,
-          o.gateway_order_id,
-          o.created_at,
-          2 AS store_id
-        FROM custom_forge_orders o
-        WHERE (
-          (o.customer_id IN (${idPlaceholders}))
-          OR (
-            ? != '' AND (
-              LOWER(TRIM(COALESCE(o.customer_email, ''))) = LOWER(TRIM(?))
-              OR (
-                o.shipping_address IS NOT NULL
-                AND (
-                  CASE
-                    WHEN JSON_VALID(o.shipping_address) = 1
-                    THEN (
-                      CASE
-                        WHEN JSON_EXTRACT(o.shipping_address, '$.email') IS NOT NULL
-                        THEN LOWER(TRIM(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, '$.email'))))
-                        ELSE LOWER(COALESCE(CAST(o.shipping_address AS CHAR), ''))
-                      END
-                    )
-                    ELSE LOWER(COALESCE(CAST(o.shipping_address AS CHAR), ''))
-                  END LIKE LOWER(CONCAT('%', ?, '%'))
-                )
-              )
-            )
-          )
-        ) AND o.store_id = 2
-        ORDER BY o.created_at DESC, o.id DESC
-        LIMIT ?
-      `, [...queryParams, fetchLimit]);
+          oi.id,
+          oi.order_id,
+          oi.product_id,
+          ${hasMarshansProductCol ? 'oi.marshans_product_id,' : 'NULL AS marshans_product_id,'}
+          oi.variant_id,
+          oi.product_name,
+          oi.sku,
+          oi.variant_options,
+          oi.unit_price,
+          oi.quantity,
+          oi.total_price,
+          COALESCE(
+            (SELECT image_url FROM marshans_product_images WHERE product_id = oi.marshans_product_id ORDER BY is_primary DESC, sort_order ASC, id ASC LIMIT 1),
+            (SELECT image_url FROM product_images WHERE product_id = oi.product_id ORDER BY is_primary DESC, sort_order ASC, id ASC LIMIT 1),
+            NULL
+          ) AS product_image
+        FROM order_items oi
+        WHERE oi.order_id IN (${placeholders})
+        ORDER BY oi.id ASC
+      `, orderIds);
+
+      for (const item of allItemRows) {
+        if (!itemsByOrderId[item.order_id]) itemsByOrderId[item.order_id] = [];
+        itemsByOrderId[item.order_id].push({
+          ...item,
+          product_id: item.marshans_product_id || item.product_id,
+          marshans_product_id: item.marshans_product_id || null,
+          img: item.product_image || null,
+          variant_options: safeJsonParse(item.variant_options, null)
+        });
+      }
+    } catch (itemErr) {
+      console.warn('[orderService.getCustomerOrders] Could not fetch preview items for Store 2 retail:', itemErr.message);
+    }
+
+    retailOrdersFormatted = retailRows.map(r => {
+      const rawTotalPrice = parseInt(r.total_price, 10) || 0;
+      const rawSubtotal = parseInt(r.subtotal, 10) || 0;
+      const rawDiscount = parseInt(r.discount_total, 10) || 0;
+      const rawShipping = parseInt(r.shipping_charge, 10) || 0;
+      const orderItems = itemsByOrderId[r.id] || [];
+      const parsedAddr = safeJsonParse(r.shipping_address, null);
+
+      return {
+        ...r,
+        customer_phone: parsedAddr?.phone || parsedAddr?.phoneNumber || r.customer_phone || '',
+        shipping_address: parsedAddr,
+        total_price_rupees: Math.round(rawTotalPrice / 100),
+        subtotal_rupees: Math.round(rawSubtotal / 100),
+        discount_total_rupees: Math.round(rawDiscount / 100),
+        shipping_charge_rupees: Math.round(rawShipping / 100),
+        is_custom_forge: false,
+        items: orderItems.map(item => ({
+          ...item,
+          unit_price_rupees: Math.round((parseInt(item.unit_price, 10) || 0) / 100),
+          total_price_rupees: Math.round((parseInt(item.total_price, 10) || 0) / 100)
+        }))
+      };
+    });
+  }
+
+  // 2. Build Custom Forge Query for Store 2
+  const cfConditions = [];
+  const cfParams = [];
+
+  if (candidateCustomerIds.length > 0) {
+    const idPlaceholders = candidateCustomerIds.map(() => '?').join(',');
+    cfConditions.push(`customer_id IN (${idPlaceholders})`);
+    cfParams.push(...candidateCustomerIds);
+  }
+
+  if (customerEmail) {
+    cfConditions.push(`LOWER(TRIM(COALESCE(customer_email, ''))) = LOWER(TRIM(?))`);
+    cfParams.push(customerEmail);
+  }
+
+  if (addressMatchedOrderIds.customForge.length > 0) {
+    const addrPlaceholders = addressMatchedOrderIds.customForge.map(() => '?').join(',');
+    cfConditions.push(`id IN (${addrPlaceholders})`);
+    cfParams.push(...addressMatchedOrderIds.customForge);
+  }
+
+  let cfTotal = 0;
+  let cfRows = [];
+
+  if (cfTablesExist && cfConditions.length > 0) {
+    try {
+      const [cfCountRows] = await pool.execute(
+        `SELECT COUNT(*) AS total FROM custom_forge_orders WHERE (${cfConditions.join(' OR ')}) AND store_id = 2`,
+        cfParams
+      );
+      cfTotal = cfCountRows[0]?.total || 0;
+
+      if (cfTotal > 0) {
+        const fetchLimit = parsedOffset + parsedLimit;
+        const cfWhere = cfConditions.map(c =>
+          c.replace(/\bcustomer_id\b/g, 'o.customer_id')
+           .replace(/\bcustomer_email\b/g, 'o.customer_email')
+           .replace(/\bid\b/g, 'o.id')
+        ).join(' OR ');
+
+        const [rows] = await pool.execute(`
+          SELECT
+            o.id,
+            o.order_number,
+            o.customer_id,
+            o.customer_name,
+            o.customer_email,
+            o.customer_phone,
+            o.shipping_address,
+            o.payment_method,
+            o.payment_status,
+            o.production_status,
+            o.subtotal,
+            o.shipping_charge,
+            o.total_price,
+            o.gateway_order_id,
+            o.created_at,
+            2 AS store_id
+          FROM custom_forge_orders o
+          WHERE (${cfWhere}) AND o.store_id = 2
+          ORDER BY o.created_at DESC, o.id DESC
+          LIMIT ?
+        `, [...cfParams, fetchLimit]);
+
+        cfRows = rows;
+      }
 
       if (cfRows.length > 0) {
         const cfOrderIds = cfRows.map(r => r.id);
@@ -2205,11 +2196,12 @@ const getCustomerOrders = async (firebaseUserOrUid, { limit = 20, offset = 0, st
         });
       }
     } catch (cfErr) {
-      console.warn('[orderService.getCustomerOrders] Custom Forge orders lookup warning:', cfErr.message);
+      console.error('[orderService.getCustomerOrders] Custom Forge query error:', cfErr.message);
     }
   }
 
   // 3. Merge both streams, sort newest first, and slice for exact pagination
+  const combinedTotal = retailTotal + cfTotal;
   const allOrders = [...retailOrdersFormatted, ...cfOrdersFormatted];
   allOrders.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   const paginatedOrders = allOrders.slice(parsedOffset, parsedOffset + parsedLimit);
@@ -2288,28 +2280,8 @@ const getCustomerOrderById = async (orderIdOrNumber, firebaseUserOrUid, storeId 
 
     try {
       const [histOrderRows] = await pool.execute(
-        `SELECT DISTINCT customer_id FROM orders
-         WHERE customer_id IS NOT NULL AND customer_id > 0
-           AND (
-             LOWER(TRIM(COALESCE(customer_email, ''))) = LOWER(TRIM(?))
-             OR (
-               shipping_address IS NOT NULL
-               AND (
-                 CASE
-                   WHEN JSON_VALID(shipping_address) = 1
-                   THEN (
-                     CASE
-                       WHEN JSON_EXTRACT(shipping_address, '$.email') IS NOT NULL
-                       THEN LOWER(TRIM(JSON_UNQUOTE(JSON_EXTRACT(shipping_address, '$.email'))))
-                       ELSE LOWER(COALESCE(CAST(shipping_address AS CHAR), ''))
-                     END
-                   )
-                   ELSE LOWER(COALESCE(CAST(shipping_address AS CHAR), ''))
-                 END LIKE LOWER(CONCAT('%', ?, '%'))
-               )
-             )
-           )`,
-        [customerEmail, customerEmail]
+        'SELECT DISTINCT customer_id FROM orders WHERE customer_id IS NOT NULL AND customer_id > 0 AND LOWER(TRIM(COALESCE(customer_email, ""))) = LOWER(TRIM(?))',
+        [customerEmail]
       );
       if (histOrderRows && histOrderRows.length > 0) {
         for (const r of histOrderRows) {
@@ -2323,28 +2295,8 @@ const getCustomerOrderById = async (orderIdOrNumber, firebaseUserOrUid, storeId 
 
     try {
       const [histCfRows] = await pool.execute(
-        `SELECT DISTINCT customer_id FROM custom_forge_orders
-         WHERE customer_id IS NOT NULL AND customer_id > 0
-           AND (
-             LOWER(TRIM(COALESCE(customer_email, ''))) = LOWER(TRIM(?))
-             OR (
-               shipping_address IS NOT NULL
-               AND (
-                 CASE
-                   WHEN JSON_VALID(shipping_address) = 1
-                   THEN (
-                     CASE
-                       WHEN JSON_EXTRACT(shipping_address, '$.email') IS NOT NULL
-                       THEN LOWER(TRIM(JSON_UNQUOTE(JSON_EXTRACT(shipping_address, '$.email'))))
-                       ELSE LOWER(COALESCE(CAST(shipping_address AS CHAR), ''))
-                     END
-                   )
-                   ELSE LOWER(COALESCE(CAST(shipping_address AS CHAR), ''))
-                 END LIKE LOWER(CONCAT('%', ?, '%'))
-               )
-             )
-           )`,
-        [customerEmail, customerEmail]
+        'SELECT DISTINCT customer_id FROM custom_forge_orders WHERE customer_id IS NOT NULL AND customer_id > 0 AND LOWER(TRIM(COALESCE(customer_email, ""))) = LOWER(TRIM(?))',
+        [customerEmail]
       );
       if (histCfRows && histCfRows.length > 0) {
         for (const r of histCfRows) {
@@ -2364,28 +2316,8 @@ const getCustomerOrderById = async (orderIdOrNumber, firebaseUserOrUid, storeId 
   // 1. First attempt: Look up in regular retail orders
   const order = await getOrderById(orderIdOrNumber, activeStoreId);
   if (order) {
-    let shipEmail = '';
-    if (order.shipping_address) {
-      if (typeof order.shipping_address === 'string') {
-        try {
-          const parsed = JSON.parse(order.shipping_address);
-          if (typeof parsed === 'string') {
-            try {
-              const doubleParsed = JSON.parse(parsed);
-              shipEmail = doubleParsed && doubleParsed.email ? String(doubleParsed.email).toLowerCase().trim() : '';
-            } catch (_) {}
-          } else if (parsed && typeof parsed === 'object') {
-            shipEmail = parsed.email ? String(parsed.email).toLowerCase().trim() : '';
-          }
-        } catch (_) {}
-        if (!shipEmail && customerEmail && order.shipping_address.toLowerCase().includes(customerEmail)) {
-          shipEmail = customerEmail;
-        }
-      } else if (typeof order.shipping_address === 'object') {
-        shipEmail = order.shipping_address.email ? String(order.shipping_address.email).toLowerCase().trim() : '';
-      }
-    }
-    const isOwner = (candidateCustomerIds.includes(Number(order.customer_id))) ||
+    const shipEmail = extractEmailFromAddress(order.shipping_address);
+    const isOwner = (order.customer_id && candidateCustomerIds.includes(Number(order.customer_id))) ||
                     (order.customer_email && customerEmail && order.customer_email.toLowerCase().trim() === customerEmail) ||
                     (shipEmail && customerEmail && shipEmail === customerEmail);
     if (isOwner) {
@@ -2409,29 +2341,10 @@ const getCustomerOrderById = async (orderIdOrNumber, firebaseUserOrUid, storeId 
 
       if (cfRows && cfRows.length > 0) {
         const cfMeta = cfRows[0];
-        let shipAddr = cfMeta.shipping_address;
-        let shipEmail = '';
-        if (typeof shipAddr === 'string') {
-          try {
-            const parsed = JSON.parse(shipAddr);
-            if (typeof parsed === 'string') {
-              try {
-                const doubleParsed = JSON.parse(parsed);
-                shipEmail = doubleParsed && doubleParsed.email ? String(doubleParsed.email).toLowerCase().trim() : '';
-              } catch (_) {}
-            } else if (parsed && typeof parsed === 'object') {
-              shipEmail = parsed.email ? String(parsed.email).toLowerCase().trim() : '';
-            }
-          } catch (_) {}
-          if (!shipEmail && customerEmail && shipAddr.toLowerCase().includes(customerEmail)) {
-            shipEmail = customerEmail;
-          }
-        } else if (shipAddr && typeof shipAddr === 'object') {
-          shipEmail = shipAddr.email ? String(shipAddr.email).toLowerCase().trim() : '';
-        }
+        const shipEmail = extractEmailFromAddress(cfMeta.shipping_address);
 
         // Enforce strict customer ownership (zero cross-customer leakage)
-        const isOwner = (candidateCustomerIds.includes(Number(cfMeta.customer_id))) ||
+        const isOwner = (cfMeta.customer_id && candidateCustomerIds.includes(Number(cfMeta.customer_id))) ||
                         (cfMeta.customer_email && customerEmail && cfMeta.customer_email.toLowerCase().trim() === customerEmail) ||
                         (shipEmail && customerEmail && shipEmail === customerEmail);
         if (!isOwner) {
