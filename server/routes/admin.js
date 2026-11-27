@@ -132,6 +132,11 @@ const {
   getAdminCustomForgeUnreadCountHandler,
   acknowledgeAdminCustomForgeOrdersHandler
 } = require('../controllers/customForgeController');
+const {
+  getWhatsAppStatusHandler,
+  getOrderNotificationHistoryHandler,
+  processDueFeedbackHandler
+} = require('../controllers/whatsappController');
 const chipakkMaterialController = require('../controllers/chipakkMaterialController');
 
 const router = express.Router();
@@ -362,5 +367,10 @@ router.post('/production-inventory/movements', chipakkMaterialController.recordS
 router.get('/production-inventory/movements', chipakkMaterialController.getStockMovementsHandler);
 router.get('/production-inventory/low-stock', chipakkMaterialController.getLowStockAlertsHandler);
 router.get('/production-inventory/types', chipakkMaterialController.getMaterialTypesHandler);
+
+// WhatsApp Cloud API Integration Diagnostic & Notifications
+router.get('/whatsapp/status', getWhatsAppStatusHandler);
+router.get('/orders/:id/notifications', getOrderNotificationHistoryHandler);
+router.post('/whatsapp/process-due-feedback', processDueFeedbackHandler);
 
 module.exports = router;

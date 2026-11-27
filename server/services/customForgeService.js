@@ -1028,6 +1028,17 @@ const createCustomForgeOrder = async (orderPayload, firebaseUser, requestStoreId
 
     const createdOrder = await getCustomForgeOrderByIdInternal(orderId, connection);
 
+    // Asynchronously dispatch WhatsApp order confirmation for Custom Forge if paid (non-blocking)
+    try {
+      const whatsappNotificationService = require('./whatsappNotificationService');
+      whatsappNotificationService.notifyOrderConfirmation({
+        order: createdOrder,
+        orderId,
+        storeId: 2,
+        isCustomForge: true
+      }).catch(() => {});
+    } catch (_) {}
+
     return createdOrder;
   } catch (error) {
     await connection.rollback();
@@ -1443,7 +1454,29 @@ const updateCustomForgeOrderStatus = async (orderId, { status, note } = {}, admi
     );
 
     await connection.commit();
-    return getCustomForgeOrderByIdInternal(order.id, connection);
+    const updatedOrder = await getCustomForgeOrderByIdInternal(order.id, connection);
+
+    // Asynchronously dispatch WhatsApp lifecycle notifications for Store 2 Custom Forge
+    try {
+      const whatsappNotificationService = require('./whatsappNotificationService');
+      if (cleanStatus === 'shipped') {
+        whatsappNotificationService.notifyShippingUpdate({
+          order: updatedOrder,
+          orderId: order.id,
+          storeId: 2,
+          isCustomForge: true
+        }).catch(() => {});
+      } else if (cleanStatus === 'delivered') {
+        whatsappNotificationService.notifyOrderDelivered({
+          order: updatedOrder,
+          orderId: order.id,
+          storeId: 2,
+          isCustomForge: true
+        }).catch(() => {});
+      }
+    } catch (_) {}
+
+    return updatedOrder;
   } catch (error) {
     await connection.rollback();
     throw error;
@@ -1545,7 +1578,21 @@ const recordCustomForgePaymentSuccess = async ({
     );
 
     await connection.commit();
-    return getCustomForgeOrderByIdInternal(order.id, connection);
+    const updatedOrder = await getCustomForgeOrderByIdInternal(order.id, connection);
+
+    // Asynchronously dispatch WhatsApp order confirmation for Store 2 Custom Forge verified payment
+    try {
+      const whatsappNotificationService = require('./whatsappNotificationService');
+      whatsappNotificationService.notifyOrderConfirmation({
+        order: updatedOrder,
+        orderId: order.id,
+        storeId: 2,
+        isCustomForge: true,
+        paymentUpdated: true
+      }).catch(() => {});
+    } catch (_) {}
+
+    return updatedOrder;
   } catch (err) {
     await connection.rollback();
     throw err;

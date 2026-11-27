@@ -630,7 +630,42 @@ const updateOrderStatus = async (id, status, options = {}) => {
     note: options.note || `Status changed from ${existing.fulfillment_status} to ${normalizedStatus}`
   });
 
-  return getOrderById(numId, options.store_id);
+  const updatedOrder = await getOrderById(numId, options.store_id);
+
+  // Trigger WhatsApp lifecycle notifications for Store 2
+  if (updatedOrder && parseInt(updatedOrder.store_id, 10) === 2) {
+    try {
+      const whatsappNotificationService = require('./whatsappNotificationService');
+      if (normalizedStatus === 'SHIPPED') {
+        whatsappNotificationService.notifyShippingUpdate({
+          order: updatedOrder,
+          orderId: numId,
+          storeId: 2,
+          isCustomForge: false,
+          trackingInfo: {
+            courier: updatedOrder.courier,
+            tracking_no: updatedOrder.tracking_no
+          }
+        }).catch(() => {});
+      } else if (normalizedStatus === 'OUT_FOR_DELIVERY') {
+        whatsappNotificationService.notifyOutForDelivery({
+          order: updatedOrder,
+          orderId: numId,
+          storeId: 2,
+          isCustomForge: false
+        }).catch(() => {});
+      } else if (normalizedStatus === 'DELIVERED') {
+        whatsappNotificationService.notifyOrderDelivered({
+          order: updatedOrder,
+          orderId: numId,
+          storeId: 2,
+          isCustomForge: false
+        }).catch(() => {});
+      }
+    } catch (_) {}
+  }
+
+  return updatedOrder;
 };
 
 /**
@@ -672,7 +707,26 @@ const updateOrderShipping = async (id, shippingData = {}, storeId = null) => {
 
   await pool.execute(query, [safeCourier, safeTrackingNo, safeShipDate, safeShipNotes, numId]);
 
-  return getOrderById(numId, storeId);
+  const updatedOrder = await getOrderById(numId, storeId);
+
+  // Trigger WhatsApp shipping update for Store 2 if courier/tracking is provided
+  if (updatedOrder && parseInt(updatedOrder.store_id, 10) === 2 && (safeCourier || safeTrackingNo)) {
+    try {
+      const whatsappNotificationService = require('./whatsappNotificationService');
+      whatsappNotificationService.notifyShippingUpdate({
+        order: updatedOrder,
+        orderId: numId,
+        storeId: 2,
+        isCustomForge: false,
+        trackingInfo: {
+          courier: safeCourier,
+          tracking_no: safeTrackingNo
+        }
+      }).catch(() => {});
+    } catch (_) {}
+  }
+
+  return updatedOrder;
 };
 
 /**
@@ -706,8 +760,15 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
     items,
     shipping_address,
     coupon_code,
-    payment_method = 'COD'
+    payment_method
   } = orderPayload || {};
+
+  const activeStoreId = parseInt(orderPayload?.store_id, 10) === 2 ? 2 : 1;
+  if (activeStoreId === 2 && String(payment_method || '').toUpperCase() === 'COD') {
+    const err = new Error('THE MARSHANS does not offer Cash on Delivery. Please pay securely using Razorpay.');
+    err.statusCode = 400;
+    throw err;
+  }
 
   // 1. Validate items array or cart_id
   if ((!items || !Array.isArray(items) || items.length === 0) && !orderPayload?.cart_id) {
@@ -1165,9 +1226,17 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
       throw err;
     }
 
-    const safePaymentMethod = ALLOWED_PAYMENT_METHODS.includes(String(payment_method || '').toUpperCase())
-      ? String(payment_method).toUpperCase()
-      : 'COD';
+    if (activeStoreId === 2 && String(payment_method || '').toUpperCase() === 'COD') {
+      const err = new Error('THE MARSHANS does not offer Cash on Delivery. Please pay securely using Razorpay.');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const defaultPaymentMethod = activeStoreId === 2 ? 'ONLINE' : 'COD';
+    const rawPaymentMethod = String(payment_method || defaultPaymentMethod).toUpperCase();
+    const safePaymentMethod = ALLOWED_PAYMENT_METHODS.includes(rawPaymentMethod)
+      ? rawPaymentMethod
+      : defaultPaymentMethod;
 
     // 7.1 Authoritative GST (inclusive): per-line HSN + rate snapshot, discount allocated across lines, shipping taxed
     //     as a composite supply, CGST+SGST vs IGST from supplier state vs place of supply. The storefront runs the
@@ -1263,10 +1332,12 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
       orderParams.push('standard');
     }
 
+    const initialFulfillmentStatus = activeStoreId === 2 ? 'pending_payment' : 'pending';
     orderColumns.push('payment_method', 'payment_status', 'fulfillment_status', 'subtotal', 'discount_total', 'shipping_charge');
-    orderPlaceholders.push('?', "'pending'", "'pending'", '?', '?', '?');
+    orderPlaceholders.push('?', "'pending'", '?', '?', '?', '?');
     orderParams.push(
       safePaymentMethod,
+      initialFulfillmentStatus,
       subtotalPaise,
       discountPaise,
       shippingChargePaise
@@ -1432,6 +1503,19 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
 
     const createdOrder = await getOrderById(orderId, activeStoreId);
 
+    // Asynchronously dispatch WhatsApp order confirmation for Store 2 if paid (non-blocking)
+    if (activeStoreId === 2) {
+      try {
+        const whatsappNotificationService = require('./whatsappNotificationService');
+        whatsappNotificationService.notifyOrderConfirmation({
+          order: createdOrder,
+          orderId,
+          storeId: 2,
+          isCustomForge: false
+        }).catch(() => {});
+      } catch (_) {}
+    }
+
     return createdOrder;
   } catch (error) {
     await connection.rollback();
@@ -1445,7 +1529,12 @@ const createCustomerOrder = async (orderPayload, firebaseUser) => {
  */
 const normalizeCustomForgeOrder = (cfOrder) => {
   if (!cfOrder) return null;
-  const fulfillmentStatus = cfOrder.production_status || cfOrder.fulfillment_status || 'order_placed';
+  const isPaid = cfOrder.payment_status === 'paid';
+  const rawStatus = cfOrder.production_status || cfOrder.fulfillment_status || 'order_placed';
+  const authoritativeStatus = isPaid
+    ? rawStatus
+    : (cfOrder.payment_status === 'failed' ? 'payment_failed' : 'pending_payment');
+
   const shippingAddr = typeof cfOrder.shipping_address === 'string'
     ? safeJsonParse(cfOrder.shipping_address, null)
     : (cfOrder.shipping_address || null);
@@ -1469,9 +1558,9 @@ const normalizeCustomForgeOrder = (cfOrder) => {
     shipping_address: shippingAddr,
     payment_method: cfOrder.payment_method || 'ONLINE',
     payment_status: cfOrder.payment_status || 'pending',
-    fulfillment_status: fulfillmentStatus,
-    production_status: cfOrder.production_status || fulfillmentStatus,
-    status: cfOrder.production_status || fulfillmentStatus,
+    fulfillment_status: authoritativeStatus,
+    production_status: authoritativeStatus,
+    status: authoritativeStatus,
     subtotal: rawSubtotal,
     subtotal_rupees: cfOrder.subtotal_rupees !== undefined ? cfOrder.subtotal_rupees : Math.round(rawSubtotal / 100),
     discount_total: rawDiscount,
@@ -1965,9 +2054,15 @@ const getCustomerOrders = async (firebaseUserOrUid, { limit = 20, offset = 0, st
       const rawShipping = parseInt(r.shipping_charge, 10) || 0;
       const orderItems = itemsByOrderId[r.id] || [];
       const parsedAddr = safeJsonParse(r.shipping_address, null);
+      const isPaid = r.payment_status === 'paid';
+      const authoritativeFulfillment = isPaid
+        ? (r.fulfillment_status || 'order_placed')
+        : (r.payment_status === 'failed' ? 'payment_failed' : 'pending_payment');
 
       return {
         ...r,
+        fulfillment_status: authoritativeFulfillment,
+        status: authoritativeFulfillment,
         customer_phone: parsedAddr?.phone || parsedAddr?.phoneNumber || r.customer_phone || '',
         shipping_address: parsedAddr,
         total_price_rupees: Math.round(rawTotalPrice / 100),
@@ -2162,6 +2257,11 @@ const getCustomerOrders = async (firebaseUserOrUid, { limit = 20, offset = 0, st
           const couponCode = couponInfo?.code || r.coupon_code || null;
           const cfItems = cfItemsByOrderId[r.id] || [];
 
+          const isPaid = r.payment_status === 'paid';
+          const authoritativeProductionStatus = isPaid
+            ? (r.production_status || 'order_placed')
+            : (r.payment_status === 'failed' ? 'payment_failed' : 'pending_payment');
+
           return {
             id: r.id,
             order_number: r.order_number,
@@ -2172,9 +2272,9 @@ const getCustomerOrders = async (firebaseUserOrUid, { limit = 20, offset = 0, st
             shipping_address: safeJsonParse(r.shipping_address, null),
             payment_method: r.payment_method,
             payment_status: r.payment_status,
-            fulfillment_status: r.production_status || 'order_placed',
-            production_status: r.production_status || 'order_placed',
-            status: r.production_status || 'order_placed',
+            fulfillment_status: authoritativeProductionStatus,
+            production_status: authoritativeProductionStatus,
+            status: authoritativeProductionStatus,
             subtotal: rawSubtotal,
             discount_total: rawDiscount,
             shipping_charge: rawShipping,
@@ -2321,6 +2421,17 @@ const getCustomerOrderById = async (orderIdOrNumber, firebaseUserOrUid, storeId 
                     (order.customer_email && customerEmail && order.customer_email.toLowerCase().trim() === customerEmail) ||
                     (shipEmail && customerEmail && shipEmail === customerEmail);
     if (isOwner) {
+      if (activeStoreId === 2) {
+        const isPaid = order.payment_status === 'paid';
+        const authoritativeStatus = isPaid
+          ? (order.fulfillment_status || 'order_placed')
+          : (order.payment_status === 'failed' ? 'payment_failed' : 'pending_payment');
+        return {
+          ...order,
+          fulfillment_status: authoritativeStatus,
+          status: authoritativeStatus
+        };
+      }
       return order;
     }
   }

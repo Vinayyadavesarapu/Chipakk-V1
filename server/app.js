@@ -18,6 +18,7 @@ const cartRoutes = require('./routes/cart');
 const custom3dRoutes = require('./routes/custom3d');
 const customForgeRoutes = require('./routes/customForge');
 const adminRoutes = require('./routes/admin');
+const alertRoutes = require('./routes/alerts');
 
 // Import Middlewares
 const { resolveStoreContext } = require('./middleware/storeContext');
@@ -244,6 +245,7 @@ app.use('/api/custom-3d', custom3dRoutes);
 app.use('/api/custom-forge', customForgeRoutes);
 app.use('/api/customer', customerRoutes);
 app.use('/api/payments', paymentRoutes);
+app.use('/api/alerts', alertRoutes);
 app.use('/api/admin', adminRoutes);
 
 // 404 Route Not Found Handler

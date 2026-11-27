@@ -4,6 +4,7 @@ const { sendSuccess, sendError } = require('../utils/responseHandler');
 const { getAuth } = require('../config/firebase');
 
 const { isMarshansHybridCatalogEnabled } = require('../config/features');
+const { checkCustomForgeTablesExist } = require('../services/customForgeService');
 
 /**
  * Get Admin Dashboard Overview Metrics
@@ -19,6 +20,15 @@ const getAdminDashboardHandler = async (req, res, next) => {
     // Store 1 covers store_id = 1 and legacy NULL rows; Store 2 is strictly store_id = 2
     const orderStoreWhere = isStore2 ? 'o.store_id = 2' : '(o.store_id = 1 OR o.store_id IS NULL)';
 
+    let cfTablesExist = false;
+    if (isStore2) {
+      try {
+        cfTablesExist = await checkCustomForgeTablesExist();
+      } catch (_) {
+        cfTablesExist = false;
+      }
+    }
+
     // 2. Commercial Revenue Filter Definition:
     // payment_status = 'paid' AND fulfillment_status NOT IN ('cancelled', 'failed') AND payment_status != 'failed'
     const commercialPaidCondition = `
@@ -27,17 +37,17 @@ const getAdminDashboardHandler = async (req, res, next) => {
       AND LOWER(o.payment_status) != 'failed'
     `;
 
-    // 3. Total Orders Count (Authoritative from DB)
+    // 3. Total Orders Count (Authoritative from DB, inclusive of Custom Forge for Store 2)
     const [totalOrderRows] = await pool.execute(
       `SELECT COUNT(*) AS total FROM orders o WHERE ${orderStoreWhere}`
     );
-    const totalOrders = totalOrderRows[0]?.total || 0;
+    let totalOrders = totalOrderRows[0]?.total || 0;
 
     // 4. Cancelled Orders Count (Authoritative from DB)
     const [cancelledRows] = await pool.execute(
       `SELECT COUNT(*) AS total FROM orders o WHERE ${orderStoreWhere} AND (LOWER(o.fulfillment_status) = 'cancelled' OR LOWER(o.payment_status) = 'cancelled')`
     );
-    const cancelledOrders = cancelledRows[0]?.total || 0;
+    let cancelledOrders = cancelledRows[0]?.total || 0;
 
     // 5. Total Commercial Revenue (Store 1 whole rupees, Store 2 paise / 100)
     const [revenueRows] = await pool.execute(`
@@ -46,7 +56,7 @@ const getAdminDashboardHandler = async (req, res, next) => {
       FROM orders o
       WHERE ${orderStoreWhere} AND ${commercialPaidCondition}
     `);
-    const totalRevenueRupees = parseInt(revenueRows[0]?.total_revenue, 10) || 0;
+    let totalRevenueRupees = parseInt(revenueRows[0]?.total_revenue, 10) || 0;
 
     // 6. Revenue This Month (Current Calendar Month, Paid & Non-Cancelled)
     const [monthRevRows] = await pool.execute(`
@@ -57,7 +67,7 @@ const getAdminDashboardHandler = async (req, res, next) => {
         AND ${commercialPaidCondition}
         AND o.created_at >= DATE_FORMAT(CURDATE(), '%Y-%m-01 00:00:00')
     `);
-    const monthRevenueRupees = parseInt(monthRevRows[0]?.month_revenue, 10) || 0;
+    let monthRevenueRupees = parseInt(monthRevRows[0]?.month_revenue, 10) || 0;
 
     // 7. Orders Placed Today (Current Date)
     const [todayRows] = await pool.execute(`
@@ -65,7 +75,29 @@ const getAdminDashboardHandler = async (req, res, next) => {
       FROM orders o
       WHERE ${orderStoreWhere} AND DATE(o.created_at) = CURDATE()
     `);
-    const ordersToday = todayRows[0]?.total || 0;
+    let ordersToday = todayRows[0]?.total || 0;
+
+    // Incorporate Store 2 Custom Forge orders into authoritative dashboard metrics
+    if (isStore2 && cfTablesExist) {
+      try {
+        const [cfTotalRows] = await pool.execute('SELECT COUNT(*) AS total FROM custom_forge_orders WHERE store_id = 2');
+        totalOrders += (cfTotalRows[0]?.total || 0);
+
+        const [cfCancelledRows] = await pool.execute('SELECT COUNT(*) AS total FROM custom_forge_orders WHERE store_id = 2 AND production_status = "cancelled"');
+        cancelledOrders += (cfCancelledRows[0]?.total || 0);
+
+        const [cfRevRows] = await pool.execute('SELECT COALESCE(SUM(ROUND(total_price / 100)), 0) AS total_revenue FROM custom_forge_orders WHERE store_id = 2 AND LOWER(payment_status) = "paid" AND LOWER(production_status) != "cancelled"');
+        totalRevenueRupees += (parseInt(cfRevRows[0]?.total_revenue, 10) || 0);
+
+        const [cfMonthRows] = await pool.execute('SELECT COALESCE(SUM(ROUND(total_price / 100)), 0) AS month_revenue FROM custom_forge_orders WHERE store_id = 2 AND LOWER(payment_status) = "paid" AND LOWER(production_status) != "cancelled" AND created_at >= DATE_FORMAT(CURDATE(), "%Y-%m-01 00:00:00")');
+        monthRevenueRupees += (parseInt(cfMonthRows[0]?.month_revenue, 10) || 0);
+
+        const [cfTodayRows] = await pool.execute('SELECT COUNT(*) AS total FROM custom_forge_orders WHERE store_id = 2 AND DATE(created_at) = CURDATE()');
+        ordersToday += (cfTodayRows[0]?.total || 0);
+      } catch (cfMetricsErr) {
+        console.warn('[Dashboard Custom Forge Metrics Fallback]', cfMetricsErr.message);
+      }
+    }
 
     // 8. Average Order Worth (AOV in Rupees)
     const averageOrderValueRupees = totalOrders > 0 ? Math.round(totalRevenueRupees / totalOrders) : 0;
@@ -244,6 +276,30 @@ const getAdminDashboardHandler = async (req, res, next) => {
           match.orders = parseInt(row.order_count, 10) || 0;
         }
       });
+
+      if (isStore2 && cfTablesExist) {
+        try {
+          const [cfMonthlyRows] = await pool.execute(`
+            SELECT
+              DATE_FORMAT(cfo.created_at, '%Y-%m') AS month_key,
+              COALESCE(SUM(ROUND(cfo.total_price / 100)), 0) AS revenue_rupees,
+              COUNT(*) AS order_count
+            FROM custom_forge_orders cfo
+            WHERE cfo.store_id = 2
+              AND LOWER(cfo.payment_status) = 'paid'
+              AND LOWER(cfo.production_status) != 'cancelled'
+              AND cfo.created_at >= DATE_SUB(DATE_FORMAT(CURDATE(), '%Y-%m-01'), INTERVAL ? MONTH)
+            GROUP BY month_key
+          `, [numMonths]);
+          cfMonthlyRows.forEach(row => {
+            const match = monthlyStats.find(s => s.monthKey === row.month_key);
+            if (match) {
+              match.revenue += parseInt(row.revenue_rupees, 10) || 0;
+              match.orders += parseInt(row.order_count, 10) || 0;
+            }
+          });
+        } catch (_) {}
+      }
     } catch (chartErr) {
       console.warn('[Dashboard Monthly Stats Warning]', chartErr.message);
     }
@@ -274,6 +330,39 @@ const getAdminDashboardHandler = async (req, res, next) => {
         status: r.status,
         created_at: r.created_at
       }));
+
+      if (isStore2 && cfTablesExist) {
+        try {
+          const [cfRecentRows] = await pool.execute(`
+            SELECT
+              cfo.id,
+              cfo.order_number,
+              cfo.customer_name,
+              ROUND(cfo.total_price / 100) AS total_price,
+              cfo.payment_status,
+              cfo.production_status AS status,
+              cfo.created_at
+            FROM custom_forge_orders cfo
+            WHERE cfo.store_id = 2
+            ORDER BY cfo.created_at DESC, cfo.id DESC
+            LIMIT 5
+          `);
+          for (const r of cfRecentRows) {
+            recentOrders.push({
+              id: r.id,
+              order_id: r.order_number,
+              customer_name: r.customer_name,
+              total_price: parseInt(r.total_price, 10) || 0,
+              payment_status: r.payment_status,
+              status: r.status,
+              is_custom_forge: true,
+              created_at: r.created_at
+            });
+          }
+          recentOrders.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+          recentOrders = recentOrders.slice(0, 5);
+        } catch (_) {}
+      }
     } catch (_) {}
 
     // 15. Top Products (Store-Scoped, up to 5)

@@ -39,7 +39,10 @@ process.env.UPLOADS_DIR = UPLOADS;
 const authPath = require.resolve('../server/middleware/auth.js');
 require.cache[authPath] = { id: authPath, filename: authPath, loaded: true, exports: {
   verifyFirebaseToken: (req, res, next) => { req.user = { uid: 'admin-test', email: 'admin@test.local' }; next(); },
-  requireAdmin: (req, res, next) => next()
+  requireAdmin: (req, res, next) => { req.admin = { id: 1, firebase_uid: 'admin-test', email: 'admin@test.local', role: 'super_admin' }; next(); },
+  // server/routes/admin.js now also chains requireAdminSession; without this export Router.use() throws
+  // "requires a middleware function" the moment this file requires server/routes/admin.js.
+  requireAdminSession: (req, res, next) => next()
 } };
 
 // ---- fake DB: captures the paths the real services write ----

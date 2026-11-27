@@ -75,7 +75,10 @@ require.cache[authPath] = {
   loaded: true,
   exports: {
     verifyFirebaseToken: (req, res, next) => { req.user = { uid: 'admin-restore-test', email: 'admin@chipakk.shop' }; next(); },
-    requireAdmin: (req, res, next) => next()
+    requireAdmin: (req, res, next) => { req.admin = { id: 1, firebase_uid: 'admin-restore-test', email: 'admin@chipakk.shop', role: 'super_admin' }; next(); },
+    // server/routes/admin.js now also chains requireAdminSession; without this export Router.use() throws
+    // "requires a middleware function" the moment this file requires server/routes/admin.js.
+    requireAdminSession: (req, res, next) => next()
   }
 };
 

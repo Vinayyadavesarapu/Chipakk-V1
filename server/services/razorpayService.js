@@ -15,33 +15,38 @@ const crypto = require('crypto');
 
 const getKeyId = (storeId) => {
   const sId = parseInt(storeId, 10);
+  // Store 2 (THE MARSHANS): Strictly requires dedicated MARSHANS credentials.
+  // NEVER silently fall back to default or Store 1 credentials.
+  if (sId === 2) {
+    return process.env.MARSHANS_RAZORPAY_KEY_ID || '';
+  }
   if (sId === 1 && process.env.CHIPAKK_RAZORPAY_KEY_ID) {
     return process.env.CHIPAKK_RAZORPAY_KEY_ID;
-  }
-  if (sId === 2 && process.env.MARSHANS_RAZORPAY_KEY_ID) {
-    return process.env.MARSHANS_RAZORPAY_KEY_ID;
   }
   return process.env.RAZORPAY_KEY_ID || '';
 };
 
 const getKeySecret = (storeId) => {
   const sId = parseInt(storeId, 10);
+  // Store 2 (THE MARSHANS): Strictly requires dedicated MARSHANS credentials.
+  // NEVER silently fall back to default or Store 1 credentials.
+  if (sId === 2) {
+    return process.env.MARSHANS_RAZORPAY_KEY_SECRET || '';
+  }
   if (sId === 1 && process.env.CHIPAKK_RAZORPAY_KEY_SECRET) {
     return process.env.CHIPAKK_RAZORPAY_KEY_SECRET;
-  }
-  if (sId === 2 && process.env.MARSHANS_RAZORPAY_KEY_SECRET) {
-    return process.env.MARSHANS_RAZORPAY_KEY_SECRET;
   }
   return process.env.RAZORPAY_KEY_SECRET || '';
 };
 
 const getWebhookSecret = (storeId) => {
   const sId = parseInt(storeId, 10);
+  // Store 2 (THE MARSHANS): Strictly requires dedicated MARSHANS webhook secret.
+  if (sId === 2) {
+    return process.env.MARSHANS_RAZORPAY_WEBHOOK_SECRET || '';
+  }
   if (sId === 1 && process.env.CHIPAKK_RAZORPAY_WEBHOOK_SECRET) {
     return process.env.CHIPAKK_RAZORPAY_WEBHOOK_SECRET;
-  }
-  if (sId === 2 && process.env.MARSHANS_RAZORPAY_WEBHOOK_SECRET) {
-    return process.env.MARSHANS_RAZORPAY_WEBHOOK_SECRET;
   }
   return process.env.RAZORPAY_WEBHOOK_SECRET || '';
 };
@@ -81,8 +86,13 @@ const isWebhookConfigured = (storeId) => {
  * @returns {Promise<Object>} Razorpay Order Object
  */
 const createRazorpayOrder = async ({ amountPaise, receipt, notes = {}, storeId }) => {
-  if (!isConfigured(storeId)) {
-    const err = new Error('Payment gateway credentials are not configured on the server. Please set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET.');
+  const sId = parseInt(storeId, 10);
+  if (!isConfigured(sId)) {
+    const platformName = sId === 2 ? 'THE MARSHANS (Store 2)' : 'CHIPAKK (Store 1)';
+    const missingKeys = sId === 2
+      ? 'MARSHANS_RAZORPAY_KEY_ID and MARSHANS_RAZORPAY_KEY_SECRET'
+      : 'RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET (or CHIPAKK_RAZORPAY_KEY_ID and CHIPAKK_RAZORPAY_KEY_SECRET)';
+    const err = new Error(`Payment gateway credentials are not configured on the server for ${platformName}. Please set ${missingKeys}.`);
     err.code = 'GATEWAY_NOT_CONFIGURED';
     throw err;
   }
@@ -91,7 +101,6 @@ const createRazorpayOrder = async ({ amountPaise, receipt, notes = {}, storeId }
   const keySecret = getKeySecret(storeId);
   const authHeader = 'Basic ' + Buffer.from(`${keyId}:${keySecret}`).toString('base64');
 
-  const sId = parseInt(storeId, 10);
   const platformName = sId === 2 ? 'THE MARSHANS' : 'CHIPAKK';
 
   const payload = {
@@ -145,8 +154,13 @@ const createRazorpayOrder = async ({ amountPaise, receipt, notes = {}, storeId }
  * @returns {boolean}
  */
 const verifyPaymentSignature = ({ razorpay_order_id, razorpay_payment_id, razorpay_signature, storeId }) => {
-  if (!isConfigured(storeId)) {
-    const err = new Error('Payment gateway credentials are not configured on the server.');
+  const sId = parseInt(storeId, 10);
+  if (!isConfigured(sId)) {
+    const platformName = sId === 2 ? 'THE MARSHANS (Store 2)' : 'CHIPAKK (Store 1)';
+    const missingKeys = sId === 2
+      ? 'MARSHANS_RAZORPAY_KEY_ID and MARSHANS_RAZORPAY_KEY_SECRET'
+      : 'RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET (or CHIPAKK_RAZORPAY_KEY_ID and CHIPAKK_RAZORPAY_KEY_SECRET)';
+    const err = new Error(`Payment gateway credentials are not configured on the server for ${platformName}. Please set ${missingKeys}.`);
     err.code = 'GATEWAY_NOT_CONFIGURED';
     throw err;
   }
@@ -184,8 +198,11 @@ const verifyPaymentSignature = ({ razorpay_order_id, razorpay_payment_id, razorp
  * @returns {boolean}
  */
 const verifyWebhookSignature = ({ rawBody, signature, storeId }) => {
-  if (!isWebhookConfigured(storeId)) {
-    const err = new Error('Razorpay webhook secret is not configured on the server.');
+  const sId = storeId ? parseInt(storeId, 10) : null;
+  if (!isWebhookConfigured(sId)) {
+    const platformName = sId === 2 ? 'THE MARSHANS (Store 2)' : (sId === 1 ? 'CHIPAKK (Store 1)' : 'the server');
+    const missingKey = sId === 2 ? 'MARSHANS_RAZORPAY_WEBHOOK_SECRET' : 'RAZORPAY_WEBHOOK_SECRET';
+    const err = new Error(`Razorpay webhook secret is not configured on the server for ${platformName}. Please set ${missingKey}.`);
     err.code = 'WEBHOOK_SECRET_NOT_CONFIGURED';
     throw err;
   }

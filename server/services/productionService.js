@@ -95,8 +95,8 @@ const getProductionQueue = async ({
       oi.total_price,
       oi.production_status,
       o.fulfillment_status,
-      o.customer_name,
-      COALESCE(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, '$.phone')), '') AS customer_phone,
+      COALESCE(NULLIF(TRIM(o.customer_name), ''), NULLIF(TRIM(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, '$.name'))), ''), 'Customer') AS customer_name,
+      COALESCE(NULLIF(TRIM(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, '$.phone'))), ''), NULLIF(TRIM(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, '$.phoneNumber'))), ''), '') AS customer_phone,
       COALESCE(o.store_id, 1) AS store_id,
       oi.created_at
     FROM order_items oi
@@ -185,8 +185,8 @@ const getProductionItemById = async (itemId, store_id = null) => {
       oi.total_price,
       oi.production_status,
       o.fulfillment_status,
-      o.customer_name,
-      COALESCE(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, '$.phone')), '') AS customer_phone,
+      COALESCE(NULLIF(TRIM(o.customer_name), ''), NULLIF(TRIM(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, '$.name'))), ''), 'Customer') AS customer_name,
+      COALESCE(NULLIF(TRIM(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, '$.phone'))), ''), NULLIF(TRIM(JSON_UNQUOTE(JSON_EXTRACT(o.shipping_address, '$.phoneNumber'))), ''), '') AS customer_phone,
       COALESCE(o.store_id, 1) AS store_id,
       oi.created_at
     FROM order_items oi

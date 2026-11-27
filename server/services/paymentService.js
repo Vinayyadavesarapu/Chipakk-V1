@@ -596,6 +596,18 @@ const verifyPayment = async (params, firebaseUser, reqStoreId) => {
       actor: 'Customer Checkout'
     });
 
+    try {
+      const whatsappNotificationService = require('./whatsappNotificationService');
+      const updatedCf = await customForgeService.getCustomForgeOrderByIdInternal(order.id).catch(() => null);
+      whatsappNotificationService.notifyOrderConfirmation({
+        order: updatedCf || order,
+        orderId: order.id,
+        storeId: 2,
+        isCustomForge: true,
+        paymentUpdated: true
+      }).catch(() => {});
+    } catch (_) {}
+
     return {
       success: true,
       payment_status: 'paid',
@@ -612,7 +624,7 @@ const verifyPayment = async (params, firebaseUser, reqStoreId) => {
       `UPDATE orders
        SET payment_status = 'paid',
            payment_method = 'RAZORPAY',
-           fulfillment_status = CASE WHEN fulfillment_status = 'pending' THEN 'processing' ELSE fulfillment_status END,
+           fulfillment_status = CASE WHEN fulfillment_status IN ('pending', 'pending_payment') THEN 'processing' ELSE fulfillment_status END,
            updated_at = NOW()
        WHERE id = ?`,
       [order.id]
@@ -640,6 +652,22 @@ const verifyPayment = async (params, firebaseUser, reqStoreId) => {
     throw dbErr;
   } finally {
     connection.release();
+  }
+
+  // Asynchronously dispatch WhatsApp order confirmation for Store 2 verified payment
+  if (orderStoreId === 2) {
+    try {
+      const whatsappNotificationService = require('./whatsappNotificationService');
+      const orderService = require('./orderService');
+      const updatedOrder = await orderService.getOrderById(order.id, 2).catch(() => null);
+      whatsappNotificationService.notifyOrderConfirmation({
+        order: updatedOrder || order,
+        orderId: order.id,
+        storeId: 2,
+        isCustomForge: false,
+        paymentUpdated: true
+      }).catch(() => {});
+    } catch (_) {}
   }
 
   return {
@@ -786,6 +814,19 @@ const handleWebhook = async (rawBody, signatureHeader) => {
         actor: 'Razorpay Webhook'
       });
       console.log(`[Payment Webhook] Successfully reconciled Custom Forge order #${order.order_number} to PAID.`);
+
+      try {
+        const whatsappNotificationService = require('./whatsappNotificationService');
+        const updatedCf = await customForgeService.getCustomForgeOrderByIdInternal(order.id).catch(() => null);
+        whatsappNotificationService.notifyOrderConfirmation({
+          order: updatedCf || order,
+          orderId: order.id,
+          storeId: 2,
+          isCustomForge: true,
+          paymentUpdated: true
+        }).catch(() => {});
+      } catch (_) {}
+
       return { status: 'reconciled', order_number: order.order_number, payment_status: 'paid' };
     }
 
@@ -798,7 +839,7 @@ const handleWebhook = async (rawBody, signatureHeader) => {
         `UPDATE orders
          SET payment_status = 'paid',
              payment_method = 'RAZORPAY',
-             fulfillment_status = CASE WHEN fulfillment_status = 'pending' THEN 'processing' ELSE fulfillment_status END,
+             fulfillment_status = CASE WHEN fulfillment_status IN ('pending', 'pending_payment') THEN 'processing' ELSE fulfillment_status END,
              updated_at = NOW()
          WHERE id = ?`,
         [order.id]
@@ -824,6 +865,21 @@ const handleWebhook = async (rawBody, signatureHeader) => {
 
       await connection.commit();
       console.log(`[Payment Webhook] Successfully reconciled order #${order.order_number} to PAID.`);
+
+      if (isStore2) {
+        try {
+          const whatsappNotificationService = require('./whatsappNotificationService');
+          const orderService = require('./orderService');
+          const updatedOrder = await orderService.getOrderById(order.id, 2).catch(() => null);
+          whatsappNotificationService.notifyOrderConfirmation({
+            order: updatedOrder || order,
+            orderId: order.id,
+            storeId: 2,
+            isCustomForge: false,
+            paymentUpdated: true
+          }).catch(() => {});
+        } catch (_) {}
+      }
     } catch (err) {
       await connection.rollback();
       throw err;

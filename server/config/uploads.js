@@ -66,7 +66,9 @@ const describeUploads = () => {
     writable,
     fileCount: typeof fileCount === 'number' ? fileCount : 0,
     serving: true,
-    externalDirectory: Boolean(configured)
+    externalDirectory: Boolean(configured),
+    directoryAvailable: fs.existsSync(uploadDir) && writable,
+    storageType: insideAppDirectory ? 'ephemeral_internal' : 'persistent_external'
   };
   const problems = storageProblems();
   if (process.env.NODE_ENV === 'production' && problems.length) out.warning = problems.join(' ');
@@ -87,14 +89,15 @@ const getUploadDiagnostic = (targetFilename) => {
     fileList = fs.readdirSync(uploadDir).filter((f) => !f.startsWith('.'));
   } catch (_) { /* unreadable */ }
 
+  const isProd = process.env.NODE_ENV === 'production';
   const baseReport = {
-    effective_process_env_UPLOADS_DIR: process.env.UPLOADS_DIR || null,
-    resolved_uploadDir: uploadDir,
+    effective_process_env_UPLOADS_DIR: isProd ? (process.env.UPLOADS_DIR ? '[configured external]' : null) : (process.env.UPLOADS_DIR || null),
+    resolved_uploadDir: isProd ? (configured ? '[configured persistent storage]' : '[ephemeral app storage]') : uploadDir,
     uploadDir_exists: fs.existsSync(uploadDir),
     uploadDir_writable: writable,
     file_count: fileList.length,
     sample_files: fileList.slice(0, 25),
-    system: {
+    system: isProd ? { insideAppDirectory: Boolean(insideAppDirectory), external: Boolean(configured) } : {
       cwd: process.cwd(),
       homedir: typeof os.homedir === 'function' ? os.homedir() : null,
       username: typeof os.userInfo === 'function' ? (os.userInfo().username || null) : null,
@@ -106,26 +109,39 @@ const getUploadDiagnostic = (targetFilename) => {
   if (targetFilename) {
     const cleanFilename = path.basename(targetFilename);
     const checkedPath = path.join(uploadDir, cleanFilename);
-    const candidatePaths = [
-      checkedPath,
-      path.join('/home/u781826529/chipakk-uploads', cleanFilename),
-      path.join(appRoot, 'server', 'uploads', cleanFilename),
-      path.join(process.cwd(), 'uploads', cleanFilename),
-      path.join(process.cwd(), 'chipakk-uploads', cleanFilename),
-      path.join(typeof os.homedir === 'function' ? os.homedir() : '', 'chipakk-uploads', cleanFilename)
-    ];
 
-    const probeResults = {};
-    candidatePaths.forEach((p) => {
-      probeResults[p] = fs.existsSync(p);
-    });
+    if (isProd) {
+      // This diagnostic is served by two fully PUBLIC, unauthenticated routes (GET /api/health?file=... and
+      // GET /api/health/diagnostic?file=...). The non-prod branch below reveals absolute filesystem paths,
+      // the real Linux username/home directory and a hardcoded production path -- exactly the "sensitive
+      // filesystem path" disclosure this diagnostic must never cause on a public endpoint. Report only
+      // whether the named file exists, nothing about where.
+      baseReport.target_check = {
+        filename: cleanFilename,
+        exists_at_checked_path: fs.existsSync(checkedPath)
+      };
+    } else {
+      const candidatePaths = [
+        checkedPath,
+        path.join('/home/u781826529/chipakk-uploads', cleanFilename),
+        path.join(appRoot, 'server', 'uploads', cleanFilename),
+        path.join(process.cwd(), 'uploads', cleanFilename),
+        path.join(process.cwd(), 'chipakk-uploads', cleanFilename),
+        path.join(typeof os.homedir === 'function' ? os.homedir() : '', 'chipakk-uploads', cleanFilename)
+      ];
 
-    baseReport.target_check = {
-      filename: cleanFilename,
-      exact_filesystem_path_checked_by_GET: checkedPath,
-      exists_at_checked_path: fs.existsSync(checkedPath),
-      candidate_paths_probed: probeResults
-    };
+      const probeResults = {};
+      candidatePaths.forEach((p) => {
+        probeResults[p] = fs.existsSync(p);
+      });
+
+      baseReport.target_check = {
+        filename: cleanFilename,
+        exact_filesystem_path_checked_by_GET: checkedPath,
+        exists_at_checked_path: fs.existsSync(checkedPath),
+        candidate_paths_probed: probeResults
+      };
+    }
   }
 
   return baseReport;

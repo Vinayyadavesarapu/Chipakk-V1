@@ -32,7 +32,7 @@ test('1. Money model: Store 1 converts whole INR to paise, Store 2 preserves pai
   assert.equal(paymentService.toGatewayPaise(15, null), 1500);
 });
 
-test('2. Razorpay credential resolution: store-specific with fallback', () => {
+test('2. Razorpay credential resolution: Store 1 supports fallback, Store 2 strictly isolated without fallback', async () => {
   process.env.RAZORPAY_KEY_ID = 'shared_key_id';
   process.env.RAZORPAY_KEY_SECRET = 'shared_key_secret';
   delete process.env.CHIPAKK_RAZORPAY_KEY_ID;
@@ -40,13 +40,35 @@ test('2. Razorpay credential resolution: store-specific with fallback', () => {
   delete process.env.MARSHANS_RAZORPAY_KEY_ID;
   delete process.env.MARSHANS_RAZORPAY_KEY_SECRET;
 
-  // With shared env only
+  // With shared env only: Store 1 falls back to shared key, Store 2 NEVER silently falls back
   assert.equal(razorpayService.getKeyId(1), 'shared_key_id');
-  assert.equal(razorpayService.getKeyId(2), 'shared_key_id');
+  assert.equal(razorpayService.getKeyId(2), '');
   assert.equal(razorpayService.isConfigured(1), true);
-  assert.equal(razorpayService.isConfigured(2), true);
+  assert.equal(razorpayService.isConfigured(2), false);
 
-  // With store-specific override
+  // Store 2 createRazorpayOrder and verifyPaymentSignature reject with GATEWAY_NOT_CONFIGURED when missing Marshans keys
+  await assert.rejects(async () => {
+    await razorpayService.createRazorpayOrder({ amountPaise: 160000, receipt: 'CF-MRSH-2026-0001', storeId: 2 });
+  }, (err) => {
+    assert.equal(err.code, 'GATEWAY_NOT_CONFIGURED');
+    assert.match(err.message, /MARSHANS_RAZORPAY_KEY_ID and MARSHANS_RAZORPAY_KEY_SECRET/);
+    return true;
+  });
+
+  assert.throws(() => {
+    razorpayService.verifyPaymentSignature({
+      razorpay_order_id: 'order_123',
+      razorpay_payment_id: 'pay_123',
+      razorpay_signature: 'sig_123',
+      storeId: 2
+    });
+  }, (err) => {
+    assert.equal(err.code, 'GATEWAY_NOT_CONFIGURED');
+    assert.match(err.message, /MARSHANS_RAZORPAY_KEY_ID and MARSHANS_RAZORPAY_KEY_SECRET/);
+    return true;
+  });
+
+  // With store-specific override: Store 2 configured strictly with MARSHANS keys
   process.env.CHIPAKK_RAZORPAY_KEY_ID = 'chipakk_key_id';
   process.env.CHIPAKK_RAZORPAY_KEY_SECRET = 'chipakk_key_secret';
   process.env.MARSHANS_RAZORPAY_KEY_ID = 'marshans_key_id';
